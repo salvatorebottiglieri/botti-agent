@@ -15,7 +15,7 @@
 - **Sensory input** — minions (organs) that stream life data: location, payments, activity, etc.
 
 **Language:** Python
-**Key Libraries:** Pydantic, AsyncIO, Redis (event bus)
+**Key Libraries:** Pydantic, AsyncIO, PostgreSQL
 **Deployment:** Docker (multi-container)
 
 ---
@@ -70,7 +70,8 @@
 
 ## Event System
 
-> The River — all modules communicate via events flowing through a shared bus (Redis Pub/Sub).
+> The River — all modules communicate via events flowing through an in-memory event bus (asyncio Queue).
+> Redis can be added later for production resilience when actual needs are understood.
 
 ### Event Schema
 
@@ -122,7 +123,7 @@ Event {
 
 **Minion events** flow through the same event bus as direct user input. Memory and Learning modules automatically process them to extract facts and patterns.
 
-**Fact storage:** Facts are stored directly to Graph DB (TBD). Modules query the DB directly — no `fact.query`/`fact.result` events.
+**Fact storage:** Facts are stored in Postgres. Modules query the DB directly — no `fact.query`/`fact.result` events.
 
 ---
 
@@ -133,8 +134,8 @@ Event {
 - **Peers, not hierarchy** — modules are equal participants
 - **Own their own state** — each module manages its internal state, persists to shared DB
 - **Reactive + Proactive** — respond to events AND initiate based on internal logic
-- **Shared event bus** — Redis pub/sub for real-time coordination
-- **Shared persistence** — Postgres/SQLite for sessions, facts, patterns, tool registry
+- **Shared event bus** — In-memory asyncio Queue for MVP (Redis addable later)
+- **Shared persistence** — Postgres for sessions, facts, patterns, tool registry
 
 ---
 
@@ -165,15 +166,16 @@ Event {
 | Aspect | Decision |
 |--------|----------|
 | Subscribes to | All events (`*`) — watches everything |
-| Emits | (writes to Graph DB directly) |
+| Emits | (writes to Postgres directly) |
 | Owns LLM | Yes — fact extraction and synthesis |
-| State | Facts DB (Graph DB TBD), user knowledge graph |
+| State | Facts DB (Postgres), user knowledge graph |
 
 **Responsibilities:**
 - Store and retrieve facts (user preferences, project context, people, history)
 - Index facts for fast retrieval
 - Fact extraction from minion data: location → "user works at X", payment → "user spent Y at Z"
 - Fact extraction from conversations
+- Cascade invalidation when mutable facts change
 
 **Minion data → Facts examples:**
 | Minion Event | Extracted Fact |
@@ -184,7 +186,62 @@ Event {
 | `payment` (monthly, same merchant) | "user has subscription to [service]" |
 | `activity` (low screen time on weekends) | "user is less active on screens weekends" |
 
-**Data model:** Deferred — will be defined in Phase 2 (MVP uses simple storage).
+**Fact Model:**
+
+```
+Fact {
+    id: UUID                      # unique identifier
+    type: str                     # fact category: preference, behavior, knowledge, context
+    mutability: immutable | mutable
+    symbolic_repr: str            # canonical form for logic engine (e.g., "lives_in(user, Italy)")
+    natural_lang_repr: str         # human readable (e.g., "I live in Italy")
+    payload: JSON                 # structured data specific to fact type
+    confidence: float             # 0.0-1.0
+    created_at: datetime
+    retracted_at: datetime | null # null = active, timestamp = retracted
+
+    # Hierarchy tracking (frequency-adjusted tree)
+    layer: int                     # tree layer (0 = hot/most accessed, n = cold/archived)
+    access_count: int             # total times accessed
+    last_accessed_at: datetime    # for recency weighting
+}
+
+Concept = DerivedFact {
+    ...Fact fields...
+    derivation_method: induction | deduction | creative
+    proof_chain: str               # symbolic reasoning provided by LLM
+    source_facts: [UUID]          # provenance of derived fact
+    validated: bool               # logic engine approved this derivation
+}
+```
+
+**Fact Types:**
+
+| Type | Description | Examples |
+|------|-------------|----------|
+| `immutable` | Fundamental truths (birth, physical laws) | born(Sarah, Italy), 2+2=4 |
+| `mutable` | Can change over time | lives_in(user, Italy), prefers concise responses |
+
+**Logic Engine (PyDatalog):**
+- On-demand validation — runs when a concept is proposed
+- Validates symbolic reasoning chain against known facts
+- If conflict detected → fact rejected, LLM must fix reasoning
+- Immutable facts serve as axioms; mutable facts can be retracted
+
+**Cascade Invalidation:**
+- Mutable fact changes → system identifies all derived concepts using it (directly or indirectly)
+- All downstream concepts get retracted recursively
+
+**Recall Mechanism (Hybrid):**
+1. Embedding similarity identifies semantic area of query
+2. Search hot layer first (frequently accessed + recency weighted)
+3. If not found, expand to warm → cold layers
+4. Results merged/ranked by relevance + confidence
+
+**Hierarchy Promotion:**
+- Access count gives boost to fact recall
+- Recent facts get minor boost; non-recent facts get greater boost
+- Continuous adjustment based on access patterns
 
 ---
 
@@ -384,6 +441,99 @@ Each `LLMClient` handles:
 | Module crash | Other modules continue; event bus handles reconnect |
 | Unrecoverable failure | Log, alert, graceful degradation |
 
+### Circuit Breaker
+
+Every module that calls external services (LLM, database, tools) uses a circuit breaker pattern.
+
+```
+States: CLOSED → OPEN → HALF_OPEN → CLOSED
+
+CLOSED: Normal operation, calls pass through
+OPEN: Failure threshold exceeded, calls fail fast
+HALF_OPEN: Testing if service recovered
+```
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Failure threshold | 5 failures in 60s | Open circuit after 5 failures in 60 seconds |
+| Open duration | 30s | Time circuit stays open before testing recovery |
+| Half-open success threshold | 3 successes | Number of successes needed to close circuit |
+
+**Implementation:** Circuit breaker wraps all external service calls per module. When circuit is OPEN, calls fail immediately with `CircuitOpenError` rather than waiting.
+
+### Timeout Strategy
+
+| Call Type | Default Timeout | Configurable |
+|-----------|-----------------|--------------|
+| LLM chat | 30s | Yes |
+| Tool execution | 60s | Per-tool |
+| Database | 10s | Yes |
+
+On timeout: Retry once, then surface error to responsible module.
+
+### Queue Depth Limits
+
+Each module has a queue with max depth. When queue is full:
+- **Blocking** — publisher waits until space available
+- Prevents unbounded queue growth
+- Backpressure propagates upstream
+
+### Cascade Failure Prevention
+
+When a module fails:
+1. Module marked as `unhealthy`
+2. Health checks detect and report
+3. Other modules continue operating
+4. Failed module requires manual intervention to recover (no auto-restart)
+
+**Health check endpoint:** Each module exposes `/health` returning `{status: "healthy"|"unhealthy", last_event_at: timestamp}`
+
+---
+
+## Session Lifecycle
+
+```
+created → active → idle → ended
+```
+
+**States:**
+
+| State | Description |
+|-------|-------------|
+| `created` | Session initialized, no messages yet |
+| `active` | User actively interacting |
+| `idle` | No activity for 5 minutes |
+| `ended` | Explicitly ended or timed out |
+
+**Transitions:**
+
+| From | To | Trigger |
+|------|-----|---------|
+| created | active | First message received |
+| active | idle | No activity for 5 minutes |
+| idle | active | User sends message (resume) |
+| idle | ended | Idle timeout exceeded (30 minutes) |
+| active | ended | Explicit "end session" or application shutdown |
+
+**Session Rules:**
+- Single active session at a time (multi-session support deferred to future)
+- All session data archived on end (conversation history, state, metadata)
+- Archived sessions can be resumed while in `idle` state
+- Session data retained indefinitely for learning and context
+
+**Session Schema:**
+```python
+Session {
+    id: UUID
+    state: created | active | idle | ended
+    created_at: datetime
+    last_activity_at: datetime
+    ended_at: datetime | null
+    conversation_history: list[Message]
+    metadata: dict
+}
+```
+
 ---
 
 ## Persistence
@@ -391,13 +541,13 @@ Each `LLMClient` handles:
 | Store | Technology | Purpose |
 |-------|------------|---------|
 | Sessions | SQLite (v1) → Postgres | Conversation history, session metadata |
-| Facts | Postgres (with vector search later) | User knowledge base |
+| Facts | Postgres | User knowledge base (mutable + immutable), concepts/derived facts |
 | Patterns | Postgres | Learned behavioral patterns |
 | Preferences | Postgres | Inferred user preferences |
 | Tool Registry | Postgres / Config YAML | Available tools and schemas |
 | Recommendations | Postgres | Recommendation history (feedback loop) |
 
-**Event bus (Redis)** is for real-time coordination, NOT persistence. All state survives restarts via Postgres/SQLite.
+**Event bus (asyncio Queue)** is for real-time coordination, NOT persistence. All state survives restarts via Postgres.
 
 ---
 
@@ -446,13 +596,15 @@ Deferred — not day 1. MVP first.
 - **Architecture:** Event-driven ecosystem (river metaphor), modules as peers, indirect communication via event bus
 - **Input streams:** Two — Direct input (chat, tools, goals) and Sensory input (minions as organs)
 - **Minions:** Organs that stream life data; phones, cards, laptops send encrypted events to Cortex
-- **Event bus:** Redis Pub/Sub + DB-backed fallback — all inter-module communication flows through events
+- **Event bus:** In-memory asyncio Queue (Redis addable later for resilience) — all inter-module communication flows through events
 - **Event schema:** Versioned Pydantic models for core events; BaseEvent + per-type payloads
 - **Salience mechanism:** Events carry salience score (0.0-1.0); modules filter by threshold
 - **Event naming:** Session in metadata only, no wildcard subtypes in event types
 - **Module interfaces:** Pure events for all communication; each module subscribes/publishes defined events
-- **Fact storage:** Graph DB (TBD); modules query directly, no fact.query/fact.result events
-- **Persistence:** Postgres/SQLite for state; event bus for real-time coordination
+- **Fact storage:** Postgres — facts (mutable/immutable), concepts (derived), logic engine (PyDatalog)
+- **Fact model:** Symbolic representation + natural language, hierarchy tree with frequency-adjusted promotion, explicit retraction via `retracted_at`
+- **Concept derivation:** LLM proposes with proof chain, logic engine validates, cascade invalidation on source change
+- **Persistence:** Postgres for all state; event bus for real-time coordination only
 - **LLM ownership:** Per-module (Interaction, Memory, Learning each have their own)
 - **LLM resource management:** Priority queue — Interaction > Memory > Learning
 - **Tool correlation:** `correlation_id` in tool.request/result payloads
@@ -617,15 +769,17 @@ Subscriptions:
 └── conversation.message             # agent responses — extract facts
 
 Database:
-└── Graph DB (TBD)                   # facts stored directly, queried by other modules
+└── Postgres (facts table)          # facts stored directly, queried by other modules
 
-Note: Modules query Graph DB directly — no fact.query/fact.result events.
+Note: Modules query Postgres directly — no fact.query/fact.result events.
 ```
 
 **Internal Components:**
 ```python
-FactGraphDB            # Graph DB client for direct queries
-FactExtractor          # LLM client — extracts structured facts from text
+FactStore                # Postgres client for facts/concepts
+FactExtractor           # LLM client — extracts structured facts from text
+LogicEngine             # PyDatalog — validates LLM reasoning, checks consistency
+HierarchyManager        # manages frequency-adjusted fact hierarchy (hot/warm/cold)
 ```
 
 **Fact categories:** `preference`, `behavior`, `knowledge`, `context`
@@ -741,7 +895,7 @@ ProgressTracker          # emits goal.status updates
 | Module | Input Events | Output Events | Internal API |
 |--------|-------------|---------------|--------------|
 | Interaction | `user.message`, `recommendation.generated` | `conversation.message`, `goal.created` | `InteractionService`, `ResponseRenderer` |
-| Memory | `user.message`, `conversation.message` | (writes to Graph DB directly) | `FactGraphDB`, `FactExtractor` |
+| Memory | `user.message`, `conversation.message` | (writes to Postgres directly) | `FactStore`, `FactExtractor`, `LogicEngine`, `HierarchyManager` |
 | Learning | `user.message`, `conversation.message`, `goal.completed`, `goal.failed`, `recommendation.executed` | `pattern.detected`, `preference.learned`, `recommendation.generated` | `PatternAnalyzer`, `PreferenceEngine`, `Recommender` |
 | Tool Ecosystem | `tool.request` | `tool.result` | `ToolRegistry`, `ToolExecutor` |
 | Execution | `goal.created`, `recommendation.executed` | `goal.status`, `goal.completed`, `goal.failed`, `goal.resumed`, `module.spawn` | `GoalOrchestrator`, `WorkerSpawner` |
@@ -772,8 +926,10 @@ cortex/
 │       │
 │       ├── memory/                   # Memory Module
 │       │   ├── __init__.py
-│       │   ├── graph_db.py           # Graph DB client
-│       │   └── extractor.py          # LLM fact extraction
+│       │   ├── fact_store.py         # Postgres client for facts/concepts
+│       │   ├── extractor.py          # LLM fact extraction
+│       │   ├── logic_engine.py       # PyDatalog validation
+│       │   └── hierarchy.py          # Frequency-adjusted fact hierarchy
 │       │
 │       ├── learning/                 # Learning Module
 │       │   ├── __init__.py
@@ -810,8 +966,7 @@ cortex/
 │           ├── __init__.py
 │           ├── base.py               # BaseEvent, EventMetadata
 │           ├── schemas.py            # All event payload models
-│           ├── bus.py                # Redis event bus
-│           └── fallback.py           # DB-backed fallback
+│           └── bus.py                # In-memory asyncio Queue event bus
 │
 ├── tests/
 │   ├── unit/                        # Per-module unit tests
@@ -856,11 +1011,9 @@ cortex/
 
 | Service | Purpose |
 |---------|---------|
-| Redis | Event bus |
-| PostgreSQL | Sessions, patterns, preferences, tool registry |
-| Graph DB (TBD) | Facts storage |
+| PostgreSQL | Sessions, facts (mutable/immutable + concepts), patterns, preferences, tool registry |
 
-### docker-compose.yml (proposed)
+(Redis can be added later for event bus resilience when production needs are understood.)
 
 ```yaml
 version: '3.8'
@@ -874,9 +1027,8 @@ services:
     networks:
       - cortex-net
     depends_on:
-      - redis
+      - postgres
     environment:
-      - REDIS_HOST=redis
       - POSTGRES_HOST=postgres
 
   interaction:
@@ -885,10 +1037,8 @@ services:
     networks:
       - cortex-net
     depends_on:
-      - redis
       - postgres
     environment:
-      - REDIS_HOST=redis
       - POSTGRES_HOST=postgres
       - LLM_PROVIDER=${LLM_PROVIDER}
 
@@ -898,11 +1048,9 @@ services:
     networks:
       - cortex-net
     depends_on:
-      - redis
       - postgres
     environment:
-      - REDIS_HOST=redis
-      - GRAPH_DB_HOST=${GRAPH_DB_HOST}
+      - POSTGRES_HOST=postgres
 
   learning:
     build: ./src/cortex/learning
@@ -910,10 +1058,8 @@ services:
     networks:
       - cortex-net
     depends_on:
-      - redis
       - postgres
     environment:
-      - REDIS_HOST=redis
       - POSTGRES_HOST=postgres
       - LLM_PROVIDER=${LLM_PROVIDER}
 
@@ -923,10 +1069,8 @@ services:
     networks:
       - cortex-net
     depends_on:
-      - redis
       - postgres
     environment:
-      - REDIS_HOST=redis
       - POSTGRES_HOST=postgres
 
   execution:
@@ -935,11 +1079,24 @@ services:
     networks:
       - cortex-net
     depends_on:
-      - redis
       - postgres
     environment:
-      - REDIS_HOST=redis
       - POSTGRES_HOST=postgres
+
+  postgres:
+    image: postgres:15
+    container_name: cortex-postgres
+    networks:
+      - cortex-net
+    environment:
+      - POSTGRES_USER=cortex
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=cortex
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
 
 networks:
   cortex-net:
@@ -1039,4 +1196,4 @@ Minions are **organs** that stream sensory data to Cortex. They are processes ru
 
 ---
 
-*Last updated: 2026-04-19*
+*Last updated: 2026-04-20*

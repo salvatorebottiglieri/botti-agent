@@ -208,11 +208,11 @@ Interaction Module only formats the response using personality context from Memo
 | 2 | Learning is undefined black box | High | ✅ Resolved — Human Brain Sleep Model |
 | 3 | No prompting strategy | High | ✅ Resolved — Thin Interface + Learned Personality |
 | 4 | LLM contention (Memory + Learning) | High | ✅ Resolved (by #2) — Learning consumes only Memory output |
-| 5 | Graph DB deferred | Medium | ⏳ Pending |
-| 6 | Redis fallback complex | Medium | ⏳ Pending |
-| 7 | No backpressure | Medium | ⏳ Pending |
+| 5 | Graph DB deferred | Medium | ✅ Resolved — Postgres facts model with PyDatalog logic engine |
+| 6 | Redis fallback complex | Medium | ✅ Resolved — In-memory asyncio Queue for MVP |
+| 7 | No backpressure | Medium | ✅ Resolved — Circuit breaker + timeout + queue limits + cascade prevention |
 | 8 | 9 infrastructure components | Medium | ✅ Resolved (by #1) |
-| 9 | No session lifecycle defined | Low | ⏳ Pending |
+| 9 | No session lifecycle defined | Low | ✅ Resolved — Single session, idle timeout, archived on end |
 
 ---
 
@@ -252,11 +252,11 @@ Then, when that works and actual needs are understood, split into modules. The r
 
 ## Next Steps (Ordered)
 
-1. [ ] Simplify to MVP scope — single module + tool ecosystem
-2. [ ] Define prompting strategy — system prompts, context assembly
-3. [ ] Use Postgres for facts — defer Graph DB
-4. [ ] No Redis — in-memory events for MVP
-5. [ ] Define Learning as passive storage first
-6. [ ] Add circuit breakers and backpressure
-7. [ ] Add prompting section to ARCHITECTURE.md
-8. [ ] Revisit module split when MVP works
+1. [x] Simplify to MVP scope — single module + tool ecosystem
+2. [x] Define prompting strategy — system prompts, context assembly
+3. [x] Use Postgres for facts — defer Graph DB
+4. [x] No Redis — in-memory events for MVP
+5. [x] Define Learning as passive storage first
+6. [x] Add circuit breakers and backpressure
+7. [x] Add prompting section to ARCHITECTURE.md
+8. [x] Revisit module split when MVP works
