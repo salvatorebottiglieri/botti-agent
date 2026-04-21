@@ -551,6 +551,150 @@ Session {
 
 ---
 
+## Persistence Models (v1)
+
+> Design completed: 2026-04-21
+
+### FactType Enum
+
+```python
+class FactType(str, Enum):
+    PREFERENCE = "preference"   # learned or stated user preferences
+    BEHAVIOR = "behavior"      # observed behavioral patterns
+    KNOWLEDGE = "knowledge"    # facts about the world/user
+    CONTEXT = "context"         # current state (time, place, activity)
+```
+
+### Base Payload (shared fields)
+
+```python
+class BaseFactPayload(BaseModel):
+    source: str                              # freeform: "location_minion", "user_message", etc.
+    event_timestamp: datetime                 # when the underlying event occurred
+    minion_id: str | None = None              # if from minion
+```
+
+### Typed Fact Payloads
+
+**LocationPayload** (from `location` event)
+
+```python
+class LocationFactPayload(BaseFactPayload):
+    latitude: float
+    longitude: float
+    accuracy: float                          # meters
+```
+
+**PlacePayload** (derived from location clustering)
+
+```python
+class PlaceFactPayload(BaseFactPayload):
+    name: str                                 # e.g., "Office", "Home"
+    address: str | None
+    category: str                            # "home" | "work" | "restaurant" | etc.
+    is_significant: bool = False              # learned significance
+```
+
+**PreferencePayload** (from user messages / explicit corrections)
+
+```python
+class PreferenceFactPayload(BaseFactPayload):
+    trait: str                               # "tone", "verbosity", "directness", etc.
+    value: Any                               # typed value appropriate to trait
+    source_type: str                         # "explicit" | "inferred"
+```
+
+**KnowledgePayload** (facts about user/world)
+
+```python
+class KnowledgeFactPayload(BaseFactPayload):
+    subject: str                             # "user", "person_X", "project_Y"
+    predicate: str                           # "works_at", "lives_in", "owns"
+    object: Any                              # typed value
+```
+
+**BehaviorPayload** (observed patterns)
+
+```python
+class BehaviorFactPayload(BaseFactPayload):
+    action: str                              # what was observed
+    frequency: str | None                    # "daily", "weekly", "rarely"
+    context: str | None                       # "when at home", "on weekdays"
+```
+
+**ContextPayload** (current state)
+
+```python
+class ContextFactPayload(BaseFactPayload):
+    dimension: str                           # "time" | "location" | "activity"
+    value: Any                               # typed value
+```
+
+### Fact Model
+
+```python
+class Fact(BaseModel):
+    id: UUID
+    type: FactType                            # category enum
+    payload: FactPayload                      # discriminated union
+    symbolic_repr: str                        # e.g., "lives_in(user, Rome)"
+    natural_lang_repr: str                    # e.g., "I live in Rome"
+    confidence: float                         # 0.0-1.0
+    created_at: datetime
+    retracted_at: datetime | None = None      # null = active
+
+    # Hierarchy tracking
+    layer: int = 0                            # 0=hot, n=cold
+    access_count: int = 0
+    last_accessed_at: datetime | None = None
+```
+
+### Session / Message Models
+
+```python
+class MessageRole(str, Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+
+class Message(BaseModel):
+    id: UUID
+    role: MessageRole
+    content: str
+    tool_calls: list[dict] | None = None     # raw tool call objects
+    created_at: datetime
+
+class SessionState(str, Enum):
+    CREATED = "created"
+    ACTIVE = "active"
+    IDLE = "idle"
+    ENDED = "ended"
+
+class Session(BaseModel):
+    id: UUID
+    state: SessionState
+    created_at: datetime
+    last_activity_at: datetime
+    ended_at: datetime | None = None
+    conversation_history: list[Message]
+    metadata: dict = {}
+```
+
+### Design Notes
+
+| Aspect | Decision |
+|--------|----------|
+| Fact category | Controlled vocab (`FactType` enum) — the canonical way to reference facts |
+| Payload typing | Discriminated union keyed on `type` field — enables type-safe payload access |
+| Source field | Freeform string for flexibility — "location_minion", "user_message", etc. |
+| Event metadata | All payloads embed originating event timestamp and minion_id for full traceability |
+| Storage | SQLite v1, Postgres v2 |
+| Deferred | Pattern, Preference, Recommendation models (v2) |
+
+**Status:** ✅ Design agreed
+
+---
+
 ## Observability
 
 | Aspect | Decision |
@@ -1129,7 +1273,7 @@ CMD ["python", "-m", "cortex.<module>"]
 3. [x] Design tool registry schema and registration flow
 4. [x] Sketch project structure and file layout
 5. [x] Plan Docker multi-container deployment (docker-compose)
-6. [ ] Define Pydantic models for persistence (sessions, facts, patterns)
+6. [x] Define Pydantic models for persistence (sessions, facts, patterns)
 7. [ ] Design Minion protocol (communication, encryption, transport)
 8. [ ] Define minion event schemas (location, payment, activity, etc.)
 
