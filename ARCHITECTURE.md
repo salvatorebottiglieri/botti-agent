@@ -739,7 +739,12 @@ Deferred — not day 1. MVP first.
 
 - **Architecture:** Event-driven ecosystem (river metaphor), modules as peers, indirect communication via event bus
 - **Input streams:** Two — Direct input (chat, tools, goals) and Sensory input (minions as organs)
-- **Minions:** Organs that stream life data; phones, cards, laptops send encrypted events to Cortex
+- **Minions:** Organs that stream life data; phones, cards, laptops send events to Cortex via MQTT + mTLS
+- **Minion transport:** MQTT 5.0 over TLS (battery efficient, persistent connections, QoS 1 delivery)
+- **Minion auth:** Mutual TLS (mTLS) — both parties verify certificates; no API keys
+- **Minion certs:** User-initiated setup via QR code; Cortex issues certs signed by CASTRATION (internal CA); 30-day validity, automated rotation
+- **Minion broker:** Self-hosted Mosquitto in Docker (port 8883)
+- **Minion events:** Full event schemas defined in [MINION_EVENTS.md](MINION_EVENTS.md) — location, activity, calendar, app_usage, call_log, payment, refund, screen_activity, application_focus, keyboard_activity, battery, network_status
 - **Event bus:** In-memory asyncio Queue (Redis addable later for resilience) — all inter-module communication flows through events
 - **Event schema:** Versioned Pydantic models for core events; BaseEvent + per-type payloads
 - **Salience mechanism:** Events carry salience score (0.0-1.0); modules filter by threshold
@@ -1274,14 +1279,14 @@ CMD ["python", "-m", "cortex.<module>"]
 4. [x] Sketch project structure and file layout
 5. [x] Plan Docker multi-container deployment (docker-compose)
 6. [x] Define Pydantic models for persistence (sessions, facts, patterns)
-7. [ ] Design Minion protocol (communication, encryption, transport)
-8. [ ] Define minion event schemas (location, payment, activity, etc.)
+7. [x] Design Minion protocol (communication, encryption, transport)
+8. [x] Define minion event schemas (location, payment, activity, etc.)
 
 ---
 
 ## Minions
 
-> Design pending — to be detailed in separate planning document.
+> Design complete — see [MINION_PROTOCOL.md](MINION_PROTOCOL.md) for full details.
 
 ### Concept
 
@@ -1301,15 +1306,22 @@ Minions are **organs** that stream sensory data to Cortex. They are processes ru
 ┌─────────────────────────────────────────────────────────────┐
 │                      MINION                                 │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │ Data        │  │ Filter &    │  │ Encrypted           │ │
-│  │ Collectors  │→ │ Normalizer  │→ │ Event Publisher     │ │
-│  │ (GPS, API)  │  │ (debounce,  │  │ (E2E encrypt)       │ │
+│  │ Data        │  │ Filter &    │  │ MQTT Client         │ │
+│  │ Collectors  │→ │ Normalizer  │→ │ (TLS + mTLS auth)   │ │
+│  │ (GPS, API)  │  │ (debounce,  │  │                     │ │
 │  │             │  │  dedup)     │  │                     │ │
 │  └─────────────┘  └─────────────┘  └──────────┬──────────┘ │
 └───────────────────────────────────────────────┼─────────────┘
-                                                │ (HTTPS/MQTT)
+                                                │ MQTT over TLS
                                                 ▼
                                       ┌─────────────────┐
+                                      │   MQTT Broker  │
+                                      │  (Mosquitto)   │
+                                      │   Port 8883     │
+                                      └────────┬────────┘
+                                               │
+                                      ┌────────┴────────┐
+                                      │        ▼        │
                                       │    CORTEX       │
                                       │   (brain)       │
                                       │                 │
@@ -1323,21 +1335,101 @@ Minions are **organs** that stream sensory data to Cortex. They are processes ru
 
 | Property | Value |
 |----------|-------|
-| Connection | Internet, E2E encrypted |
-| Protocol | HTTPS push or MQTT |
+| Transport | MQTT 5.0 over TLS 1.3 |
+| Authentication | Mutual TLS (mTLS) |
+| Encryption | TLS 1.3 (all traffic encrypted) |
+| QoS | QoS 1 (at-least-once delivery) |
 | Data ownership | All data stays local (user's devices + user's Cortex instance) |
 | Cortex role | Process only — no commands to minions (v1) |
 | Minion autonomy | Minions decide what/when to send |
 
-### Minion → Cortex Event Flow
+### Certificate Hierarchy
+
+```
+CASTRATION (Cortex CA - internal)
+├── Root CA (self-signed, 10 years, ships with minion apps)
+│   ├── Signs: Minion certificates
+│   │   └── Validity: 30 days
+│   │   └── Renewal: Automated before expiry
+│   └──
+└── Broker certificates (server auth)
+```
+
+### MQTT Topics
+
+```
+cortex/minions/<minion_id>/
+├── register              # Registration (QoS 1)
+├── register/response      # Response
+├── events                 # Event batch (QoS 1)
+├── heartbeat              # Status updates (QoS 0)
+└── commands/              # Cortex → Minion (future)
+    └── config             # Config push
+```
+
+### Provisioning Flow
+
+```
+1. User starts setup in minion app
+2. Minion generates key pair + CSR locally
+3. QR code / pairing token displayed
+4. User scans QR in Cortex UI, approves
+5. Cortex signs CSR → issues certificate (30 days)
+6. Minion installs cert, connects to broker with mTLS
+7. Minion subscribes to commands, publishes events
+```
+
+### Event Flow
 
 1. Minion collects raw data (GPS, payment, etc.)
 2. Minion filters/normalizes (debounce location, deduplicate payments)
-3. Minion encrypts event payload
-4. Minion sends via HTTPS/MQTT to Cortex endpoint
-5. Cortex receives, decrypts, emits to event bus
-6. Memory/Learning modules process automatically
+3. Minion batches events (configurable size/interval)
+4. Minion publishes to MQTT topic (QoS 1)
+5. Broker delivers to Cortex MQTT client
+6. Cortex emits events to event bus
+7. Memory/Learning modules process automatically
+
+### Offline Handling
+
+- **Broker persistence:** Messages queued for up to 24 hours
+- **Minion queue:** Local encrypted queue if disconnected
+- **Reconnection:** Resume from last sequence, flush queue
+
+### Minion Event Types
+
+> Full schemas in [MINION_EVENTS.md](MINION_EVENTS.md)
+
+| Event | Source | Key Payload | Emitted When |
+|-------|--------|-------------|--------------|
+| **Phone** | | | |
+| `location` | GPS, network | lat/long, accuracy, speed, heading | GPS update (debounced: 100m or 60s) |
+| `activity` | ActivityRecognition | in_vehicle, walking, running, still | Activity transition / 5 min periodic |
+| `calendar` | Calendar API | title, start/end, attendees, location | Created/modified/deleted/reminder |
+| `app_usage` | UsageStats | app, duration, usage_type | 15 min summary / app switch |
+| `call_log` | CallLog | direction, duration, (anonymized) | Call ended |
+| **Card** | | | |
+| `payment` | Card reader | amount, merchant, MCC, location | Transaction auth/settlement |
+| `refund` | Card reader | amount, original_tx_id, status | Refund initiated/completed |
+| **Laptop** | | | |
+| `screen_activity` | OS hooks | screen_on/off, window_title | Screen state / window change / idle |
+| `application_focus` | OS hooks | app, duration, window_title | App switch / 5 min summary |
+| `keyboard_activity` | OS hooks | keystrokes, clicks, scroll (aggregated) | 15 min summary |
+| **Common** | | | |
+| `battery` | System API | level, charging, health | Level change >5% / charging |
+| `network_status` | System API | type, ssid, signal, vpn | Network change |
+
+### Event Privacy Controls
+
+| Event | Default | User Can Disable |
+|-------|---------|------------------|
+| `location` | ✅ On | Yes — precision reduction (city level) |
+| `calendar` | ✅ On | Per-calendar permissions |
+| `app_usage` | ⚠️ Whitelist | Must explicitly allow apps |
+| `call_log` | ✅ Anonymized | Phone numbers never transmitted |
+| `payment` | ✅ Full | Can reduce to category-only |
+| `screen_activity` | ⚠️ App name only | Window titles disabled by default |
+| `keyboard_activity` | ✅ Aggregated | Only counts, no raw keystrokes |
 
 ---
 
-*Last updated: 2026-04-20*
+*Last updated: 2026-04-28*
