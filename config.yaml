@@ -1,0 +1,30 @@
+# Cortex Configuration
+# Copy this file to config.yaml and customize as needed
+
+database:
+  url: "postgresql://cortex:cortex@localhost:5432/cortex"
+  pool_min_size: 5
+  pool_max_size: 20
+  pool_timeout: 30
+
+llm:
+  provider: "openai"
+  api_key: "${OPENAI_API_KEY}"  # Set via environment variable
+  model: "gpt-4o"
+  timeout: 60
+
+mqtt:
+  broker_url: "mqtt://localhost:1883"
+  keepalive: 60
+  reconnect_interval: 5
+
+app:
+  host: "0.0.0.0"
+  port: 8000
+  reload: false
+  workers: 1
+
+logging:
+  level: "INFO"
+  format: "console"
+  include_trace_id: true

@@ -141,21 +141,24 @@ Event {
 
 ### Interaction Module
 
-> Chat interface with the user. Entry point for conversation, query interface for insights.
+> **Thin interface** between user and Cortex brain. Routes queries, formats responses. Does NOT run the agentic loop.
 
 | Aspect | Decision |
 |--------|----------|
 | Subscribes to | `user.message`, `recommendation.generated` |
 | Emits | `conversation.message`, `goal.created` |
-| Owns LLM | Yes — generates responses, decides actions |
-| State | Session context, current mode, conversation history |
+| Owns LLM | **No** (thin interface) |
+| State | Session context, current mode |
 
 **Responsibilities:**
-- Parse user input → emit `user.message` event
+- API gateway for chat and goal endpoints
+- Session management (create, resume, archive)
+- Call Execution Module's Agentic Loop for reasoning
 - Render responses to user (text, tool results, recommendations)
 - Manage conversation lifecycle (start, end, mode switches)
-- Decide when to create goals vs respond directly
 - **Query mode:** User can ask about their own life ("where do I spend most of my time?", "summarize my spending this month")
+
+**Note:** Interaction Module is intentionally "thin". The Agentic Loop lives in Execution Module, ensuring chat and goals share the same reasoning engine.
 
 ---
 
@@ -242,6 +245,602 @@ Concept = DerivedFact {
 - Access count gives boost to fact recall
 - Recent facts get minor boost; non-recent facts get greater boost
 - Continuous adjustment based on access patterns
+
+---
+
+## MemoryService Interface
+
+> Explicit service API for querying and storing facts. All modules interact with Memory through this interface, not raw SQL.
+
+### Design Rationale
+
+| Approach | Problem |
+|----------|--------|
+| Raw SQL per module | Duplication, tight coupling to schema |
+| Event-based queries (`fact.query`/`fact.result`) | Async overhead, no direct returns |
+| **Service API** | Clean separation, testable, evolvable |
+
+### Service API
+
+```python
+class MemoryService:
+    """
+    Service API for the Memory Module.
+    
+    All modules query Memory through this interface.
+    Backed by Postgres with optional embedding cache.
+    """
+
+    # ─────────────────────────────────────────────────────────────
+    # QUERY METHODS (for Agentic Loop, Interaction, Learning)
+    # ─────────────────────────────────────────────────────────────
+
+    async def get_relevant(
+        self,
+        query: str,
+        limit: int = 10,
+        session_id: UUID | None = None,
+        fact_types: list[FactType] | None = None
+    ) -> list[Fact]:
+        """
+        Get facts relevant to a query.
+        
+        Retrieval strategy:
+        1. Semantic search (embeddings) for query relevance
+        2. Boost facts from current session
+        3. Boost recent facts (recency weighted)
+        4. Boost high-confidence facts
+        5. Filter by fact_types if specified
+        
+        Returns up to `limit` facts, ranked by relevance.
+        """
+        ...
+
+    async def get_by_type(
+        self,
+        fact_type: FactType,
+        limit: int = 50,
+        include_retracted: bool = False
+    ) -> list[Fact]:
+        """
+        Get all facts of a specific type.
+        
+        Use for: personality traits, known preferences, learned behaviors.
+        """
+        ...
+
+    async def get_context(
+        self,
+        dimensions: list[str] = ["time", "location", "activity"]
+    ) -> dict[str, Any]:
+        """
+        Get current ambient context.
+        
+        Returns current state of contextual dimensions:
+        - time: current hour, day of week
+        - location: last known location, venue type
+        - activity: current activity (from minions)
+        
+        Used by Agentic Loop for context injection.
+        """
+        ...
+
+    async def get_personality_context(
+        self,
+        session_id: UUID | None = None
+    ) -> PersonalityContext:
+        """
+        Get personality traits for response formatting.
+        
+        Merges:
+        1. Learned traits from Memory (long-term)
+        2. Session-specific preferences (short-term)
+        3. Default traits (0.5 on all dimensions)
+        """
+        ...
+
+    async def search(
+        self,
+        query: str,
+        filters: SearchFilters | None = None,
+        limit: int = 20
+    ) -> list[Fact]:
+        """
+        Full-text + semantic search across facts.
+        
+        Supports:
+        - Natural language queries ("where do I work?")
+        - Symbolic queries ("lives_in(user, *)")
+        - Filters by type, confidence, date range
+        """
+        ...
+
+    # ─────────────────────────────────────────────────────────────
+    # STORAGE METHODS (internal to Memory Module)
+    # ─────────────────────────────────────────────────────────────
+
+    async def store_fact(
+        self,
+        fact: Fact
+    ) -> Fact:
+        """
+        Store a new fact. Handles deduplication and hierarchy init.
+        """
+        ...
+
+    async def store_facts(
+        self,
+        facts: list[Fact]
+    ) -> list[Fact]:
+        """
+        Batch store facts. Used by fact extraction pipeline.
+        """
+        ...
+
+    async def retract_fact(
+        self,
+        fact_id: UUID,
+        reason: str | None = None
+    ) -> None:
+        """
+        Retract a fact (soft delete).
+        
+        Cascade invalidation: all concepts derived from this fact
+        are also retracted.
+        """
+        ...
+
+    async def update_fact(
+        self,
+        fact_id: UUID,
+        updates: FactUpdate
+    ) -> Fact:
+        """
+        Update a mutable fact. Triggers cascade invalidation.
+        """
+        ...
+
+    # ─────────────────────────────────────────────────────────────
+    # CONCEPT METHODS (derived facts)
+    # ─────────────────────────────────────────────────────────────
+
+    async def propose_concept(
+        self,
+        derivation: ConceptDerivation
+    ) -> Concept | Rejection:
+        """
+        Propose a derived concept for validation.
+        
+        Logic engine validates the proof chain.
+        Returns Concept if valid, Rejection with reason if not.
+        """
+        ...
+
+    async def get_concepts(
+        self,
+        source_fact_id: UUID | None = None,
+        method: DerivationMethod | None = None
+    ) -> list[Concept]:
+        """
+        Get derived concepts, optionally filtered.
+        """
+        ...
+
+    # ─────────────────────────────────────────────────────────────
+    # HIERARCHY METHODS (internal)
+    # ─────────────────────────────────────────────────────────────
+
+    async def record_access(
+        self,
+        fact_id: UUID
+    ) -> None:
+        """
+        Record that a fact was accessed.
+        
+        Updates access_count and last_accessed_at.
+        May trigger hierarchy promotion.
+        """
+        ...
+
+    async def compact_hierarchy(
+        self,
+        target_layer: int
+    ) -> int:
+        """
+        Compact facts into target layer.
+        
+        Called periodically (e.g., nightly).
+        Returns number of facts compacted.
+        """
+        ...
+```
+
+### Supporting Models
+
+```python
+class PersonalityContext(BaseModel):
+    """Personality traits for response formatting."""
+    tone: float = 0.5              # 0=sarcastic, 1=serious
+    verbosity: float = 0.5         # 0=concise, 1=detailed
+    formality: float = 0.5         # 0=casual, 1=formal
+    humor: float = 0.5             # 0=dry, 1=enthusiastic
+    directness: float = 0.5        # 0=blunt, 1=tactful
+    confidence: float = 0.5        # learned confidence level
+    
+    # Source tracking
+    sources: list[UUID] = []       # Facts this was derived from
+    last_updated: datetime
+
+class SearchFilters(BaseModel):
+    """Filters for fact search."""
+    fact_types: list[FactType] | None = None
+    min_confidence: float | None = None
+    created_after: datetime | None = None
+    created_before: datetime | None = None
+    mutable_only: bool = False
+    include_retracted: bool = False
+
+class FactUpdate(BaseModel):
+    """Allowed updates to a mutable fact."""
+    payload: dict | None = None
+    confidence: float | None = None
+    symbolic_repr: str | None = None
+    natural_lang_repr: str | None = None
+
+class ConceptDerivation(BaseModel):
+    """Derivation proposal for a concept."""
+    symbolic_repr: str
+    natural_lang_repr: str
+    derivation_method: DerivationMethod
+    proof_chain: str                # LLM's reasoning
+    source_facts: list[UUID]       # Provenance
+    confidence: float
+
+class Rejection(BaseModel):
+    """Why a concept was rejected."""
+    reason: str
+    conflicting_facts: list[UUID] = []
+    suggested_fix: str | None = None
+```
+
+### Module Access Pattern
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       MEMORY SERVICE                             │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │                    PUBLIC API                              │  │
+│  │                                                           │  │
+│  │   get_relevant()    ← Agentic Loop queries memory         │  │
+│  │   get_context()      ← Ambient context injection           │  │
+│  │   get_personality()  ← Response formatting                 │  │
+│  │   search()           ← User queries ("where do I work?")  │  │
+│  │                                                           │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                              │                                   │
+│                              ▼                                   │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │                    INTERNAL COMPONENTS                    │  │
+│  │                                                           │  │
+│  │   ┌────────────┐  ┌────────────┐  ┌────────────────┐     │  │
+│  │   │ FactStore  │  │ Extractor  │  │ Logic Engine   │     │  │
+│  │   │ (Postgres) │  │   (LLM)    │  │  (PyDatalog)  │     │  │
+│  │   └────────────┘  └────────────┘  └────────────────┘     │  │
+│  │                                                           │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                              │                                   │
+│                              ▼                                   │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │                    POSTGRES                                │  │
+│  │   facts | concepts | hierarchy | context_cache             │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Event Subscriptions (Internal)
+
+```python
+class MemoryService:
+    """MemoryService also subscribes to events for fact extraction."""
+    
+    async def handle_event(self, event: BaseEvent) -> None:
+        """Process incoming events, extract facts."""
+        match event.type:
+            case "user.message":
+                await self._extract_from_conversation(event)
+            case "conversation.message":
+                await self._extract_from_conversation(event)
+            case "location":
+                await self._extract_location_facts(event)
+            case "payment":
+                await self._extract_payment_facts(event)
+            case "activity":
+                await self._extract_activity_facts(event)
+            case _:
+                pass  # Other events watched but not directly extracted
+```
+
+---
+
+### Personality Module
+
+> Manages learned personality traits and provides personality context for response formatting. Traits are stored in Memory and surfaced through PersonalityService.
+
+| Aspect | Decision |
+|--------|----------|
+| Subscribes to | `user.feedback`, `preference.learned`, `conversation.ended` |
+| Emits | (writes to Memory via MemoryService) |
+| Owns LLM | No ( PersonalityManager does simple aggregation) |
+| State | Personality traits (stored as facts in Memory) |
+
+**Design Rationale:**
+
+| Approach | Problem |
+|----------|--------|
+| Separate personality store | Duplication with Memory facts |
+| Personality as special fact type | Works but loses discoverability |
+| **PersonalityModule backed by Memory** | Unified storage, MemoryService provides context |
+
+**Key insight:** Personality traits ARE facts (type=`preference`) with a specific payload structure. No separate storage needed.
+
+---
+
+**Responsibilities:**
+- Aggregate personality traits from Memory facts
+- Provide personality context for system prompt injection
+- Handle explicit user feedback ("that was too harsh")
+- Handle implicit feedback (user's communication style)
+- Merge learned traits with session-specific overrides
+
+**Trait Model:**
+
+```python
+class PersonalityTrait(BaseModel):
+    """A single personality trait dimension."""
+    dimension: TraitDimension
+    value: float                         # 0.0 to 1.0
+    confidence: float                    # How sure we are
+    source: Literal["explicit", "inferred"] # How we learned it
+    source_fact_id: UUID | None          # Original fact
+    last_updated: datetime
+
+class TraitDimension(str, Enum):
+    TONE = "tone"                        # 0=sarcastic, 1=serious
+    VERBOSITY = "verbosity"              # 0=concise, 1=detailed
+    FORMALITY = "formality"              # 0=casual, 1=formal
+    HUMOR = "humor"                      # 0=dry, 1=enthusiastic
+    DIRECTNESS = "directness"            # 0=blunt, 1=tactful
+    CONFIDENCE = "confidence"            # learned confidence level
+
+class PersonalityProfile(BaseModel):
+    """Full personality profile."""
+    trait_directions: list[PersonalityTrait]
+    derived_at: datetime
+    source_traits_count: int             # How many facts backing this
+    is_default: bool = False             # True if no learning yet
+```
+
+**Default Profile (Before Learning):**
+
+```python
+DEFAULT_PERSONALITY = PersonalityProfile(
+    trait_directions=[
+        PersonalityTrait(dimension=TraitDimension.TONE, value=0.5, confidence=0.0, 
+                        source="inferred", source_fact_id=None),
+        PersonalityTrait(dimension=TraitDimension.VERBOSITY, value=0.5, confidence=0.0,
+                        source="inferred", source_fact_id=None),
+        PersonalityTrait(dimension=TraitDimension.FORMALITY, value=0.5, confidence=0.0,
+                        source="inferred", source_fact_id=None),
+        PersonalityTrait(dimension=TraitDimension.HUMOR, value=0.5, confidence=0.0,
+                        source="inferred", source_fact_id=None),
+        PersonalityTrait(dimension=TraitDimension.DIRECTNESS, value=0.5, confidence=0.0,
+                        source="inferred", source_fact_id=None),
+        PersonalityTrait(dimension=TraitDimension.CONFIDENCE, value=0.5, confidence=0.0,
+                        source="inferred", source_fact_id=None),
+    ],
+    derived_at=datetime.utcnow(),
+    source_traits_count=0,
+    is_default=True
+)
+```
+
+**PersonalityService API:**
+
+```python
+class PersonalityService:
+    """
+    Service for personality trait management.
+    
+    Backs PersonalityModule functionality.
+    Uses MemoryService to read/write personality facts.
+    """
+
+    async def get_profile(
+        self,
+        session_id: UUID | None = None
+    ) -> PersonalityProfile:
+        """
+        Get personality profile.
+        
+        Merges:
+        1. Learned traits from Memory (long-term)
+        2. Session-specific overrides (short-term)
+        3. Default profile (if no learning)
+        """
+        ...
+
+    async def get_system_prompt_context(
+        self,
+        session_id: UUID | None = None
+    ) -> str:
+        """
+        Generate personality context for system prompt.
+        
+        Formats traits into natural language for LLM.
+        """
+        # Example output:
+        # "The user prefers concise responses (0.8 confidence).
+        #  They appreciate directness over sugarcoating.
+        #  Default tone is fine, but humor is welcome."
+        ...
+
+    async def record_feedback(
+        self,
+        feedback: PersonalityFeedback
+    ) -> list[Fact]:
+        """
+        Record explicit or implicit personality feedback.
+        
+        Explicit: User says "that was too harsh"
+        Implicit: User consistently uses short responses
+        
+        Returns facts to be stored in Memory.
+        """
+        ...
+
+    async def merge_with_learning(
+        self,
+        learned_traits: list[PersonalityTrait]
+    ) -> PersonalityProfile:
+        """
+        Merge newly learned traits with existing profile.
+        
+        Uses confidence-weighted averaging.
+        High-confidence learning overrides low-confidence existing.
+        """
+        ...
+```
+
+**Feedback Types:**
+
+```python
+class PersonalityFeedback(BaseModel):
+    """User feedback about personality."""
+    type: Literal["explicit", "implicit"]
+    session_id: UUID
+    timestamp: datetime
+    details: FeedbackDetails
+
+class FeedbackDetails(UnionBaseModel):
+    """Discriminated union of feedback types."""
+    # Explicit feedback
+    correction: ExplicitCorrection | None
+    # Implicit feedback
+    communication_style: CommunicationStyle | None
+
+class ExplicitCorrection(BaseModel):
+    """User explicitly corrects personality."""
+    dimension: TraitDimension
+    direction: Literal["too_low", "too_high"]
+    context: str | None              # "in your last response"
+
+class CommunicationStyle(BaseModel):
+    """Inferred from user behavior."""
+    avg_message_length: float         # chars
+    uses_questions: bool
+    uses_emoji: bool
+    formality_indicator: float
+```
+
+**System Prompt Integration:**
+
+```python
+# How personality context flows into system prompt
+
+SYSTEM_PROMPT_TEMPLATE = """
+You are Cortex, a personal AI assistant.
+
+PERSONALITY CONTEXT:
+{personality_context}
+
+CURRENT CONTEXT:
+- Time: {current_time}
+- Location: {location}
+- Activity: {activity}
+
+USER'S KNOWN FACTS:
+{facts_summary}
+
+CONVERSATION HISTORY:
+{conversation_history}
+
+AVAILABLE TOOLS:
+{tool_schemas}
+"""
+
+# Example personality_context output:
+"""
+The user prefers:
+- Tone: Professional but approachable (confidence: 0.7)
+- Verbosity: Concise responses preferred (confidence: 0.9)
+- Directness: Blunt is fine, don't sugarcoat (confidence: 0.6)
+- Humor: Light humor welcome (confidence: 0.5)
+- Formality: Casual tone (confidence: 0.8)
+
+Learned from: 23 interactions over 2 weeks.
+"""
+```
+
+**Trait → System Prompt Mapping:**
+
+| Trait | Value Range | Prompt Effect |
+|-------|-------------|---------------|
+| `tone` | 0.0-0.3 | Include occasional sarcasm hints |
+| `tone` | 0.7-1.0 | Maintain serious, professional tone |
+| `verbosity` | 0.0-0.3 | Keep responses under 2 sentences |
+| `verbosity` | 0.7-1.0 | Provide detailed explanations |
+| `formality` | 0.0-0.3 | Use contractions, casual language |
+| `formality` | 0.7-1.0 | Use formal language, proper titles |
+| `humor` | 0.0-0.3 | Avoid jokes, be matter-of-fact |
+| `humor` | 0.7-1.0 | Include appropriate humor |
+| `directness` | 0.0-0.3 | Use diplomatic language |
+| `directness` | 0.7-1.0 | Be direct, state conclusions first |
+
+**Learning Sources:**
+
+| Source | How | Traits Affected |
+|--------|-----|-----------------|
+| Explicit correction | User says "too sarcastic" | tone |
+| Response length | User consistently short | verbosity |
+| Language formality | User uses "you're" vs "you are" | formality |
+| Emoji usage | User uses 😄 vs 🙂 | humor |
+| Feedback style | User says "just do it" | directness |
+
+**Quota Reservation:**
+
+The system prompt reserves a fixed section for personality context:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      SYSTEM PROMPT                               │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ ROLE: You are Cortex, a personal AI assistant.          │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│                              ▼                                   │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ PERSONA RESERVED QUOTA (max 500 tokens)                 │   │
+│  │                                                          │   │
+│  │ The user prefers concise, direct responses.             │   │
+│  │ Humor is welcome. Formality is casual.                   │   │
+│  │ Confidence level: moderate (don't make definitive       │   │
+│  │ claims about uncertain topics).                          │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│                              ▼                                   │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ DYNAMIC CONTEXT (adapts to conversation)                │   │
+│  │                                                          │   │
+│  │ - Current time, location, activity                       │   │
+│  │ - Relevant facts                                        │   │
+│  │ - Tool schemas                                          │   │
+│  │ - Conversation history                                  │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -336,21 +935,99 @@ Tool {
 
 ### Execution Module
 
-> Task orchestration. Spawns workers/sub-processes for complex or long-running tasks.
+> Task orchestration via the Agentic Loop. Runs the core reasoning cycle for both chat and goals.
 
 | Aspect | Decision |
 |--------|----------|
 | Subscribes to | `goal.created`, `recommendation.executed` |
-| Emits | `goal.status`, `goal.completed`, `module.spawn` |
-| Owns LLM | No (orchestration is deterministic) |
+| Emits | `goal.status`, `goal.completed`, `goal.failed`, `module.spawn` |
+| Owns LLM | **Yes** — powers the Agentic Loop |
 | State | Active goals, spawned processes |
 
 **Responsibilities:**
+- Run the Agentic Loop for chat and goal execution
 - Receive goals from Interaction Module
 - Break down goals into sub-tasks
 - Spawn workers/sub-processes as needed
 - Track goal progress → emit `goal.status` events
 - Coordinate multiple concurrent goals
+- Manage context window (conversation truncation)
+
+**Agentic Loop:**
+The Agentic Loop is the heart of Cortex. It implements the Think → Act → Observe → Respond cycle.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      AGENTIC LOOP                               │
+│                                                                  │
+│  ┌──────────────┐     ┌─────────────┐                          │
+│  │   CONTEXT    │────►│   THINK     │                          │
+│  │   BUILDER    │     │   (LLM)     │                          │
+│  └──────────────┘     └──────┬──────┘                          │
+│                               │                                  │
+│              ┌────────────────┼────────────────┐                 │
+│              │                │                │                 │
+│              ▼                ▼                ▼                 │
+│    ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
+│    │   RESPOND    │  │    EXECUTE   │  │   CREATE     │        │
+│    │   (done)     │  │    TOOLS     │  │   SUB-GOAL   │        │
+│    └──────────────┘  └──────┬───────┘  └──────────────┘        │
+│                              │                                   │
+│                              ▼                                   │
+│                       ┌──────────────┐                          │
+│                       │   OBSERVE    │                          │
+│                       │   (results)  │                          │
+│                       └──────────────┘                          │
+│                              │                                   │
+│                              └───────────────────────────────────┘
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Two Operating Modes:**
+
+| Mode | Purpose | Characteristics |
+|------|---------|----------------|
+| **Chat** | Interactive conversation | Single session, immediate response, optional tools |
+| **Goal** | Background tasks | Long-running, multi-step, progress tracking |
+
+**Loop Components:**
+
+| Component | Purpose |
+|-----------|---------|
+| **Context Builder** | Assembles context from session, memory, tools, personality |
+| **Reasoner** | LLM decision-making: respond, execute tools, or create sub-goal |
+| **Executor** | Tool execution with error handling and circuit breaker |
+| **Conversation Manager** | Context window management, message truncation |
+
+**Context Sources:**
+
+| Source | Provides |
+|--------|----------|
+| Session | Conversation history (last N messages) |
+| Memory | Relevant facts about user, current context |
+| Tools | Available tools with schemas |
+| Personality | User's learned preferences |
+| Minions | Current location, activity (ambient) |
+
+**Safety Limits:**
+
+| Limit | Value | Purpose |
+|-------|-------|---------|
+| Chat max iterations | 20 | Prevent infinite loops |
+| Goal max iterations | 100 | Allow complex tasks |
+| Max tool errors | 3 | Stop on repeated failures |
+| Context window | ~128K tokens | LLM context limit |
+
+**Event Emissions:**
+
+| Event | When |
+|-------|-------|
+| `loop.started` | Loop begins |
+| `loop.thought` | LLM makes decision |
+| `loop.tools_executed` | Tools completed |
+| `loop.completed` | Loop ends successfully |
+| `loop.error` | Error occurred |
 
 **Dynamic spawning:**
 - Can spawn temporary worker processes for complex tasks
@@ -376,11 +1053,13 @@ Tool {
 
 | Module | Has LLM? | Purpose |
 |--------|----------|---------|
-| Interaction | Yes | Response generation, action decisions |
+| Interaction | No (thin interface) | API gateway, session management, response rendering |
+| Execution | **Yes** | **Agentic Loop (Think → Act → Respond)** |
 | Memory | Yes | Fact extraction, knowledge synthesis |
 | Learning | Yes | Pattern analysis, preference inference |
 | Tool Ecosystem | No | Tool execution (deterministic) |
-| Execution | No | Orchestration (deterministic) |
+
+**Note:** Interaction Module is a "thin interface" that handles I/O. It calls the Execution Module's Agentic Loop for reasoning. This separation ensures chat and goals share the same reasoning engine.
 
 **LLM Resource Management:**
 
@@ -720,7 +1399,387 @@ class Session(BaseModel):
 
 ## Streaming
 
-Deferred — not day 1. MVP first.
+> Design complete. Protocol: SSE-only.
+
+### Decision: SSE-Only
+
+| Decision | Rationale |
+|----------|-----------|
+| Protocol | Server-Sent Events (SSE) |
+| Scope | v1 streaming — text, thinking, tool events |
+| Complexity | Low — HTTP-native, no WebSocket overhead |
+| Mobile | Native EventSource support on iOS/Android |
+
+**Future (v2):** Add WebSocket only if bidirectional needs emerge.
+
+---
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       STREAMING FLOW                             │
+│                                                                  │
+│  Client                     API Gateway                    Loop │
+│  ──────                     ───────────                    ──── │
+│    │                            │                              │  │
+│    │  POST /chat/stream         │                              │  │
+│    │  { message, session_id }  │                              │  │
+│    │────────────────────────────►│                              │  │
+│    │                            │                              │  │
+│    │                            │  start_stream()              │  │
+│    │                            │─────────────────────────────►│  │
+│    │                            │                              │  │
+│    │  ◄─ SSE: thinking ────────│  emit(StreamEvent.THINKING) │  │
+│    │  ◄─ SSE: text ────────────│  emit(StreamEvent.TEXT)     │  │
+│    │  ◄─ SSE: tool_start ──────│  emit(StreamEvent.TOOL)     │  │
+│    │  ◄─ SSE: tool_done ───────│  emit(StreamEvent.TOOL)    │  │
+│    │  ◄─ SSE: text ────────────│  emit(StreamEvent.TEXT)     │  │
+│    │  ◄─ SSE: done ────────────│  emit(StreamEvent.DONE)     │  │
+│    │                            │                              │  │
+│    │  (connection closes)       │                              │  │
+│    ◄─────────────────────────────│                              │  │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### API Endpoint
+
+```python
+@router.post("/chat/stream")
+async def chat_stream(
+    request: ChatStreamRequest,
+    response: StreamingResponse
+):
+    """
+    Stream chat response via SSE.
+    
+    Returns:
+        text/event-stream
+        
+    Events:
+        - thinking: Agent is processing
+        - text: Text chunk
+        - tool_start: Tool execution started
+        - tool_done: Tool execution complete
+        - done: Stream finished
+        - error: Stream error (with retry hint)
+    """
+    loop = request.state.agent_loop
+    session_id = request.state.session_id
+    
+    await loop.run_stream(
+        session_id=session_id,
+        message=request.message,
+        stream_manager=StreamManager(response)
+    )
+
+class ChatStreamRequest(BaseModel):
+    session_id: UUID | None = None
+    message: str
+    mode: Literal["chat", "goal"] = "chat"
+```
+
+---
+
+### Stream Events
+
+```python
+class StreamEvent(BaseModel):
+    """Base for all SSE events."""
+    event: str                       # SSE event type name
+    data: str                       # JSON-serialized payload
+
+class StreamEventType(str, Enum):
+    THINKING = "thinking"
+    TEXT = "text"
+    TOOL_START = "tool_start"
+    TOOL_DONE = "tool_done"
+    TOOL_ERROR = "tool_error"
+    DONE = "done"
+    ERROR = "error"
+
+class ThinkingPayload(BaseModel):
+    """Agent is processing."""
+    message: str                    # "Planning steps..."
+
+class TextDeltaPayload(BaseModel):
+    """Text chunk."""
+    delta: str                      # New text
+
+class ToolStartPayload(BaseModel):
+    """Tool execution started."""
+    tool_name: str
+    arguments: dict                 # Sanitized (no secrets)
+
+class ToolDonePayload(BaseModel):
+    """Tool execution complete."""
+    tool_name: str
+    success: bool
+    result: str | None              # Summary or error
+
+class DonePayload(BaseModel):
+    """Stream complete."""
+    final_message: str              # Full assembled text
+    tool_calls: list[str]           # Tools used
+    iterations: int
+    duration_ms: int
+```
+
+### SSE Format
+
+```
+event: thinking
+data: {"message": "Let me check your calendar..."}
+
+event: text
+data: {"delta": "You have a meeting"}
+
+event: text
+data: {"delta": " at 2pm with"}
+
+event: text
+data: {"delta": " John."}
+
+event: tool_start
+data: {"tool_name": "shell", "arguments": {"command": "git status"}}
+
+event: tool_done
+data: {"tool_name": "shell", "success": true, "result": "On branch main"}
+
+event: text
+data: {"delta": " Your repo is on branch main."}
+
+event: done
+data: {"final_message": "You have a meeting at 2pm with John. Your repo is on branch main.", "tool_calls": ["shell"], "iterations": 2, "duration_ms": 2341}
+```
+
+### StreamManager
+
+```python
+class StreamManager:
+    """
+    Manages SSE streaming to clients.
+    
+    Responsibilities:
+    - Serialize events to SSE format
+    - Handle client disconnect
+    - Buffer for slow clients (drop oldest if full)
+    """
+    
+    def __init__(
+        self,
+        response: StreamingResponse,
+        buffer_size: int = 10
+    ):
+        self._response = response
+        self._buffer: asyncio.Queue[StreamEvent] = asyncio.Queue(maxsize=buffer_size)
+        self._closed = False
+    
+    async def emit(self, event: StreamEvent) -> None:
+        """
+        Emit an event to the stream.
+        
+        Non-blocking: if buffer full, drops oldest event.
+        This prevents slow clients from blocking the agent.
+        """
+        if self._closed:
+            return
+            
+        try:
+            self._buffer.put_nowait(event)
+        except asyncio.QueueFull:
+            # Drop oldest, add newest
+            try:
+                self._buffer.get_nowait()
+                self._buffer.put_nowait(event)
+            except:
+                pass
+    
+    async def flush(self) -> None:
+        """Flush buffered events to client."""
+        while not self._buffer.empty():
+            event = await self._buffer.get()
+            await self._send_event(event)
+    
+    async def _send_event(self, event: StreamEvent) -> None:
+        """Send single event as SSE."""
+        await self._response.stream(
+            f"event: {event.event}\n"
+            f"data: {event.data}\n\n"
+        )
+    
+    async def close(self) -> None:
+        """Close the stream."""
+        self._closed = True
+        await self._response.alice()
+```
+
+### Integration with Agentic Loop
+
+```python
+class StreamingAgentLoop:
+    """
+    Streaming version of the Agentic Loop.
+    
+    Replaces run_chat() with run_stream() that emits events
+    to a StreamManager instead of collecting a final response.
+    """
+    
+    async def run_stream(
+        self,
+        session_id: UUID,
+        message: str,
+        stream: StreamManager
+    ) -> None:
+        """
+        Run chat with streaming output.
+        
+        Args:
+            session_id: Conversation session
+            message: User input
+            stream: StreamManager to emit events to
+        """
+        # Emit thinking
+        await stream.emit(StreamEvent(
+            event="thinking",
+            data=json.dumps({"message": "Thinking..."})
+        ))
+        
+        # Build context
+        context = await self.context_builder.build(session_id, message)
+        
+        # Run loop with streaming
+        async for chunk in self.reasoner.reason_stream(context):
+            await stream.emit(StreamEvent(
+                event="text",
+                data=json.dumps({"delta": chunk})
+            ))
+        
+        # Run tools if needed (non-streaming for v1)
+        if tool_calls := self.last_decision.tool_calls:
+            for call in tool_calls:
+                await stream.emit(StreamEvent(
+                    event="tool_start",
+                    data=json.dumps({
+                        "tool_name": call.name,
+                        "arguments": sanitize_args(call.arguments)
+                    })
+                ))
+                
+                result = await self.executor.execute(call)
+                
+                await stream.emit(StreamEvent(
+                    event="tool_done",
+                    data=json.dumps({
+                        "tool_name": call.name,
+                        "success": result.success,
+                        "result": summarize_result(result)
+                    })
+                ))
+        
+        # Emit done
+        await stream.emit(StreamEvent(
+            event="done",
+            data=json.dumps({
+                "final_message": self.full_response,
+                "tool_calls": [c.name for c in tool_calls],
+                "iterations": self.iterations,
+                "duration_ms": self.duration_ms
+            })
+        ))
+```
+
+### v1 Scope
+
+```
+✅ Chat text streaming (SSE text event)
+✅ Thinking indicator (SSE thinking event)
+✅ Tool start/done events (SSE tool_start, tool_done)
+✅ Done event with stats
+✅ Non-blocking buffering (slow client protection)
+✅ Graceful disconnect handling
+
+❌ Tool output streaming (tail -f style)
+❌ Tool progress updates (steps/percentage)
+❌ WebSocket bidirectional
+❌ Stream reconnection/resume
+❌ E2E encryption (not needed for local deployment)
+```
+
+### Client Example
+
+```javascript
+// Modern approach with Fetch + ReadableStream
+const response = await fetch('/chat/stream', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Deploy the app' }),
+    headers: { 'Content-Type': 'application/json' }
+});
+
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+
+// SSE parser
+function parseSSELines(chunk) {
+    const lines = chunk.split('\n');
+    const events = [];
+    let current = {};
+    
+    for (const line of lines) {
+        if (line === '') {
+            if (current.event && current.data) {
+                events.push(current);
+            }
+            current = {};
+        } else if (line.startsWith('event: ')) {
+            current.event = line.slice(7);
+        } else if (line.startsWith('data: ')) {
+            current.data = line.slice(6);
+        }
+    }
+    return events;
+}
+
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    
+    const chunk = decoder.decode(value);
+    parseSSELines(chunk).forEach(({ event, data }) => {
+        const payload = JSON.parse(data);
+        
+        switch (event) {
+            case 'thinking':
+                showThinking(payload.message);
+                break;
+            case 'text':
+                appendToResponse(payload.delta);
+                break;
+            case 'tool_start':
+                showToolExecuting(payload.tool_name);
+                break;
+            case 'tool_done':
+                showToolResult(payload.tool_name, payload.result);
+                break;
+            case 'done':
+                showStats(payload.iterations, payload.duration_ms);
+                break;
+        }
+    });
+}
+```
+
+### Settled Questions
+
+- **Protocol:** SSE-only (no WebSocket)
+- **Tool output:** Not streamed (final summary only)
+- **Tool progress:** Simple start/done events (no steps)
+- **Client → Server:** Not needed for v1
+- **Reconnection:** Not supported (new stream per request)
+- **Backpressure:** Buffer with drop-oldest policy (prevents slow clients blocking agent)
 
 ---
 
@@ -738,14 +1797,15 @@ Deferred — not day 1. MVP first.
 ## Settled Questions
 
 - **Architecture:** Event-driven ecosystem (river metaphor), modules as peers, indirect communication via event bus
+- **Agentic Loop:** Heart of Cortex — Think → Act → Observe → Respond cycle. Lives in Execution Module. Two modes: Chat (interactive) and Goal (background). Safety limits prevent infinite loops.
+- **Interaction Module:** Thin interface — handles API gateway, session management, response rendering. Calls Execution Module's Agentic Loop for reasoning.
 - **Input streams:** Two — Direct input (chat, tools, goals) and Sensory input (minions as organs)
-- **Minions:** Organs that stream life data; phones, cards, laptops send events to Cortex via MQTT + mTLS
-- **Minion transport:** MQTT 5.0 over TLS (battery efficient, persistent connections, QoS 1 delivery)
-- **Minion auth:** Mutual TLS (mTLS) — both parties verify certificates; no API keys
-- **Minion certs:** User-initiated setup via QR code; Cortex issues certs signed by CASTRATION (internal CA); 30-day validity, automated rotation
-- **Minion broker:** Self-hosted Mosquitto in Docker (port 8883)
+- **Minions:** Organs that stream life data; phones, cards, laptops send events to Cortex via MQTT with API token auth
+- **Minion transport:** MQTT 5.0 (battery efficient, persistent connections, QoS 1 delivery)
+- **Minion auth:** API token via MQTT username/password (no mTLS for v1, trusted network assumption)
+- **Minion broker:** Self-hosted Mosquitto in Docker (port 1883)
 - **Minion events:** Full event schemas defined in [MINION_EVENTS.md](MINION_EVENTS.md) — location, activity, calendar, app_usage, call_log, payment, refund, screen_activity, application_focus, keyboard_activity, battery, network_status
-- **Event bus:** In-memory asyncio Queue (Redis addable later for resilience) — all inter-module communication flows through events
+- **Event bus:** In-memory asyncio Queue — all inter-module communication flows through events
 - **Event schema:** Versioned Pydantic models for core events; BaseEvent + per-type payloads
 - **Salience mechanism:** Events carry salience score (0.0-1.0); modules filter by threshold
 - **Event naming:** Session in metadata only, no wildcard subtypes in event types
@@ -754,15 +1814,19 @@ Deferred — not day 1. MVP first.
 - **Fact model:** Symbolic representation + natural language, hierarchy tree with frequency-adjusted promotion, explicit retraction via `retracted_at`
 - **Concept derivation:** LLM proposes with proof chain, logic engine validates, cascade invalidation on source change
 - **Persistence:** Postgres for all state; event bus for real-time coordination only
-- **LLM ownership:** Per-module (Interaction, Memory, Learning each have their own)
-- **LLM resource management:** Priority queue — Interaction > Memory > Learning
+- **LLM ownership:** Execution Module (Agentic Loop), Memory, Learning each have their own LLM client
+- **LLM resource management:** Priority queue — Execution > Memory > Learning
 - **Tool correlation:** `correlation_id` in tool.request/result payloads
 - **Goal lifecycle:** goal.created → goal.status → goal.completed / goal.failed / goal.resumed
 - **Module lifecycle:** Health checks via `/health` endpoint, orchestrator polls
 - **Tool extensibility:** Registry-based — register tools in DB, no core code changes
 - **Dynamic spawning:** Yes — Execution Module can spawn workers for complex tasks
 - **Learning scope:** Both preferences AND knowledge; proactive recommendations powered by minion data
-- **Memory role:** Proactive transformer — watches all events (user + minion), extracts facts autonomously
+- **Memory role:** Proactive transformer — watches all events (user + minion), extracts facts autonomously. Ambient context for Agentic Loop.
+- **MemoryService API:** Explicit service interface for querying/storing facts. All modules use this API, not raw SQL. Defined in ARCHITECTURE.md.
+- **PersonalityModule:** Manages learned personality traits. Traits are stored as facts in Memory (type=`preference`). PersonalityService provides context for system prompt injection with reserved quota (max 500 tokens).
+- **Minion security (v1):** Plain MQTT, no TLS, API token auth via MQTT username/password. Runs on trusted local network.
+- **Streaming:** SSE-only. Events: thinking, text, tool_start, tool_done, done. Non-blocking buffer with drop-oldest policy. No reconnection/resume in v1.
 - **Config:** YAML + env overrides, Pydantic Settings
 
 ---
@@ -915,29 +1979,81 @@ SessionManager        # manages session context, current mode per session
 ```
 Subscriptions:
 ├── user.message                     # all user messages — extract facts
-└── conversation.message             # agent responses — extract facts
+├── conversation.message             # agent responses — extract facts
+└── minion.* (all types)             # sensory data — extract facts
+
+Service API:
+└── MemoryService                    # exposed to other modules for querying
 
 Database:
-└── Postgres (facts table)          # facts stored directly, queried by other modules
-
-Note: Modules query Postgres directly — no fact.query/fact.result events.
+└── Postgres (facts table)          # facts stored via FactStore
 ```
 
 **Internal Components:**
 ```python
+MemoryService             # Service API (query, store, search)
 FactStore                # Postgres client for facts/concepts
 FactExtractor           # LLM client — extracts structured facts from text
 LogicEngine             # PyDatalog — validates LLM reasoning, checks consistency
 HierarchyManager        # manages frequency-adjusted fact hierarchy (hot/warm/cold)
 ```
 
+**Public API (MemoryService):**
+```python
+get_relevant(query, limit, session_id, fact_types) -> list[Fact]
+get_context(dimensions) -> dict  # ambient context (time, location, activity)
+get_personality_context() -> PersonalityProfile
+search(query, filters) -> list[Fact]
+store_fact(fact) -> Fact
+retract_fact(fact_id) -> None
+propose_concept(derivation) -> Concept | Rejection
+```
+
 **Fact categories:** `preference`, `behavior`, `knowledge`, `context`
 
 ---
 
-### Learning Module
+### Personality Module
 
-**Purpose:** Pattern detection, preference inference, proactive recommendations.
+**Purpose:** Manage learned personality traits and provide context for response formatting.
+
+```
+Subscriptions:
+├── user.feedback                    # explicit personality corrections
+├── preference.learned               # newly learned preferences
+└── conversation.ended              # analyze conversation for implicit feedback
+
+Service API:
+└── PersonalityService               # provides personality context for prompts
+
+Dependencies:
+└── MemoryService                     # reads/writes personality facts
+```
+
+**Internal Components:**
+```python
+PersonalityService        # public API for personality management
+TraitAggregator          # merges traits from Memory
+FeedbackProcessor        # handles explicit and implicit feedback
+SystemPromptBuilder      # formats traits into natural language
+```
+
+**Public API (PersonalityService):**
+```python
+get_profile(session_id) -> PersonalityProfile
+get_system_prompt_context(session_id) -> str  # for system prompt injection
+record_feedback(feedback) -> list[Fact]
+```
+
+**Trait Dimensions:** `tone`, `verbosity`, `formality`, `humor`, `directness`, `confidence`
+
+**System Prompt Quota:** Max 500 tokens reserved for personality context.
+
+---
+
+### Learning Module (Stub)
+
+**Purpose:** Pattern detection, preference inference, proactive recommendations. (Stub for MVP — stores raw events, full analysis deferred.)
 
 ```
 Subscriptions:
@@ -1041,11 +2157,12 @@ ProgressTracker          # emits goal.status updates
 
 ### Interface Summary
 
-| Module | Input Events | Output Events | Internal API |
-|--------|-------------|---------------|--------------|
-| Interaction | `user.message`, `recommendation.generated` | `conversation.message`, `goal.created` | `InteractionService`, `ResponseRenderer` |
-| Memory | `user.message`, `conversation.message` | (writes to Postgres directly) | `FactStore`, `FactExtractor`, `LogicEngine`, `HierarchyManager` |
-| Learning | `user.message`, `conversation.message`, `goal.completed`, `goal.failed`, `recommendation.executed` | `pattern.detected`, `preference.learned`, `recommendation.generated` | `PatternAnalyzer`, `PreferenceEngine`, `Recommender` |
+| Module | Input Events | Output Events | Service API |
+|--------|-------------|---------------|------------|
+| Interaction | `user.message`, `recommendation.generated` | `conversation.message`, `goal.created` | `InteractionService` |
+| Memory | `user.message`, `conversation.message`, `minion.*` | (writes via `MemoryService`) | `MemoryService` (public) + `FactStore`, `FactExtractor`, `LogicEngine`, `HierarchyManager` (internal) |
+| Personality | `user.feedback`, `preference.learned`, `conversation.ended` | (writes via `MemoryService`) | `PersonalityService` |
+| Learning | `user.message`, `conversation.message`, `goal.*`, `recommendation.executed` | `pattern.detected`, `preference.learned`, `recommendation.generated` | `PatternAnalyzer`, `PreferenceEngine`, `Recommender` |
 | Tool Ecosystem | `tool.request` | `tool.result` | `ToolRegistry`, `ToolExecutor` |
 | Execution | `goal.created`, `recommendation.executed` | `goal.status`, `goal.completed`, `goal.failed`, `goal.resumed`, `module.spawn` | `GoalOrchestrator`, `WorkerSpawner` |
 
@@ -1066,7 +2183,9 @@ cortex/
 │       │
 │       ├── api/                      # API Gateway (entry point)
 │       │   ├── __init__.py
-│       │   └── routes.py             # /chat, /health endpoints
+│       │   ├── routes.py             # /chat, /chat/stream, /health endpoints
+│       │   ├── streaming.py          # StreamManager, SSE formatting
+│       │   └── models.py             # Request/Response models
 │       │
 │       ├── interaction/              # Interaction Module
 │       │   ├── __init__.py
@@ -1075,10 +2194,20 @@ cortex/
 │       │
 │       ├── memory/                   # Memory Module
 │       │   ├── __init__.py
+│       │   ├── service.py            # MemoryService (public API)
 │       │   ├── fact_store.py         # Postgres client for facts/concepts
 │       │   ├── extractor.py          # LLM fact extraction
 │       │   ├── logic_engine.py       # PyDatalog validation
-│       │   └── hierarchy.py          # Frequency-adjusted fact hierarchy
+│       │   ├── hierarchy.py          # Frequency-adjusted fact hierarchy
+│       │   └── models.py             # Fact, Concept, SearchFilters models
+│       │
+│       ├── personality/              # Personality Module
+│       │   ├── __init__.py
+│       │   ├── service.py            # PersonalityService (public API)
+│       │   ├── aggregator.py         # Trait aggregation from Memory
+│       │   ├── feedback.py          # Explicit/implicit feedback processing
+│       │   ├── prompt_builder.py    # System prompt context generation
+│       │   └── models.py             # PersonalityTrait, PersonalityProfile models
 │       │
 │       ├── learning/                 # Learning Module
 │       │   ├── __init__.py
@@ -1307,17 +2436,17 @@ Minions are **organs** that stream sensory data to Cortex. They are processes ru
 │                      MINION                                 │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
 │  │ Data        │  │ Filter &    │  │ MQTT Client         │ │
-│  │ Collectors  │→ │ Normalizer  │→ │ (TLS + mTLS auth)   │ │
+│  │ Collectors  │→ │ Normalizer  │→ │ (API token auth)    │ │
 │  │ (GPS, API)  │  │ (debounce,  │  │                     │ │
 │  │             │  │  dedup)     │  │                     │ │
 │  └─────────────┘  └─────────────┘  └──────────┬──────────┘ │
 └───────────────────────────────────────────────┼─────────────┘
-                                                │ MQTT over TLS
+                                                │ MQTT (plain)
                                                 ▼
                                       ┌─────────────────┐
                                       │   MQTT Broker  │
                                       │  (Mosquitto)   │
-                                      │   Port 8883     │
+                                      │   Port 1883     │
                                       └────────┬────────┘
                                                │
                                       ┌────────┴────────┐
@@ -1335,25 +2464,39 @@ Minions are **organs** that stream sensory data to Cortex. They are processes ru
 
 | Property | Value |
 |----------|-------|
-| Transport | MQTT 5.0 over TLS 1.3 |
-| Authentication | Mutual TLS (mTLS) |
-| Encryption | TLS 1.3 (all traffic encrypted) |
+| Transport | MQTT 5.0 (plain, no TLS for v1) |
+| Authentication | API token via MQTT username/password |
+| Encryption | None (v1 runs on trusted local network) |
 | QoS | QoS 1 (at-least-once delivery) |
 | Data ownership | All data stays local (user's devices + user's Cortex instance) |
 | Cortex role | Process only — no commands to minions (v1) |
 | Minion autonomy | Minions decide what/when to send |
 
-### Certificate Hierarchy
+### Authentication Model
 
 ```
-CASTRATION (Cortex CA - internal)
-├── Root CA (self-signed, 10 years, ships with minion apps)
-│   ├── Signs: Minion certificates
-│   │   └── Validity: 30 days
-│   │   └── Renewal: Automated before expiry
-│   └──
-└── Broker certificates (server auth)
+┌─────────────────────────────────────────────────────────────┐
+│                    v1 Security Model                        │
+│                                                              │
+│  ┌──────────────────┐         ┌──────────────────┐         │
+│  │     Minion       │         │   MQTT Broker    │         │
+│  │                  │         │                  │         │
+│  │  username:       │         │  passwd.conf     │         │
+│  │    minion_<id>   │────────►│  (bcrypt hash)   │         │
+│  │                  │         │                  │         │
+│  │  password:       │         └──────────────────┘         │
+│  │    <API_TOKEN>   │                                      │
+│  └──────────────────┘                                      │
+│                                                              │
+│  Token generated by: Cortex Admin UI                       │
+│  Token stored in: Minion config file                       │
+│  Token revocation: Delete from passwd.conf                │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+**v1 assumption:** All minions run on the same trusted network (home WiFi). No encryption needed within trust boundary.
+
+**Future (v2):** Add TLS when minions connect over untrusted networks.
 
 ### MQTT Topics
 
@@ -1370,13 +2513,13 @@ cortex/minions/<minion_id>/
 ### Provisioning Flow
 
 ```
-1. User starts setup in minion app
-2. Minion generates key pair + CSR locally
-3. QR code / pairing token displayed
-4. User scans QR in Cortex UI, approves
-5. Cortex signs CSR → issues certificate (30 days)
-6. Minion installs cert, connects to broker with mTLS
-7. Minion subscribes to commands, publishes events
+1. User opens Cortex Admin UI
+2. UI generates random API token (UUID v4)
+3. User copies token to minion config file
+4. Minion connects with username=minion_<id>, password=<token>
+5. Broker verifies token against passwd.conf
+6. Minion publishes registration event
+7. Cortex confirms registration, sends config
 ```
 
 ### Event Flow
