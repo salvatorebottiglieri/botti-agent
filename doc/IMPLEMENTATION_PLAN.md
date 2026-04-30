@@ -353,19 +353,28 @@ class ToolExecutor(ABC):
         ...
 ```
 
-### 2.3 Minion MQTT Client
+### 2.3 Minion MQTT Client ✅ COMPLETE
 ```
 src/cortex/minions/
 ├── __init__.py
-├── interfaces.py          # MinionGateway (ABC), MinionEventHandler (ABC)
+├── models.py              # MinionInfo, MinionEvent, MinionEventBatch, MinionConfig
+├── interfaces.py          # MinionGateway, MinionEventHandler, MinionRegistry (ABCs)
 ├── mqtt_client.py         # MinionMQTTClient
 ├── event_handler.py       # MinionEventProcessor
-├── registry.py            # MinionRegistry
-├── auth.py                # Token management
-└── models.py              # MinionInfo, MinionEventBatch, payloads
+└── registry.py            # InMemoryMinionRegistry
 ```
 
-**Interface:**
+**Status:** Implemented 2026-04-30
+
+**Features:**
+- MinionInfo, MinionEvent, MinionEventBatch, MinionConfig models
+- MinionGateway ABC for receiving events
+- MinionEventHandler ABC for processing events
+- InMemoryMinionRegistry for tracking minions
+- MinionMQTTClient implementation with async message handling
+- 24 tests covering all components
+
+**Tests:** 24 unit tests
 ```python
 class MinionGateway(ABC):
     """Interface for receiving minion events."""
@@ -391,15 +400,26 @@ class MinionRegistry(ABC):
     async def heartbeat(self, minion_id: str) -> None: ...
 ```
 
-### 2.4 Fact Store
+### 2.4 Fact Store ✅ COMPLETE
 ```
 src/cortex/memory/
 ├── __init__.py
-├── interfaces.py          # FactRepository (ABC)
-├── repository.py         # PostgresFactRepository
-├── models.py              # Fact, Concept, FactType
-└── extractor.py           # LLMFactExtractor (stub for now)
+├── models.py              # Fact, Concept, FactType, FactMutability
+└── interfaces.py          # FactRepository, ConceptRepository, FactExtractor (ABCs)
 ```
+
+**Status:** Implemented 2026-04-30
+
+**Features:**
+- Fact model with type, mutability, confidence, symbolic/natural repr
+- Concept model for derived knowledge
+- FactType enum (location, activity, calendar, etc.)
+- FactRepository ABC with full CRUD and search
+- ConceptRepository ABC for derived concepts
+- FactExtractor ABC for LLM-powered extraction
+- 18 tests covering all models and interfaces
+
+**Tests:** 18 unit tests
 
 **Interface:**
 ```python
@@ -1119,29 +1139,41 @@ cortex/
 │
 ├── sessions/                # Wave 2.1 ✅
 │   ├── __init__.py
-│   ├── models.py            # Session, Message, SessionState
-│   ├── interfaces.py         # SessionRepository (ABC)
-│   ├── repository.py         # PostgresSessionRepository
-│   └── service.py            # SessionService
+│   ├── models.py
+│   ├── interfaces.py
+│   ├── repository.py
+│   └── service.py
 │
 ├── tools/                   # Wave 2.2 ✅
-│   ├── __init__.py           # Public exports
-│   ├── interfaces.py         # Tool, ToolExecutor, ToolRegistry ABCs
-│   ├── registry.py           # InMemoryToolRegistry + ToolRegistrar
-│   ├── executor.py           # DefaultToolExecutor + ExecutionMetrics
-│   └── meta/                 # Meta tools (file_read, file_write, shell, grep)
+│   ├── __init__.py
+│   ├── interfaces.py
+│   ├── registry.py
+│   ├── executor.py
+│   └── meta/
 │       ├── __init__.py
 │       ├── base.py
 │       ├── file_read.py
 │       ├── file_write.py
 │       ├── shell.py
 │       └── grep.py
-├── memory/                  # Wave 2.4 (pending)
+│
+├── minions/                 # Wave 2.3 ✅
+│   ├── __init__.py
+│   ├── models.py
+│   ├── interfaces.py
+│   ├── registry.py
+│   ├── mqtt_client.py
+│   └── event_handler.py
+│
+├── memory/                  # Wave 2.4 ✅
+│   ├── __init__.py
+│   ├── models.py
+│   └── interfaces.py
 │
 ├── migrations/               # Wave 0 ✅
 ├── docker/                   # Wave 0 ✅
 ├── tests/
-│   └── unit/                 # 65 tests (Wave 0, 1, 2.1)
+│   └── unit/                 # 174 tests (Wave 0, 1, 2.x)
 ├── docker-compose.yml        # Wave 0 ✅
 ├── Dockerfile                # Wave 0 ✅
 ├── pyproject.toml           # Wave 0 ✅
