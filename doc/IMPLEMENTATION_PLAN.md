@@ -22,8 +22,8 @@
               │              WAVE 2: STANDALONE MODULES               ║
               ╠═══════════════╦═══════════════╦═══════════════╦═══════╣
               │  ToolRegistry  │ MinionMQTT   │  FactStore    │Session║
-              │  (interface)   │  (interface) │  (interface)  │ Store ║
-              ║  (pending)      │  (pending)   │  (pending)   │ ✅    ║
+              │  ✅ COMPLETE    │  (pending)   │  (pending)    │ Store ║
+              ║  (67 tests)     │              │               │ ✅    ║
               ╚═══════════════╩═══════════════╩═══════════════╩═══════╝
                                               │
               ╔═══════════════════════════════════════════════════════╗
@@ -284,21 +284,31 @@ CREATE TABLE messages (
 );
 ```
 
-### 2.2 Tool Registry
+### 2.2 Tool Registry ✅ COMPLETE
 ```
 src/cortex/tools/
 ├── __init__.py
-├── interfaces.py          # Tool, ToolExecutor (ABCs)
-├── registry.py            # ToolRegistry
-├── executor.py            # ToolExecutor
-├── models.py              # ToolDefinition, ToolResult, ToolCall
+├── interfaces.py          # Tool, ToolExecutor (ABCs), ToolDefinition, ToolResult, ToolCall
+├── registry.py            # InMemoryToolRegistry, ToolRegistrar
+├── executor.py            # DefaultToolExecutor with timeout, validation, metrics
 └── meta/                  # Built-in tools
     ├── __init__.py
+    ├── base.py
     ├── file_read.py
     ├── file_write.py
     ├── shell.py
     └── grep.py
 ```
+
+**Status:** Implemented 2026-04-30
+
+**Features:**
+- InMemoryToolRegistry with search, categories, copy
+- DefaultToolExecutor with timeout, validation, metrics
+- 4 built-in meta tools: file_read, file_write, shell, grep
+- Full test coverage (67 tests)
+
+**Tests:** 67 unit tests for interfaces, registry, executor, meta tools
 
 **Interface:**
 ```python
@@ -1020,7 +1030,7 @@ src/minion/
 | **0** | Foundation | Config, Logging, Docker | ✅ Complete |
 | **1** | Primitives | EventBus, LLMClient, DB | ✅ Complete |
 | **2.1** | Session Store | SessionRepo, SessionService | ✅ Complete |
-| **2.2** | Tool Registry | Tool, ToolRegistry, Executor | Pending |
+| **2.2** | Tool Registry | Tool, ToolRegistry, Executor, Meta Tools | ✅ Complete |
 | **2.3** | MinionMQTT | MinionGateway, EventHandler | Pending |
 | **2.4** | Fact Store | FactRepository, FactStore | Pending |
 | **3** | Services | ToolExecutor, MinionService, MemoryService | Pending |
@@ -1114,9 +1124,19 @@ cortex/
 │   ├── repository.py         # PostgresSessionRepository
 │   └── service.py            # SessionService
 │
-├── tools/                   # Wave 2.2 (pending)
+├── tools/                   # Wave 2.2 ✅
+│   ├── __init__.py           # Public exports
+│   ├── interfaces.py         # Tool, ToolExecutor, ToolRegistry ABCs
+│   ├── registry.py           # InMemoryToolRegistry + ToolRegistrar
+│   ├── executor.py           # DefaultToolExecutor + ExecutionMetrics
+│   └── meta/                 # Meta tools (file_read, file_write, shell, grep)
+│       ├── __init__.py
+│       ├── base.py
+│       ├── file_read.py
+│       ├── file_write.py
+│       ├── shell.py
+│       └── grep.py
 ├── memory/                  # Wave 2.4 (pending)
-├── minions/                 # Wave 2.3 (pending)
 │
 ├── migrations/               # Wave 0 ✅
 ├── docker/                   # Wave 0 ✅
@@ -1181,4 +1201,4 @@ After Wave 6:
 
 ---
 
-*Last updated: 2026-04-30* (Wave 0, Wave 1, Wave 2.1 completed - 65 tests)
+*Last updated: 2026-04-30* (Wave 0, Wave 1, Wave 2.1, Wave 2.2 completed - 132 tests)
