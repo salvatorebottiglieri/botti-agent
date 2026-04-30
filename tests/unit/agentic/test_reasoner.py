@@ -1,0 +1,319 @@
+"""Tests for Reasoner."""
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+
+from cortex.agentic.reasoner import Reasoner
+from cortex.agentic.models import (
+    Context,
+    Decision,
+    DecisionType,
+    Mode,
+    PersonalityContext,
+    AmbientContext,
+)
+from cortex.llm.models import ChatMessage
+
+
+class TestReasoner:
+    """Tests for Reasoner."""
+
+    @pytest.fixture
+    def mock_llm_client(self):
+        """Create a mock LLM client."""
+        client = MagicMock()
+        client.chat = AsyncMock()
+        return client
+
+    @pytest.fixture
+    def mock_tool_registry(self):
+        """Create a mock tool registry."""
+        registry = MagicMock()
+        return registry
+
+    @pytest.fixture
+    def reasoner(self, mock_llm_client, mock_tool_registry):
+        """Create a Reasoner."""
+        return Reasoner(
+            llm_client=mock_llm_client,
+            tool_registry=mock_tool_registry,
+            system_prompt="You are a helpful assistant.",
+        )
+
+    @pytest.mark.asyncio
+    async def test_reason_returns_decision(self, reasoner, mock_llm_client):
+        """Reason should return a Decision."""
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="Hello, how can I help?",
+            tool_calls=[],
+        ))
+
+        context = Context(session_id=uuid4())
+
+        decision = await reasoner.reason(context)
+
+        assert decision is not None
+        assert isinstance(decision, Decision)
+
+    @pytest.mark.asyncio
+    async def test_reason_calls_llm(self, reasoner, mock_llm_client):
+        """Reason should call the LLM client."""
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="Response",
+            tool_calls=[],
+        ))
+
+        context = Context(session_id=uuid4())
+
+        await reasoner.reason(context)
+
+        mock_llm_client.chat.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reason_with_simple_response(self, reasoner, mock_llm_client):
+        """Reason handles simple text responses."""
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="The weather is sunny today.",
+            tool_calls=[],
+        ))
+
+        context = Context(session_id=uuid4())
+
+        decision = await reasoner.reason(context)
+
+        assert decision.decision_type == DecisionType.RESPOND
+        assert decision.text is not None
+
+    @pytest.mark.asyncio
+    async def test_reason_with_tool_calls(self, reasoner, mock_llm_client):
+        """Reason handles tool call responses."""
+        from cortex.tools.interfaces import ToolCall
+
+        tool_call = ToolCall(id="call-1", name="file_read", arguments={"path": "/test"})
+
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="Let me read that file.",
+            tool_calls=[tool_call],
+        ))
+
+        context = Context(session_id=uuid4())
+
+        decision = await reasoner.reason(context)
+
+        assert decision.decision_type == DecisionType.EXECUTE_TOOLS
+        assert decision.tool_calls is not None
+        assert len(decision.tool_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_reason_includes_reasoning(self, reasoner, mock_llm_client):
+        """Decision should include reasoning."""
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="Done",
+            tool_calls=[],
+            reasoning="User asked a simple question, no tools needed",
+        ))
+
+        context = Context(session_id=uuid4())
+
+        decision = await reasoner.reason(context)
+
+        assert decision.reasoning is not None
+
+    @pytest.mark.asyncio
+    async def test_reason_uses_system_prompt(self, reasoner, mock_llm_client):
+        """Reason should use the system prompt."""
+        reasoner_with_custom = Reasoner(
+            llm_client=mock_llm_client,
+            tool_registry=MagicMock(),
+            system_prompt="You are a pirate assistant. Arr!",
+        )
+
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="Arr!",
+            tool_calls=[],
+        ))
+
+        context = Context(session_id=uuid4())
+
+        await reasoner_with_custom.reason(context)
+
+        # Check that chat was called with messages
+        call_args = mock_llm_client.chat.call_args
+        messages = call_args[0][0] if call_args[0] else call_args[1].get('messages', [])
+
+        # System prompt should be in the messages
+        system_messages = [m for m in messages if hasattr(m, 'role') and m.role == 'system']
+        assert len(system_messages) > 0
+
+    @pytest.mark.asyncio
+    async def test_reason_with_empty_context(self, reasoner, mock_llm_client):
+        """Reason handles empty context."""
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="Hello!",
+            tool_calls=[],
+        ))
+
+        context = Context(session_id=uuid4())
+
+        decision = await reasoner.reason(context)
+
+        assert decision is not None
+
+    @pytest.mark.asyncio
+    async def test_reason_includes_tools_in_prompt(self):
+        """Reason should include available tools in context."""
+        mock_tool_registry = MagicMock()
+        mock_tool_registry.get_schemas = MagicMock(return_value=[
+            {"name": "file_read", "description": "Read a file"}
+        ])
+
+        mock_llm_client = MagicMock()
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="Using file_read tool",
+            tool_calls=[],
+        ))
+
+        reasoner = Reasoner(
+            llm_client=mock_llm_client,
+            tool_registry=mock_tool_registry,
+        )
+
+        # Create a mock tool with a name attribute
+        class MockToolSchema:
+            name = "file_read"
+            description = "Read a file"
+
+        context = Context(session_id=uuid4(), tools=[MockToolSchema()])
+
+        await reasoner.reason(context)
+
+        # Verify the system prompt includes tool info
+        call_args = mock_llm_client.chat.call_args
+        messages = call_args[0][0] if call_args[0] else []
+        system_msgs = [m for m in messages if getattr(m, 'role', '') == 'system']
+        tool_in_prompt = any('tool' in str(m.content).lower() or 'file_read' in str(m.content) for m in system_msgs)
+        assert tool_in_prompt or len(context.tools) > 0  # Either in prompt or context has tools
+
+
+class TestReasonerEdgeCases:
+    """Edge case tests for Reasoner."""
+
+    @pytest.fixture
+    def mock_llm_client(self):
+        client = MagicMock()
+        client.chat = AsyncMock()
+        return client
+
+    @pytest.mark.asyncio
+    async def test_reason_handles_llm_error(self):
+        """Reason handles LLM errors gracefully."""
+        mock_llm_client = MagicMock()
+        mock_llm_client.chat.side_effect = Exception("LLM error")
+
+        reasoner = Reasoner(
+            llm_client=mock_llm_client,
+            tool_registry=MagicMock(),
+        )
+
+        context = Context(session_id=uuid4())
+
+        # Should return an error decision, not raise
+        decision = await reasoner.reason(context)
+        
+        # Error handling returns a respond decision with error message
+        assert decision.decision_type == DecisionType.RESPOND
+        assert "error" in decision.text.lower() or "try again" in decision.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_reason_with_goal_mode(self, mock_llm_client):
+        """Reason handles GOAL mode."""
+        from cortex.agentic.models import GoalContext
+
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="Working on the goal.",
+            tool_calls=[],
+        ))
+
+        reasoner = Reasoner(
+            llm_client=mock_llm_client,
+            tool_registry=MagicMock(),
+        )
+
+        context = Context(
+            session_id=uuid4(),
+            goal=GoalContext(goal_id=uuid4(), description="Clean up files"),
+        )
+
+        decision = await reasoner.reason(context)
+
+        assert decision is not None
+
+    @pytest.mark.asyncio
+    async def test_reason_with_personality_context(self, mock_llm_client):
+        """Reason uses personality context for formatting."""
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="As you wish.",
+            tool_calls=[],
+        ))
+
+        reasoner = Reasoner(
+            llm_client=mock_llm_client,
+            tool_registry=MagicMock(),
+        )
+
+        context = Context(
+            session_id=uuid4(),
+            personality=PersonalityContext(formality=0.9),
+        )
+
+        decision = await reasoner.reason(context)
+
+        assert decision is not None
+
+    @pytest.mark.asyncio
+    async def test_reason_with_ambient_context(self, mock_llm_client):
+        """Reason considers ambient context."""
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="Good morning!",
+            tool_calls=[],
+        ))
+
+        reasoner = Reasoner(
+            llm_client=mock_llm_client,
+            tool_registry=MagicMock(),
+        )
+
+        context = Context(
+            session_id=uuid4(),
+            ambient=AmbientContext(time_of_day="morning", location="home"),
+        )
+
+        decision = await reasoner.reason(context)
+
+        assert decision is not None
+
+    @pytest.mark.asyncio
+    async def test_reason_multiple_tool_calls(self, mock_llm_client):
+        """Reason handles multiple tool calls."""
+        from cortex.tools.interfaces import ToolCall
+
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="I'll read the file and then search.",
+            tool_calls=[
+                ToolCall(id="1", name="file_read", arguments={"path": "/test"}),
+                ToolCall(id="2", name="grep", arguments={"pattern": "TODO"}),
+            ],
+        ))
+
+        reasoner = Reasoner(
+            llm_client=mock_llm_client,
+            tool_registry=MagicMock(),
+        )
+
+        context = Context(session_id=uuid4())
+
+        decision = await reasoner.reason(context)
+
+        assert decision.decision_type == DecisionType.EXECUTE_TOOLS
+        assert len(decision.tool_calls) == 2

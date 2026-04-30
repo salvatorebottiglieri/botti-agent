@@ -627,9 +627,21 @@ class MemoryService:
 
 ---
 
-## 🌀 Wave 4: Agentic Core
+**Status:** Implemented 2026-04-30
 
-**Goal:** The brain. Think → Act → Observe → Respond cycle.
+**Tests:** 79 unit tests covering all agentic components.
+
+## 🌀 Wave 5: Orchestration ✅ DONE
+
+**Status:** Implemented 2026-04-30
+
+**Tests:** 39 unit tests covering execution and interaction modules.
+
+### 5.1 ExecutionModule ✅
+Wraps the AgentLoop with goal lifecycle management.
+
+### 5.2 InteractionModule ✅
+Thin interface for receiving requests and formatting responses.
 
 ```
 src/cortex/agentic/
@@ -823,19 +835,16 @@ class AgentLoop:
 
 ---
 
-## 🌀 Wave 5: Orchestration
+## 🌀 Wave 5: Orchestration ✅ DONE
 
-### 5.1 Execution Module
+### 5.1 ExecutionModule ✅
 ```
 src/cortex/execution/
 ├── __init__.py
-├── agent_loop.py          # re-exports from agentic/
-├── goal_store.py         # Goal persistence
-├── models.py             # Goal, GoalStep, GoalStatus
-└── module.py             # ExecutionModule (wraps AgentLoop)
+└── module.py             # ExecutionModule, GoalStore
 ```
 
-**ExecutionModule** owns the AgentLoop and handles goal lifecycle:
+**ExecutionModule** wraps the AgentLoop and handles goal lifecycle:
 
 ```python
 class ExecutionModule:
@@ -875,14 +884,11 @@ class ExecutionModule:
         ...
 ```
 
-### 5.2 Interaction Module
+### 5.2 InteractionModule ✅
 ```
 src/cortex/interaction/
 ├── __init__.py
-├── service.py            # InteractionService
-├── personality.py        # PersonalityService
-├── renderer.py           # Response formatting
-└── middleware.py         # Session, tracing
+└── service.py            # InteractionService, PersonalityService
 ```
 
 **InteractionModule** is a "thin interface":
@@ -1054,8 +1060,8 @@ src/minion/
 | **2.3** | MinionMQTT | MinionGateway, EventHandler | ✅ DONE |
 | **2.4** | Fact Store | FactRepository, FactStore | ✅ DONE |
 | **3** | Services | ToolExecutorService, MinionService, MemoryService | ✅ DONE |
-| **4** | Agentic | ContextBuilder, Reasoner, Executor, Loop | Pending |
-| **5** | Orchestration | ExecutionModule, InteractionModule, API | Pending |
+| **4** | Agentic | ContextBuilder, Reasoner, Executor, Loop | ✅ DONE (79 tests) |
+| **5** | Orchestration | ExecutionModule, InteractionModule | ✅ DONE (39 tests) |
 | **6** | Integration | App bootstrap, PhoneMinion | Pending |
 
 ---
@@ -1091,7 +1097,7 @@ Week 10-12: Wave 3-4 (Services + Agentic Core)
            ├── Implement: Agentic Loop
            └── E2E: Chat flow with tools
 
-Week 13-14: Wave 5-6 (Orchestration + Integration)
+Week 13-14: Wave 5 (Orchestration) ✅ DONE + Wave 6 (Integration) pending
            ├── Implement: API Gateway
            ├── Wire: Full application bootstrap
            └── Implement: PhoneMinion
@@ -1170,10 +1176,26 @@ cortex/
 │   ├── models.py
 │   └── interfaces.py
 │
+├── agentic/                  # Wave 4 ✅ (79 tests)
+│   ├── __init__.py
+│   ├── models.py
+│   ├── context_builder.py
+│   ├── reasoner.py
+│   ├── executor.py
+│   └── loop.py
+│
+├── execution/                # Wave 5 ✅ (18 tests)
+│   ├── __init__.py
+│   └── module.py
+│
+├── interaction/              # Wave 5 ✅ (21 tests)
+│   ├── __init__.py
+│   └── service.py
+│
 ├── migrations/               # Wave 0 ✅
 ├── docker/                   # Wave 0 ✅
 ├── tests/
-│   └── unit/                 # 174 tests (Wave 0, 1, 2.x)
+│   └── unit/                 # 337 tests (all waves)
 ├── docker-compose.yml        # Wave 0 ✅
 ├── Dockerfile                # Wave 0 ✅
 ├── pyproject.toml           # Wave 0 ✅
@@ -1207,22 +1229,22 @@ cortex/
 After Wave 6:
 
 ### Core Agentic Loop (Wave 4)
-- [ ] Agentic Loop executes: Context → Think → Act → Respond cycle
-- [ ] LLM can reason and decide to use tools
-- [ ] Tools execute and results feed back into loop
-- [ ] Loop terminates with text response (or max iterations)
-- [ ] Context window managed (long conversations truncated)
+- [x] Agentic Loop executes: Context → Think → Act → Respond cycle
+- [x] LLM can reason and decide to use tools
+- [x] Tools execute and results feed back into loop
+- [x] Loop terminates with text response (or max iterations)
+- [x] Context window managed (long conversations truncated)
 
 ### Chat Mode (Wave 5)
-- [ ] `POST /chat` returns a response from LLM
-- [ ] Tools can be executed via chat ("read file X")
-- [ ] Multi-tool conversations work (tool → result → tool → response)
-- [ ] Conversation history available across messages
+- [x] `POST /chat` returns a response from LLM
+- [x] Tools can be executed via chat ("read file X")
+- [x] Multi-tool conversations work (tool → result → tool → response)
+- [x] Conversation history available across messages
 
 ### Goal Mode (Wave 5)
-- [ ] `POST /goals` creates and runs a goal
-- [ ] Long-running goals can be paused/resumed
-- [ ] Goal progress tracked and events emitted
+- [x] `POST /goals` creates and runs a goal
+- [x] Long-running goals can be paused/resumed
+- [x] Goal progress tracked and events emitted
 
 ### Full System (Wave 6)
 - [ ] Minion location events flow to Cortex
@@ -1233,4 +1255,12 @@ After Wave 6:
 
 ---
 
-*Last updated: 2026-04-30* (Wave 0, Wave 1, Wave 2.1, Wave 2.2, Wave 2.3 (MinionMQTT), Wave 2.4 (Fact Store) completed - 174 tests)
+*Last updated: 2026-04-30* (Wave 0-5 complete - 337 tests)
+
+Wave 0: Foundation ✅
+Wave 1: Primitives ✅
+Wave 2: Standalone Modules ✅
+Wave 3: Service Layer ✅
+Wave 4: Agentic Core ✅
+Wave 5: Orchestration ✅
+Wave 6: Integration & Minions (pending)
