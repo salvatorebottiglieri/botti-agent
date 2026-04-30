@@ -490,7 +490,7 @@ CREATE INDEX idx_facts_search ON USING gin(to_jsonb(facts) gin_btree_ops);
 
 ---
 
-## 🌀 Wave 3: Service Layer
+## 🌀 Wave 3: Service Layer ✅ DONE
 
 **Goal:** Modules that USE Wave 2 interfaces. Fully wired but not yet orchestrated.
 
@@ -1053,7 +1053,7 @@ src/minion/
 | **2.2** | Tool Registry | Tool, ToolRegistry, Executor, Meta Tools | ✅ Complete |
 | **2.3** | MinionMQTT | MinionGateway, EventHandler | ✅ DONE |
 | **2.4** | Fact Store | FactRepository, FactStore | ✅ DONE |
-| **3** | Services | ToolExecutor, MinionService, MemoryService | Pending |
+| **3** | Services | ToolExecutorService, MinionService, MemoryService | ✅ DONE |
 | **4** | Agentic | ContextBuilder, Reasoner, Executor, Loop | Pending |
 | **5** | Orchestration | ExecutionModule, InteractionModule, API | Pending |
 | **6** | Integration | App bootstrap, PhoneMinion | Pending |
