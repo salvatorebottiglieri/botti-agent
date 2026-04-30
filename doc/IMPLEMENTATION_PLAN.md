@@ -1031,8 +1031,8 @@ src/minion/
 | **1** | Primitives | EventBus, LLMClient, DB | ✅ Complete |
 | **2.1** | Session Store | SessionRepo, SessionService | ✅ Complete |
 | **2.2** | Tool Registry | Tool, ToolRegistry, Executor, Meta Tools | ✅ Complete |
-| **2.3** | MinionMQTT | MinionGateway, EventHandler | Pending |
-| **2.4** | Fact Store | FactRepository, FactStore | Pending |
+| **2.3** | MinionMQTT | MinionGateway, EventHandler | ✅ DONE |
+| **2.4** | Fact Store | FactRepository, FactStore | ✅ DONE |
 | **3** | Services | ToolExecutor, MinionService, MemoryService | Pending |
 | **4** | Agentic | ContextBuilder, Reasoner, Executor, Loop | Pending |
 | **5** | Orchestration | ExecutionModule, InteractionModule, API | Pending |
@@ -1201,4 +1201,4 @@ After Wave 6:
 
 ---
 
-*Last updated: 2026-04-30* (Wave 0, Wave 1, Wave 2.1, Wave 2.2 completed - 132 tests)
+*Last updated: 2026-04-30* (Wave 0, Wave 1, Wave 2.1, Wave 2.2, Wave 2.3 (MinionMQTT), Wave 2.4 (Fact Store) completed - 174 tests)
