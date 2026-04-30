@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 class Role(str, Enum):
     """Message role in a conversation."""
+
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
@@ -18,7 +19,7 @@ class Role(str, Enum):
 
 class ChatMessage(BaseModel):
     """A single message in a conversation."""
-    
+
     role: Role
     content: str | None = None
     name: str | None = None  # For tool messages
@@ -31,7 +32,7 @@ class ChatMessage(BaseModel):
 
 class ToolCall(BaseModel):
     """A tool call requested by the LLM."""
-    
+
     id: str = Field(default_factory=lambda: f"call_{uuid4().hex[:8]}")
     name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
@@ -44,10 +45,10 @@ class ToolCall(BaseModel):
 class ToolDefinition(BaseModel):
     """
     Definition of a tool available to the LLM.
-    
+
     Uses JSON Schema for input/output validation.
     """
-    
+
     name: str
     description: str
     input_schema: dict[str, Any] = Field(default_factory=dict)
@@ -60,7 +61,7 @@ class ToolDefinition(BaseModel):
 
 class UsageStats(BaseModel):
     """Token usage statistics from LLM response."""
-    
+
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -68,7 +69,7 @@ class UsageStats(BaseModel):
 
 class ChatResult(BaseModel):
     """Result of a chat completion."""
-    
+
     message: ChatMessage
     tool_calls: list[ToolCall] | None = None
     usage: UsageStats | None = None

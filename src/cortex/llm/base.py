@@ -3,14 +3,15 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from cortex.llm.models import ChatMessage, ChatResult, ToolDefinition
+from cortex.config.models import Settings
 from cortex.llm.config import GenerationConfig
+from cortex.llm.models import ChatMessage, ChatResult, ToolCall, ToolDefinition
 
 
 class LLMClient(ABC):
     """
     Provider-agnostic LLM interface.
-    
+
     All LLM providers implement this interface to ensure
     consistent behavior across different backends.
     """
@@ -25,12 +26,12 @@ class LLMClient(ABC):
     ) -> ChatResult:
         """
         Send chat to LLM, return response.
-        
+
         Args:
             messages: Conversation history
             tools: Optional list of tool definitions for function calling
             generation_config: Optional generation parameters
-            
+
         Returns:
             ChatResult with response message and optional tool calls
         """
@@ -40,10 +41,10 @@ class LLMClient(ABC):
     def translate_tools(self, tools: list[ToolDefinition]) -> list[dict[str, Any]]:
         """
         Convert internal tool schema to provider format.
-        
+
         Args:
             tools: Internal tool definitions
-            
+
         Returns:
             Provider-specific tool schema
         """
@@ -53,10 +54,10 @@ class LLMClient(ABC):
     def translate_tool_call(self, raw: dict[str, Any]) -> ToolCall:
         """
         Convert provider tool call response to internal schema.
-        
+
         Args:
             raw: Raw tool call from provider
-            
+
         Returns:
             Internal ToolCall object
         """
@@ -65,4 +66,10 @@ class LLMClient(ABC):
     @abstractmethod
     def get_provider_name(self) -> str:
         """Return the provider name (e.g., 'openai', 'anthropic')."""
+        ...
+
+    @classmethod
+    @abstractmethod
+    def from_settings(cls,settings: Settings) -> "LLMClient":
+        """Return settings for the class"""
         ...

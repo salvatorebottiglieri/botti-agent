@@ -23,6 +23,7 @@
               ╠═══════════════╦═══════════════╦═══════════════╦═══════╣
               │  ToolRegistry  │ MinionMQTT   │  FactStore    │Session║
               │  (interface)   │  (interface) │  (interface)  │ Store ║
+              ║  (pending)      │  (pending)   │  (pending)   │ ✅    ║
               ╚═══════════════╩═══════════════╩═══════════════╩═══════╝
                                               │
               ╔═══════════════════════════════════════════════════════╗
@@ -223,15 +224,26 @@ async with DbSession() as session:
 
 **Goal:** Each module is fully testable in isolation. Define interfaces FIRST.
 
-### 2.1 Session Store
+### 2.1 Session Store ✅ COMPLETE
 ```
 src/cortex/sessions/
-├── __init__.py
+├── __init__.py            # exports Session, SessionService, etc.
+├── models.py              # Session, Message, SessionState, MessageRole
 ├── interfaces.py          # SessionRepository (ABC)
 ├── repository.py          # PostgresSessionRepository
-├── service.py             # SessionService
-└── models.py              # Session, Message, SessionState
+└── service.py             # SessionService (business logic)
 ```
+
+**Status:** Implemented 2026-04-30
+
+**Features:**
+- Session lifecycle management (created → active → idle → ended)
+- Message storage with role tracking (user, assistant, tool_result)
+- Tool call serialization in messages
+- Conversation history retrieval (newest first, paginated)
+- Auto-update of session activity timestamps
+
+**Tests:** 30 tests (models, interface, repository, service)
 
 **Interface:**
 ```python
@@ -1007,7 +1019,10 @@ src/minion/
 |------|---------|--------------|--------|
 | **0** | Foundation | Config, Logging, Docker | ✅ Complete |
 | **1** | Primitives | EventBus, LLMClient, DB | ✅ Complete |
-| **2** | Standalone | SessionRepo, ToolRegistry, MinionMQTT, FactRepo | Pending |
+| **2.1** | Session Store | SessionRepo, SessionService | ✅ Complete |
+| **2.2** | Tool Registry | Tool, ToolRegistry, Executor | Pending |
+| **2.3** | MinionMQTT | MinionGateway, EventHandler | Pending |
+| **2.4** | Fact Store | FactRepository, FactStore | Pending |
 | **3** | Services | ToolExecutor, MinionService, MemoryService | Pending |
 | **4** | Agentic | ContextBuilder, Reasoner, Executor, Loop | Pending |
 | **5** | Orchestration | ExecutionModule, InteractionModule, API | Pending |
@@ -1024,34 +1039,32 @@ Week 1-2:  Wave 0 (Foundation) ✅ DONE
 Week 3-4:  Wave 1 (Primitives) ✅ DONE
            └── TDD: event pub/sub, LLM chat, DB pool
 
-Week 5-6:  Wave 2 (Standalone Modules)
-           ├── TDD: session CRUD
-           ├── TDD: tool registry + execution
-           ├── TDD: minion MQTT receive
-           └── TDD: fact CRUD
+Week 5-6:  Wave 2.1 (Session Store) ✅ DONE
+           └── TDD: session CRUD, message storage, service layer
+           └── 30 tests added
 
-Week 7-8:  Wave 3 (Services)
-           ├── Wire: ToolExecutorService
-           ├── Wire: MinionService
-           └── Wire: MemoryService
+Week 6-7:  Wave 2.2 (Tool Registry)
+           ├── TDD: tool registry + executor
+           ├── Built-in tools: file_read, file_write, shell, grep
+           └── TDD: tool execution, error handling
 
-Week 9-10: Wave 4 (Agentic Core)
-           ├── Implement: ContextBuilder
-           ├── Implement: Reasoner
-           ├── Implement: LoopExecutor
-           ├── Implement: AgentLoop
+Week 7-8:  Wave 2.4 (Fact Store)
+           ├── TDD: fact CRUD, search
+           └── LLM-powered fact extraction
+
+Week 8-9:  Wave 2.3 (MinionMQTT)
+           ├── TDD: minion event handling
+           └── MQTT client implementation
+
+Week 10-12: Wave 3-4 (Services + Agentic Core)
+           ├── Wire: Service layer
+           ├── Implement: Agentic Loop
            └── E2E: Chat flow with tools
 
-Week 11-12: Wave 5 (Orchestration)
-           ├── Implement: ExecutionModule
-           ├── Implement: InteractionModule
+Week 13-14: Wave 5-6 (Orchestration + Integration)
            ├── Implement: API Gateway
-           └── E2E: Full chat + goal endpoints
-
-Week 13-14: Wave 6 (Integration)
-           ├── Wire: CortexApp bootstrap
-           ├── Implement: PhoneMinion
-           └── Docs: README, Getting Started
+           ├── Wire: Full application bootstrap
+           └── Implement: PhoneMinion
 ```
 
 ---
@@ -1094,10 +1107,21 @@ cortex/
 │           └── migrations/
 │               └── runner.py
 │
+├── sessions/                # Wave 2.1 ✅
+│   ├── __init__.py
+│   ├── models.py            # Session, Message, SessionState
+│   ├── interfaces.py         # SessionRepository (ABC)
+│   ├── repository.py         # PostgresSessionRepository
+│   └── service.py            # SessionService
+│
+├── tools/                   # Wave 2.2 (pending)
+├── memory/                  # Wave 2.4 (pending)
+├── minions/                 # Wave 2.3 (pending)
+│
 ├── migrations/               # Wave 0 ✅
 ├── docker/                   # Wave 0 ✅
 ├── tests/
-│   └── unit/                 # Wave 0 & 1 tests
+│   └── unit/                 # 65 tests (Wave 0, 1, 2.1)
 ├── docker-compose.yml        # Wave 0 ✅
 ├── Dockerfile                # Wave 0 ✅
 ├── pyproject.toml           # Wave 0 ✅
@@ -1157,4 +1181,4 @@ After Wave 6:
 
 ---
 
-*Last updated: 2026-04-29* (Wave 0 & Wave 1 completed)
+*Last updated: 2026-04-30* (Wave 0, Wave 1, Wave 2.1 completed - 65 tests)
