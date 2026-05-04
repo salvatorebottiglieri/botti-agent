@@ -45,10 +45,8 @@
               │   ExecutionModule • InteractionModule • API Gateway     ║
               ╚════════════════════════════════════════════════════════╝
                                               │
-              ╔═══════════════════════════════════════════════════════╗
-              │              WAVE 6: INTEGRATION & MINIONS              ║
               ╠════════════════════════════════════════════════════════╣
-              │   Full App • PhoneMinion • LaptopMinion • Docs           ║
+              │  ✅ 6.1 cortex-protocol   │ App Bootstrap │ Minions      ║
               ╚════════════════════════════════════════════════════════╝
 ```
 
@@ -61,6 +59,7 @@
 **Status:** Implemented 2026-04-29
 
 ### 0.1 Config System ✅
+
 ```
 src/cortex/config/
 ├── __init__.py           # exports Settings
@@ -69,21 +68,22 @@ src/cortex/config/
 ```
 
 **Interface:**
+
 ```python
 class Settings(BaseSettings):
     """Root settings. All modules import from here."""
-    
+
     # Database
     database_url: PostgresDsn
-    
+
     # LLM
     llm_provider: Literal["openai", "anthropic"] = "openai"
     llm_api_key: SecretStr
     llm_model: str = "gpt-4o"
-    
+
     # MQTT
     mqtt_broker_url: MqttDsn
-    
+
     # App
     app_host: str = "0.0.0.0"
     app_port: int = 8000
@@ -91,6 +91,7 @@ class Settings(BaseSettings):
 ```
 
 ### 0.2 Logging ✅
+
 ```
 src/cortex/logging/
 ├── __init__.py           # exports configure_logging, StructuredLogger
@@ -99,6 +100,7 @@ src/cortex/logging/
 ```
 
 ### 0.3 Docker Setup ✅
+
 ```
 docker-compose.yml        # postgres, mosquitto, cortex
 Dockerfile                # Python 3.11 slim
@@ -107,6 +109,7 @@ docker/
 ```
 
 ### 0.4 Postgres Migrations ✅
+
 ```
 migrations/
 ├── 001_initial.sql       # schema_migrations table
@@ -123,6 +126,7 @@ migrations/
 **Status:** Implemented 2026-04-29
 
 ### 1.1 Event Bus ✅
+
 ```
 src/cortex/events/
 ├── __init__.py           # exports EventBus, BaseEvent, EventTypes, Subscription
@@ -133,12 +137,14 @@ src/cortex/events/
 ```
 
 **Features:**
-- Async in-memory pub/sub with wildcard (*) subscriptions
+
+- Async in-memory pub/sub with wildcard (\*) subscriptions
 - Context manager for auto-unsubscribe (`async with bus.subscribed(...)`)
 - Error isolation (handler failures don't crash the bus)
 - Thread-safe subscription management
 
 **Usage:**
+
 ```python
 from cortex.events import EventBus, BaseEvent
 
@@ -157,6 +163,7 @@ await bus.publish(BaseEvent.create(
 ```
 
 ### 1.2 LLM Client ✅
+
 ```
 src/cortex/llm/
 ├── __init__.py           # exports LLMClient, ChatMessage, ToolCall, etc.
@@ -170,12 +177,14 @@ src/cortex/llm/
 ```
 
 **Features:**
+
 - Provider-agnostic interface (swap OpenAI/Anthropic/etc.)
 - Function calling support with JSON schema translation
 - Async chat with token usage stats
 - Configurable generation parameters
 
 **Usage:**
+
 ```python
 from cortex.llm import LLMClientFactory
 
@@ -189,6 +198,7 @@ result = await client.chat(
 ```
 
 ### 1.3 Database Pool ✅
+
 ```
 src/cortex/db/
 ├── __init__.py           # exports create_pool, get_pool, DbSession, run_migrations
@@ -199,12 +209,14 @@ src/cortex/db/
 ```
 
 **Features:**
+
 - Async connection pool with configurable min/max size
 - Simple session context manager for queries
 - SQL migration runner with version tracking
 - Transaction support
 
 **Usage:**
+
 ```python
 from cortex.db import create_pool, DbSession, run_migrations
 
@@ -216,6 +228,7 @@ async with DbSession() as session:
 ```
 
 ### Tests
+
 35 unit tests covering all Wave 1 components.
 
 ---
@@ -225,6 +238,7 @@ async with DbSession() as session:
 **Goal:** Each module is fully testable in isolation. Define interfaces FIRST.
 
 ### 2.1 Session Store ✅ COMPLETE
+
 ```
 src/cortex/sessions/
 ├── __init__.py            # exports Session, SessionService, etc.
@@ -237,6 +251,7 @@ src/cortex/sessions/
 **Status:** Implemented 2026-04-30
 
 **Features:**
+
 - Session lifecycle management (created → active → idle → ended)
 - Message storage with role tracking (user, assistant, tool_result)
 - Tool call serialization in messages
@@ -246,24 +261,26 @@ src/cortex/sessions/
 **Tests:** 30 tests (models, interface, repository, service)
 
 **Interface:**
+
 ```python
 class SessionRepository(ABC):
     """Persistence interface for sessions."""
-    
+
     async def create(self) -> Session: ...
     async def get(self, session_id: UUID) -> Session | None: ...
     async def update_state(self, session_id: UUID, state: SessionState) -> None: ...
-    
+
     async def add_message(self, session_id: UUID, message: Message) -> Message: ...
     async def get_messages(
-        self, 
-        session_id: UUID, 
+        self,
+        session_id: UUID,
         limit: int = 50,
         before: datetime | None = None
     ) -> list[Message]: ...
 ```
 
 **Schema:**
+
 ```sql
 CREATE TABLE sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -285,6 +302,7 @@ CREATE TABLE messages (
 ```
 
 ### 2.2 Tool Registry ✅ COMPLETE
+
 ```
 src/cortex/tools/
 ├── __init__.py
@@ -303,6 +321,7 @@ src/cortex/tools/
 **Status:** Implemented 2026-04-30
 
 **Features:**
+
 - InMemoryToolRegistry with search, categories, copy
 - DefaultToolExecutor with timeout, validation, metrics
 - 4 built-in meta tools: file_read, file_write, shell, grep
@@ -311,17 +330,18 @@ src/cortex/tools/
 **Tests:** 67 unit tests for interfaces, registry, executor, meta tools
 
 **Interface:**
+
 ```python
 class Tool(ABC):
     """Base class for all tools."""
-    
+
     name: str
     description: str
     input_schema: dict  # JSON Schema
     output_schema: dict | None = None
     idempotent: bool = False
     timeout_seconds: int = 60
-    
+
     @abstractmethod
     async def execute(self, arguments: dict) -> ToolResult:
         """Execute the tool with validated arguments."""
@@ -330,7 +350,7 @@ class Tool(ABC):
 
 class ToolRegistry(ABC):
     """Registration and discovery interface."""
-    
+
     def register(self, tool: Tool) -> None: ...
     def get(self, name: str) -> Tool | None: ...
     def list_all(self) -> list[Tool]: ...
@@ -339,9 +359,9 @@ class ToolRegistry(ABC):
 
 class ToolExecutor(ABC):
     """Execution interface."""
-    
+
     def __init__(self, registry: ToolRegistry): ...
-    
+
     async def execute(
         self,
         tool_name: str,
@@ -354,6 +374,7 @@ class ToolExecutor(ABC):
 ```
 
 ### 2.3 Minion MQTT Client ✅ COMPLETE
+
 ```
 src/cortex/minions/
 ├── __init__.py
@@ -367,6 +388,7 @@ src/cortex/minions/
 **Status:** Implemented 2026-04-30
 
 **Features:**
+
 - MinionInfo, MinionEvent, MinionEventBatch, MinionConfig models
 - MinionGateway ABC for receiving events
 - MinionEventHandler ABC for processing events
@@ -375,10 +397,11 @@ src/cortex/minions/
 - 24 tests covering all components
 
 **Tests:** 24 unit tests
+
 ```python
 class MinionGateway(ABC):
     """Interface for receiving minion events."""
-    
+
     async def connect(self) -> None: ...
     async def disconnect(self) -> None: ...
     async def subscribe(self, handler: MinionEventHandler) -> None: ...
@@ -386,14 +409,14 @@ class MinionGateway(ABC):
 
 class MinionEventHandler(Protocol):
     """Handle incoming minion events."""
-    
+
     async def handle_event(self, event: MinionEvent) -> None: ...
     async def handle_batch(self, batch: MinionEventBatch) -> list[MinionEvent]: ...
 
 
 class MinionRegistry(ABC):
     """Track registered minions."""
-    
+
     async def register(self, minion_id: str, info: MinionInfo) -> None: ...
     async def get(self, minion_id: str) -> MinionInfo | None: ...
     async def list_active(self) -> list[MinionInfo]: ...
@@ -401,6 +424,7 @@ class MinionRegistry(ABC):
 ```
 
 ### 2.4 Fact Store ✅ COMPLETE
+
 ```
 src/cortex/memory/
 ├── __init__.py
@@ -411,6 +435,7 @@ src/cortex/memory/
 **Status:** Implemented 2026-04-30
 
 **Features:**
+
 - Fact model with type, mutability, confidence, symbolic/natural repr
 - Concept model for derived knowledge
 - FactType enum (location, activity, calendar, etc.)
@@ -422,16 +447,17 @@ src/cortex/memory/
 **Tests:** 18 unit tests
 
 **Interface:**
+
 ```python
 class FactRepository(ABC):
     """Persistence interface for facts."""
-    
+
     async def store(self, fact: Fact) -> Fact: ...
     async def store_batch(self, facts: list[Fact]) -> list[Fact]: ...
-    
+
     async def get(self, fact_id: UUID) -> Fact | None: ...
     async def retract(self, fact_id: UUID, reason: str | None = None) -> None: ...
-    
+
     async def search(
         self,
         query: str,
@@ -440,18 +466,19 @@ class FactRepository(ABC):
         fact_types: list[FactType] | None = None,
         min_confidence: float | None = None
     ) -> list[Fact]: ...
-    
+
     async def get_by_type(
         self,
         fact_type: FactType,
         *,
         limit: int = 50
     ) -> list[Fact]: ...
-    
+
     async def record_access(self, fact_id: UUID) -> None: ...
 ```
 
 **Schema:**
+
 ```sql
 CREATE TABLE facts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -495,22 +522,24 @@ CREATE INDEX idx_facts_search ON USING gin(to_jsonb(facts) gin_btree_ops);
 **Goal:** Modules that USE Wave 2 interfaces. Fully wired but not yet orchestrated.
 
 ### 3.1 Tool Executor Service
+
 ```
 src/cortex/services/tool_executor.py
 ```
 
 **Implementation:**
+
 ```python
 class ToolExecutorService(ToolExecutor):
     """Full implementation wrapping registry."""
-    
+
     def __init__(
         self,
         registry: ToolRegistry,
         event_bus: EventBus,
         circuit_breaker: CircuitBreaker
     ): ...
-    
+
     async def execute(
         self,
         tool_name: str,
@@ -526,15 +555,17 @@ class ToolExecutorService(ToolExecutor):
 ```
 
 ### 3.2 Minion Service
+
 ```
 src/cortex/services/minion_service.py
 ```
 
 **Implementation:**
+
 ```python
 class MinionService(MinionGateway):
     """Full implementation wrapping MQTT client."""
-    
+
     def __init__(
         self,
         config: MinionConfig,
@@ -542,7 +573,7 @@ class MinionService(MinionGateway):
         registry: MinionRegistry,
         handler: MinionEventHandler
     ): ...
-    
+
     async def connect(self) -> None:
         # Setup MQTT client
         # Configure auth
@@ -550,24 +581,26 @@ class MinionService(MinionGateway):
 ```
 
 ### 3.3 Memory Service
+
 ```
 src/cortex/services/memory_service.py
 ```
 
 **Implementation:**
+
 ```python
 class MemoryService:
     """Service API for the Memory Module."""
-    
+
     def __init__(
         self,
         repository: FactRepository,
         llm_client: LLMClient,
         event_bus: EventBus
     ): ...
-    
+
     # ─── Query Methods (for Agentic Loop) ───
-    
+
     async def get_relevant(
         self,
         query: str,
@@ -578,7 +611,7 @@ class MemoryService:
     ) -> list[Fact]:
         """
         Get facts relevant to a query.
-        
+
         Strategy:
         1. Semantic search (embeddings)
         2. Boost facts from current session
@@ -586,33 +619,33 @@ class MemoryService:
         4. Boost high-confidence facts
         """
         ...
-    
+
     async def get_context(
         self,
         dimensions: list[str] = ["time", "location", "activity"]
     ) -> dict[str, Any]:
         """Get current ambient context."""
         ...
-    
+
     async def get_personality_context(
         self,
         session_id: UUID | None = None
     ) -> PersonalityContext:
         """Get personality traits for response formatting."""
         ...
-    
+
     # ─── Storage Methods (internal) ───
-    
+
     async def store_fact(self, fact: Fact) -> Fact:
         """Store a new fact. Handles deduplication."""
         ...
-    
+
     async def retract_fact(self, fact_id: UUID, reason: str | None = None) -> None:
         """Retract a fact. Cascade invalidate derived concepts."""
         ...
-    
+
     # ─── Fact Extraction (from events) ───
-    
+
     async def handle_event(self, event: BaseEvent) -> None:
         """Process incoming events, extract facts."""
         match event.type:
@@ -638,9 +671,11 @@ class MemoryService:
 **Tests:** 39 unit tests covering execution and interaction modules.
 
 ### 5.1 ExecutionModule ✅
+
 Wraps the AgentLoop with goal lifecycle management.
 
 ### 5.2 InteractionModule ✅
+
 Thin interface for receiving requests and formatting responses.
 
 ```
@@ -655,6 +690,7 @@ src/cortex/agentic/
 ```
 
 ### 4.1 Context Builder
+
 ```python
 @dataclass
 class Context:
@@ -669,7 +705,7 @@ class Context:
 
 class ContextBuilder:
     """Assembles context from all sources."""
-    
+
     def __init__(
         self,
         session_service: SessionService,
@@ -677,7 +713,7 @@ class ContextBuilder:
         tool_registry: ToolRegistry,
         personality_service: PersonalityService
     ): ...
-    
+
     async def build(
         self,
         session_id: UUID,
@@ -687,7 +723,7 @@ class ContextBuilder:
     ) -> Context:
         """
         Build complete reasoning context.
-        
+
         1. Conversation history (last 20 messages)
         2. Relevant facts from Memory
         3. Available tool schemas
@@ -699,58 +735,60 @@ class ContextBuilder:
 ```
 
 ### 4.2 Reasoner
+
 ```python
 class Reasoner:
     """LLM-powered decision making."""
-    
+
     def __init__(
         self,
         llm_client: LLMClient,
         tool_registry: ToolRegistry,
         system_prompt: str
     ): ...
-    
+
     async def reason(
         self,
         context: Context
     ) -> Decision:
         """
         Given context, decide what to do next.
-        
+
         Returns:
         - Decision.respond(text): Done, return to user
         - Decision.execute_tools(calls): Execute tools, continue
         - Decision.ask_question(question): Need clarification
         """
         ...
-    
+
     def _build_prompt(self, context: Context) -> list[ChatMessage]:
         """Build system prompt + user message."""
         ...
 ```
 
 ### 4.3 Executor
+
 ```python
 class LoopExecutor:
     """Tool execution within the loop."""
-    
+
     def __init__(
         self,
         tool_executor: ToolExecutorService,
         event_bus: EventBus
     ): ...
-    
+
     async def execute_tools(
         self,
         tool_calls: list[ToolCall]
     ) -> list[ToolResult]:
         """
         Execute tool calls.
-        
+
         Strategy: Sequential for dependent, parallel for independent.
         """
         ...
-    
+
     async def execute_single(
         self,
         tool_call: ToolCall
@@ -759,16 +797,17 @@ class LoopExecutor:
 ```
 
 ### 4.4 Main Loop
+
 ```python
 class AgentLoop:
     """
     Core agentic loop: Think → Act → Observe → Respond
-    
+
     Two modes:
     - CHAT: Interactive conversation
     - GOAL: Background task execution
     """
-    
+
     def __init__(
         self,
         context_builder: ContextBuilder,
@@ -776,7 +815,7 @@ class AgentLoop:
         executor: LoopExecutor,
         event_bus: EventBus
     ): ...
-    
+
     async def run_chat(
         self,
         session_id: UUID,
@@ -784,14 +823,14 @@ class AgentLoop:
     ) -> ChatResponse:
         """
         Run loop for chat mode.
-        
+
         Loop: Context → Think → [Act → Observe] → Respond
-        
+
         Safety: Max 20 iterations, then raise MaxIterationsError.
         """
         messages = [Message(role=Role.USER, content=user_message)]
         iterations = 0
-        
+
         while iterations < self.max_iterations:
             # 1. Context
             context = await self.context_builder.build(
@@ -799,26 +838,26 @@ class AgentLoop:
                 user_message=user_message,
                 mode=Mode.CHAT
             )
-            
+
             # 2. Think
             decision = await self.reasoner.reason(context)
-            
+
             match decision:
                 case Decision.respond(text):
                     return ChatResponse(message=text, iterations=iterations)
-                
+
                 case Decision.execute_tools(calls):
                     # 3. Act
                     results = await self.executor.execute_tools(calls)
                     # 4. Observe
                     messages.extend(self._tool_messages(calls, results))
                     iterations += 1
-                
+
                 case Decision.ask_question(q):
                     return ChatResponse(message=q, iterations=iterations)
-        
+
         raise MaxIterationsError(self.max_iterations)
-    
+
     async def run_goal(
         self,
         goal_id: UUID,
@@ -826,7 +865,7 @@ class AgentLoop:
     ) -> GoalResult:
         """
         Run loop for goal mode.
-        
+
         Longer-running, emits goal.status events.
         Max 100 iterations.
         """
@@ -838,6 +877,7 @@ class AgentLoop:
 ## 🌀 Wave 5: Orchestration ✅ DONE
 
 ### 5.1 ExecutionModule ✅
+
 ```
 src/cortex/execution/
 ├── __init__.py
@@ -850,24 +890,24 @@ src/cortex/execution/
 class ExecutionModule:
     """
     Execution Module wraps the AgentLoop.
-    
+
     Subscribes to:
     - goal.created
     - recommendation.executed
-    
+
     Emits:
     - goal.status
     - goal.completed
     - goal.failed
     """
-    
+
     def __init__(
         self,
         agent_loop: AgentLoop,
         goal_store: GoalStore,
         event_bus: EventBus
     ): ...
-    
+
     async def create_goal(
         self,
         description: str,
@@ -878,13 +918,14 @@ class ExecutionModule:
         goal = await self.goal_store.create(description, priority, deadline)
         asyncio.create_task(self.agent_loop.run_goal(goal.id, description))
         return goal
-    
+
     async def handle_event(self, event: BaseEvent) -> None:
         """Handle subscribed events."""
         ...
 ```
 
 ### 5.2 InteractionModule ✅
+
 ```
 src/cortex/interaction/
 ├── __init__.py
@@ -897,17 +938,17 @@ src/cortex/interaction/
 class InteractionService:
     """
     Thin interface: receives requests, calls Agentic Loop, formats responses.
-    
+
     Does NOT contain the loop itself.
     """
-    
+
     def __init__(
         self,
         execution_module: ExecutionModule,
         session_service: SessionService,
         personality_service: PersonalityService
     ): ...
-    
+
     async def handle_message(
         self,
         session_id: UUID | None,
@@ -917,7 +958,7 @@ class InteractionService:
         """Handle incoming user message."""
         # Create/resume session
         session = await self._get_or_create_session(session_id)
-        
+
         # Call execution module
         if mode == Mode.CHAT:
             response = await self.execution_module.agent_loop.run_chat(
@@ -925,7 +966,7 @@ class InteractionService:
             )
         else:
             response = await self.execution_module.handle_goal(content)
-        
+
         # Add to conversation
         await self.session_service.add_message(session.id, Message(
             role=Role.USER,
@@ -935,11 +976,12 @@ class InteractionService:
             role=Role.ASSISTANT,
             content=response.message
         ))
-        
+
         return response
 ```
 
 ### 5.3 API Gateway
+
 ```
 src/cortex/api/
 ├── __init__.py
@@ -960,7 +1002,23 @@ src/cortex/api/
 
 ## 🌀 Wave 6: Integration & Minions
 
-### 6.1 Application Bootstrap
+### 6.1 cortex-protocol Package ✅ COMPLETE (2026-05-03)
+
+**Package location:** `src/cortex_protocol/`
+**Install:** `pip install -e src/cortex_protocol/`
+
+**12 event types:** LocationEvent, ActivityEvent, CalendarEvent, AppUsageEvent, CallLogEvent, PaymentEvent, RefundEvent, ScreenActivityEvent, ApplicationFocusEvent, KeyboardActivityEvent, BatteryEvent, NetworkStatusEvent
+
+**MQTT topics:** MQTTTopics.events/heartbeat/register/commands/command_config
+**JSON Schema export:** `from cortex_protocol.schemas.jsonschema import export_to_directory`
+
+**Tests:** 38 unit tests
+**Blocked by:** None — completed 2026-05-03
+
+---
+
+### 6.2 Application Bootstrap
+
 ```
 src/cortex/
 ├── __init__.py
@@ -974,50 +1032,50 @@ async def create_app() -> CortexApp:
     """Wire up all services and modules."""
     # 1. Config
     settings = get_settings()
-    
+
     # 2. DB
     await run_migrations()
     db_pool = await create_pool(settings.database_url)
-    
+
     # 3. Event Bus
     event_bus = EventBus()
-    
+
     # 4. Core services
     session_repo = PostgresSessionRepository(db_pool)
     session_service = SessionService(session_repo)
-    
+
     fact_repo = PostgresFactRepository(db_pool)
     memory_service = MemoryService(fact_repo, llm_client, event_bus)
-    
+
     # 5. Tool ecosystem
     tool_registry = ToolRegistry()
     tool_executor = ToolExecutorService(tool_registry, event_bus, ...)
     register_meta_tools(tool_registry)
-    
+
     # 6. Minion service
     minion_registry = MinionRegistry(db_pool)
     minion_service = MinionService(config, event_bus, minion_registry, memory_service)
-    
+
     # 7. Agentic core
     personality_service = PersonalityService(memory_service)
     context_builder = ContextBuilder(session_service, memory_service, tool_registry, personality_service)
     reasoner = Reasoner(llm_client, tool_registry, system_prompt)
     executor = LoopExecutor(tool_executor, event_bus)
     agent_loop = AgentLoop(context_builder, reasoner, executor, event_bus)
-    
+
     # 8. Orchestration
     goal_store = GoalStore(db_pool)
     execution_module = ExecutionModule(agent_loop, goal_store, event_bus)
     interaction_service = InteractionService(execution_module, session_service, personality_service)
-    
+
     # 9. Subscribe to events
     memory_service.subscribe(event_bus)
     execution_module.subscribe(event_bus)
-    
+
     # 10. Start services
     await event_bus.start()
     await minion_service.connect()
-    
+
     return CortexApp(
         settings=settings,
         event_bus=event_bus,
@@ -1028,7 +1086,8 @@ async def create_app() -> CortexApp:
     )
 ```
 
-### 6.2 Phone Minion
+### 6.3 Phone Minion
+
 ```
 src/minion/
 ├── __init__.py
@@ -1051,18 +1110,18 @@ src/minion/
 
 ## 📋 Wave Summary Table
 
-| Wave | Modules | Deliverables | Status |
-|------|---------|--------------|--------|
-| **0** | Foundation | Config, Logging, Docker | ✅ Complete |
-| **1** | Primitives | EventBus, LLMClient, DB | ✅ Complete |
-| **2.1** | Session Store | SessionRepo, SessionService | ✅ Complete |
-| **2.2** | Tool Registry | Tool, ToolRegistry, Executor, Meta Tools | ✅ Complete |
-| **2.3** | MinionMQTT | MinionGateway, EventHandler | ✅ DONE |
-| **2.4** | Fact Store | FactRepository, FactStore | ✅ DONE |
-| **3** | Services | ToolExecutorService, MinionService, MemoryService | ✅ DONE |
-| **4** | Agentic | ContextBuilder, Reasoner, Executor, Loop | ✅ DONE (79 tests) |
-| **5** | Orchestration | ExecutionModule, InteractionModule | ✅ DONE (39 tests) |
-| **6** | Integration | App bootstrap, PhoneMinion | Pending |
+| Wave    | Modules       | Deliverables                                      | Status                 |
+| ------- | ------------- | ------------------------------------------------- | ---------------------- |
+| **0**   | Foundation    | Config, Logging, Docker                           | ✅ Complete            |
+| **1**   | Primitives    | EventBus, LLMClient, DB                           | ✅ Complete            |
+| **2.1** | Session Store | SessionRepo, SessionService                       | ✅ Complete            |
+| **2.2** | Tool Registry | Tool, ToolRegistry, Executor, Meta Tools          | ✅ Complete            |
+| **2.3** | MinionMQTT    | MinionGateway, EventHandler                       | ✅ DONE                |
+| **2.4** | Fact Store    | FactRepository, FactStore                         | ✅ DONE                |
+| **3**   | Services      | ToolExecutorService, MinionService, MemoryService | ✅ DONE                |
+| **4**   | Agentic       | ContextBuilder, Reasoner, Executor, Loop          | ✅ DONE (79 tests)     |
+| **5**   | Orchestration | ExecutionModule, InteractionModule                | ✅ DONE (39 tests)     |
+| **6**   | Integration   | cortex-protocol                                   | ✅ 6.1 done (38 tests) |
 
 ---
 
@@ -1143,6 +1202,7 @@ cortex/
 │           └── migrations/
 │               └── runner.py
 │
+├── cortex_protocol/         # Wave 6.1 ✅ (38 tests)
 ├── sessions/                # Wave 2.1 ✅
 │   ├── __init__.py
 │   ├── models.py
@@ -1195,7 +1255,7 @@ cortex/
 ├── migrations/               # Wave 0 ✅
 ├── docker/                   # Wave 0 ✅
 ├── tests/
-│   └── unit/                 # 337 tests (all waves)
+│   └── unit/                 # 375 tests (all waves)
 ├── docker-compose.yml        # Wave 0 ✅
 ├── Dockerfile                # Wave 0 ✅
 ├── pyproject.toml           # Wave 0 ✅
@@ -1212,15 +1272,15 @@ cortex/
 
 ## Key Decisions
 
-| Decision | Options | Recommendation |
-|----------|---------|----------------|
-| **Web framework** | FastAPI vs Flask vs Litestar | **FastAPI** (async native, auto-docs) |
-| **DB ORM** | SQLAlchemy vs raw psycopg vs Pydantic | **asyncpg** (async, no ORM overhead) |
-| **MQTT library** | mqttio vs aiomqtt vs hbmqtt | **aiomqtt** (active, simple) |
-| **LLM provider** | OpenAI only vs multiple | OpenAI only for v1 |
-| **Minion language** | Python vs Go vs Rust | Python (shares code with Cortex) |
-| **Session storage** | Postgres vs Redis | Postgres (already in stack) |
-| **Config format** | YAML only vs JSON vs TOML | YAML + env vars |
+| Decision            | Options                               | Recommendation                        |
+| ------------------- | ------------------------------------- | ------------------------------------- |
+| **Web framework**   | FastAPI vs Flask vs Litestar          | **FastAPI** (async native, auto-docs) |
+| **DB ORM**          | SQLAlchemy vs raw psycopg vs Pydantic | **asyncpg** (async, no ORM overhead)  |
+| **MQTT library**    | mqttio vs aiomqtt vs hbmqtt           | **aiomqtt** (active, simple)          |
+| **LLM provider**    | OpenAI only vs multiple               | OpenAI only for v1                    |
+| **Minion language** | Python vs Go vs Rust                  | Python (shares code with Cortex)      |
+| **Session storage** | Postgres vs Redis                     | Postgres (already in stack)           |
+| **Config format**   | YAML only vs JSON vs TOML             | YAML + env vars                       |
 
 ---
 
@@ -1229,6 +1289,7 @@ cortex/
 After Wave 6:
 
 ### Core Agentic Loop (Wave 4)
+
 - [x] Agentic Loop executes: Context → Think → Act → Respond cycle
 - [x] LLM can reason and decide to use tools
 - [x] Tools execute and results feed back into loop
@@ -1236,17 +1297,20 @@ After Wave 6:
 - [x] Context window managed (long conversations truncated)
 
 ### Chat Mode (Wave 5)
+
 - [x] `POST /chat` returns a response from LLM
 - [x] Tools can be executed via chat ("read file X")
 - [x] Multi-tool conversations work (tool → result → tool → response)
 - [x] Conversation history available across messages
 
 ### Goal Mode (Wave 5)
+
 - [x] `POST /goals` creates and runs a goal
 - [x] Long-running goals can be paused/resumed
 - [x] Goal progress tracked and events emitted
 
 ### Full System (Wave 6)
+
 - [ ] Minion location events flow to Cortex
 - [ ] Facts are extracted and stored in Postgres
 - [ ] Conversation history persists across sessions
@@ -1255,12 +1319,4 @@ After Wave 6:
 
 ---
 
-*Last updated: 2026-04-30* (Wave 0-5 complete - 337 tests)
-
-Wave 0: Foundation ✅
-Wave 1: Primitives ✅
-Wave 2: Standalone Modules ✅
-Wave 3: Service Layer ✅
-Wave 4: Agentic Core ✅
-Wave 5: Orchestration ✅
-Wave 6: Integration & Minions (pending)
+_Last updated: 2026-05-03_ (Wave 0-5 ✅, Wave 6.1 ✅, 375 tests)
