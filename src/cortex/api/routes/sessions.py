@@ -131,9 +131,7 @@ async def create_message(
             session_id, message.content, message.tool_calls
         )
     else:  # tool_result
-        msg = await session_service.add_tool_result(
-            session_id, message.content, message.tool_calls
-        )
+        msg = await session_service.add_tool_result(session_id, message.content, message.tool_calls)
 
     return MessageResponse(
         id=msg.id,

@@ -126,7 +126,7 @@ async def create_minion_token(
 ):
     """
     Generate a new MQTT password for a minion.
-    
+
     1. Generate a secure random password
     2. Hash with bcrypt and store in api_keys table
     3. Write plain password to Mosquitto passwd.conf
@@ -228,6 +228,7 @@ async def push_minion_config(
     try:
         # Send config via MQTT
         from cortex_protocol import MQTTTopics
+
         topic = MQTTTopics.command_config(minion_id)
 
         # This would publish to the MQTT broker
@@ -249,6 +250,7 @@ def _get_mqtt_passwd_path() -> str | None:
     """Get the MQTT passwd.conf path from config."""
     try:
         from cortex.config.loader import get_settings
+
         settings = get_settings()
         return settings.mqtt.passwd_path
     except Exception:

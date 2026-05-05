@@ -27,6 +27,7 @@ def token_create(
         database_url = db_url
         if not database_url:
             from cortex.config.loader import get_settings
+
             settings = get_settings()
             database_url = settings.database_url
 
@@ -67,6 +68,7 @@ def token_create(
 def version() -> None:
     """Show the installed Cortex version."""
     from cortex.config.loader import get_settings
+
     settings = get_settings()
     typer.echo(f"Cortex v{settings.version}")
 

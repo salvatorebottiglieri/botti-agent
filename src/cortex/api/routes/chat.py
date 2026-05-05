@@ -34,13 +34,13 @@ async def chat(
 ) -> ChatResponse:
     """
     Non-streaming chat endpoint.
-    
+
     Args:
         request: Chat request with message and optional session_id
         key: API key (validated by dependency)
         interaction_service: For session management
         execution_module: For running the agentic loop
-    
+
     Returns:
         ChatResponse with message, iterations, tools_used
     """
@@ -98,7 +98,7 @@ async def chat_stream(
 ) -> StreamingResponse:
     """
     Streaming chat endpoint using Server-Sent Events.
-    
+
     Events emitted:
     - thinking: Agent is thinking
     - text: Text delta
@@ -107,6 +107,7 @@ async def chat_stream(
     - done: Response complete
     - error: Error occurred
     """
+
     async def event_generator() -> AsyncGenerator[str, None]:
         session_id: UUID | None = request.session_id
 
@@ -136,11 +137,14 @@ async def chat_stream(
 
             # Stream the response text
             yield _sse_event("text", {"delta": response.message})
-            yield _sse_event("done", {
-                "session_id": str(session_id),
-                "iterations": response.iterations,
-                "tools_used": response.tools_used or [],
-            })
+            yield _sse_event(
+                "done",
+                {
+                    "session_id": str(session_id),
+                    "iterations": response.iterations,
+                    "tools_used": response.tools_used or [],
+                },
+            )
 
         except Exception as e:
             yield _sse_event("error", {"message": str(e)})

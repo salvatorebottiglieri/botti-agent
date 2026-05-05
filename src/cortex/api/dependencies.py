@@ -33,6 +33,7 @@ def get_app_state() -> dict:
 
 # ─── Service Dependencies ────────────────────────────────────────────────────
 
+
 async def get_session_service() -> SessionService:
     """Get the session service."""
     state = get_app_state()

@@ -32,7 +32,7 @@ async def init_first_token(
 ) -> TokenResponse:
     """
     Initialize the first API token.
-    
+
     Only works when no tokens exist in the database.
     Use this to bootstrap the system.
     """

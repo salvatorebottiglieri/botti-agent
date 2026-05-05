@@ -8,13 +8,16 @@ from pydantic import BaseModel, Field
 
 # ─── Auth Schemas ──────────────────────────────────────────────────────────────
 
+
 class TokenCreateRequest(BaseModel):
     """Request to create a new API token."""
+
     name: str = Field(..., description="Name for this token")
 
 
 class TokenResponse(BaseModel):
     """Response with the created token."""
+
     token: str = Field(..., description="The API token (shown only once)")
     name: str
     created_at: datetime
@@ -22,6 +25,7 @@ class TokenResponse(BaseModel):
 
 class TokenListItem(BaseModel):
     """Token info for listing (no secret)."""
+
     id: UUID
     name: str
     created_at: datetime
@@ -31,8 +35,10 @@ class TokenListItem(BaseModel):
 
 # ─── Chat Schemas ─────────────────────────────────────────────────────────────
 
+
 class ChatRequest(BaseModel):
     """Request for chat completion."""
+
     message: str = Field(..., description="User message", min_length=1)
     session_id: UUID | None = Field(None, description="Existing session ID")
     mode: Literal["chat", "goal"] = Field("chat", description="Execution mode")
@@ -41,6 +47,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """Response from chat completion."""
+
     session_id: UUID
     message: str
     iterations: int = 0
@@ -49,8 +56,10 @@ class ChatResponse(BaseModel):
 
 # ─── Session Schemas ──────────────────────────────────────────────────────────
 
+
 class MessageCreate(BaseModel):
     """Create a message in a session."""
+
     role: Literal["user", "assistant", "tool_result"] = Field(..., description="Message role")
     content: str = Field(..., description="Message content", min_length=1)
     tool_calls: list[dict] | None = Field(None, description="Tool calls if any")
@@ -58,6 +67,7 @@ class MessageCreate(BaseModel):
 
 class SessionResponse(BaseModel):
     """Session with its messages."""
+
     id: UUID
     state: str
     created_at: datetime
@@ -68,12 +78,14 @@ class SessionResponse(BaseModel):
 
 class SessionWithMessages(BaseModel):
     """Session with full conversation history."""
+
     session: SessionResponse
     messages: list["MessageResponse"]
 
 
 class MessageResponse(BaseModel):
     """A message in a conversation."""
+
     id: UUID
     role: str
     content: str
@@ -83,8 +95,10 @@ class MessageResponse(BaseModel):
 
 # ─── Goal Schemas ─────────────────────────────────────────────────────────────
 
+
 class GoalCreateRequest(BaseModel):
     """Request to create a goal."""
+
     description: str = Field(..., description="Goal description", min_length=1)
     priority: Literal["low", "normal", "high"] = Field("normal", description="Priority")
     deadline: datetime | None = Field(None, description="Optional deadline")
@@ -92,6 +106,7 @@ class GoalCreateRequest(BaseModel):
 
 class GoalResponse(BaseModel):
     """Response for a goal."""
+
     id: UUID
     description: str
     status: str
@@ -105,6 +120,7 @@ class GoalResponse(BaseModel):
 
 class GoalStepResponse(BaseModel):
     """A step within a goal."""
+
     step_number: int
     action: str
     result: str | None = None
@@ -113,6 +129,7 @@ class GoalStepResponse(BaseModel):
 
 class GoalResultResponse(BaseModel):
     """Result of goal execution."""
+
     goal_id: UUID
     success: bool
     message: str
@@ -122,8 +139,10 @@ class GoalResultResponse(BaseModel):
 
 # ─── Minion Schemas ───────────────────────────────────────────────────────────
 
+
 class MinionResponse(BaseModel):
     """Minion info."""
+
     id: UUID
     minion_id: str
     minion_type: str
@@ -137,11 +156,13 @@ class MinionResponse(BaseModel):
 
 class MinionTokenRequest(BaseModel):
     """Request to generate a minion token."""
+
     name: str = Field(..., description="Token name/description")
 
 
 class MinionTokenResponse(BaseModel):
     """Response with minion token."""
+
     token: str
     minion_id: str
     created_at: datetime
@@ -149,13 +170,16 @@ class MinionTokenResponse(BaseModel):
 
 class MinionConfigRequest(BaseModel):
     """Request to push config to a minion."""
+
     config: dict = Field(..., description="Configuration to push")
 
 
 # ─── Health Schemas ───────────────────────────────────────────────────────────
 
+
 class HealthStatus(BaseModel):
     """Health status of a component."""
+
     status: Literal["healthy", "unhealthy", "unknown"]
     latency_ms: float | None = None
     error: str | None = None
@@ -163,6 +187,7 @@ class HealthStatus(BaseModel):
 
 class HealthResponse(BaseModel):
     """Overall health response."""
+
     status: Literal["healthy", "unhealthy"]
     components: dict[str, HealthStatus] = Field(default_factory=dict)
     version: str
@@ -171,8 +196,10 @@ class HealthResponse(BaseModel):
 
 # ─── Error Schemas ───────────────────────────────────────────────────────────
 
+
 class ErrorResponse(BaseModel):
     """Standard error response."""
+
     error: str = Field(..., description="Error type")
     detail: str = Field(..., description="Error details")
 

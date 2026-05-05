@@ -26,7 +26,7 @@ def _hash_token(token: str) -> str:
 def generate_token() -> tuple[str, str]:
     """
     Generate a new API token.
-    
+
     Returns:
         Tuple of (raw_token, hashed_token)
         The raw_token is shown once to the user and cannot be recovered.
@@ -41,7 +41,7 @@ async def get_api_key(
 ) -> str:
     """
     Dependency to validate API key from Authorization header.
-    
+
     Usage in routes:
         @app.get("/protected")
         async def protected(key: str = Depends(get_api_key)):
@@ -81,7 +81,7 @@ async def get_api_key(
 async def load_token_cache(get_db_pool):
     """
     Load valid tokens from database into memory cache.
-    
+
     Called at startup.
     """
     global _token_cache, _cache_initialized
@@ -112,11 +112,11 @@ async def create_token(
 ) -> tuple[str, str, str]:
     """
     Create a new API token and store in database.
-    
+
     Args:
         name: Token name/description
         get_db_pool: Function that returns the DB pool
-        
+
     Returns:
         Tuple of (raw_token, hashed_token, db_id)
     """
@@ -156,11 +156,11 @@ async def revoke_token(
 ) -> bool:
     """
     Revoke an API token.
-    
+
     Args:
         token_hash: The hashed token to revoke
         get_db_pool: Function that returns the DB pool
-        
+
     Returns:
         True if revoked, False if not found
     """
@@ -189,7 +189,7 @@ async def revoke_token(
 async def check_token_exists(get_db_pool) -> bool:
     """
     Check if any tokens exist in the database.
-    
+
     Used to determine if /admin/token/init should be allowed.
     """
     try:

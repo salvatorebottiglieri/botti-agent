@@ -28,7 +28,7 @@ async def create_goal(
 ) -> GoalResponse:
     """
     Create a new goal and start execution.
-    
+
     The goal runs asynchronously in the background.
     Use GET /goals/{id} to check status.
     """
@@ -113,7 +113,7 @@ async def get_goal(
 ) -> GoalResponse | GoalResultResponse:
     """
     Get a goal by ID.
-    
+
     Returns the goal with its current status.
     If completed or failed, includes the result.
     """

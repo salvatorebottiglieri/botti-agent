@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
 
     # Import and set up app state
     from cortex.api.dependencies import get_app_state
+
     try:
         state = get_app_state()
         logger.info("App state loaded successfully")
@@ -46,7 +47,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """
     Create and configure the FastAPI application.
-    
+
     Returns a fully wired FastAPI app with all routes mounted.
     """
     settings = get_settings()
@@ -107,9 +108,9 @@ def create_app() -> FastAPI:
 def bootstrap_app(state: dict) -> FastAPI:
     """
     Bootstrap the app with full dependency injection.
-    
+
     Called during startup with all initialized services.
-    
+
     Args:
         state: Dict containing all initialized services:
             - db_pool

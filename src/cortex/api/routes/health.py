@@ -26,13 +26,14 @@ async def health_check(
 ) -> HealthResponse:
     """
     Check health of all components.
-    
+
     - database: Check DB connectivity
     - event_bus: Check event bus is running
     - mqtt: Check MQTT connection
     - llm: Check LLM client connectivity
     """
     from cortex.config.loader import get_settings
+
     settings = get_settings()
 
     components: dict[str, HealthStatus] = {}
@@ -43,6 +44,7 @@ async def health_check(
     db_latency: float | None = None
     try:
         import time
+
         start = time.perf_counter()
         async with db_pool.acquire() as conn:
             await conn.fetchval("SELECT 1")
@@ -74,6 +76,7 @@ async def health_check(
     if llm_client:
         try:
             import time
+
             start = time.perf_counter()
             # Simple ping to LLM - just verify client is initialized
             # Don't make actual API call for health check
