@@ -46,7 +46,7 @@
               ╚════════════════════════════════════════════════════════╝
                                               │
               ╠════════════════════════════════════════════════════════╣
-              │  ✅ 6.1 cortex-protocol   │ App Bootstrap │ Minions      ║
+              │  ✅ 6.1 cortex-protocol   │ ✅ 6.2 API Gateway │ 6.3 Bootstrap │ 6.4 Minions ║
               ╚════════════════════════════════════════════════════════╝
                                               │
               ╔═══════════════════════════════════════════════════════╗
@@ -986,23 +986,57 @@ class InteractionService:
         return response
 ```
 
-### 5.3 API Gateway
+### 5.3 API Gateway ✅
 
 ```
 src/cortex/api/
 ├── __init__.py
-├── main.py               # FastAPI app
-├── routes/
-│   ├── __init__.py
-│   ├── chat.py           # /chat endpoints
-│   ├── sessions.py       # /sessions endpoints
-│   ├── goals.py          # /goals endpoints
-│   ├── minions.py        # /admin/minions endpoints
-│   └── health.py         # /health endpoint
-├── dependencies.py       # DI setup
-├── middleware.py         # tracing, logging
-└── schemas.py            # Request/Response models
+├── main.py               # FastAPI app factory + bootstrap_app()
+├── auth.py               # Token generation, Bearer middleware, SHA-256 hashing
+├── schemas.py            # Request/Response Pydantic models
+├── dependencies.py        # FastAPI Depends injection (set_app_state)
+├── cli.py                 # CLI: cortex token:create
+└── routes/
+    ├── __init__.py
+    ├── admin_auth.py     # /admin/token/init, /admin/tokens (auth)
+    ├── chat.py           # /chat, /chat/stream (auth)
+    ├── sessions.py       # /sessions CRUD (auth)
+    ├── goals.py          # /goals CRUD (auth)
+    ├── minions.py        # /admin/minions (auth)
+    └── health.py         # /health (open)
 ```
+
+**Status:** Implemented 2026-05-05 (commit 05caad0)
+
+**Routes:**
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | /health | open | DB, MQTT, LLM health |
+| POST | /admin/token/init | open | Bootstrap first token |
+| POST | /admin/tokens | auth | Create token |
+| GET | /admin/tokens | auth | List tokens |
+| GET | /admin/minions | auth | List minions |
+| GET | /admin/minions/{id} | auth | Minion details |
+| POST | /admin/minions/{id}/token | auth | Generate MQTT password |
+| DELETE | /admin/minions/{id}/token | auth | Revoke token |
+| POST | /admin/minions/{id}/config | auth | Push config via MQTT |
+| POST | /chat | auth | Non-streaming chat |
+| POST | /chat/stream | auth | SSE streaming |
+| GET | /sessions | auth | List sessions |
+| POST | /sessions | auth | Create session |
+| GET | /sessions/{id} | auth | Get with messages |
+| POST | /sessions/{id}/messages | auth | Add message |
+| POST | /sessions/{id}/end | auth | End session |
+| POST | /sessions/{id}/resume | auth | Resume idle session |
+| POST | /goals | auth | Create + run goal |
+| GET | /goals | auth | List active goals |
+| GET | /goals/{id} | auth | Get goal status |
+
+**CLI:** `cortex token:create <name> [--db-url URL]`
+
+**Tests:** 11 unit tests (test_auth.py)
+
+**Migration:** 005_api_and_minions.sql (api_keys, minions, goals tables)
 
 ---
 
@@ -1019,11 +1053,16 @@ src/cortex/api/
 **JSON Schema export:** `from cortex_protocol.schemas.jsonschema import export_to_directory`
 
 **Tests:** 38 unit tests
-**Blocked by:** None — completed 2026-05-03
 
 ---
 
-### 6.2 Application Bootstrap
+### 6.2 API Gateway ✅ COMPLETE (2026-05-05)
+
+See [Wave 5: Orchestration > 5.3 API Gateway](#53-api-gateway-) section above.
+
+---
+
+### 6.3 Application Bootstrap (PENDING)
 
 ```
 src/cortex/
@@ -1297,8 +1336,9 @@ Reservoir matrices `W_res`, `W_in` are **not** stored — regenerated determinis
 | **2.4** | Fact Store    | FactRepository, FactStore                         | ✅ DONE                |
 | **3**   | Services      | ToolExecutorService, MinionService, MemoryService | ✅ DONE                |
 | **4**   | Agentic       | ContextBuilder, Reasoner, Executor, Loop          | ✅ DONE (79 tests)     |
-| **5**   | Orchestration | ExecutionModule, InteractionModule                | ✅ DONE (39 tests)     |
-| **6**   | Integration   | cortex-protocol                                   | ✅ 6.1 done (38 tests) |
+| **5**   | Orchestration | ExecutionModule, InteractionModule, API Gateway    | ✅ DONE (386 tests)    |
+| **6.1** | Integration   | cortex-protocol                                   | ✅ DONE (38 tests)     |
+| **6.2** | Integration   | API Gateway                                        | ✅ DONE (11 tests)     |
 | **7.1** | Learning      | ReservoirEngine + Salience Readout + CLI          | 📋 Planned             |
 
 ---
@@ -1334,8 +1374,8 @@ Week 10-12: Wave 3-4 (Services + Agentic Core)
            ├── Implement: Agentic Loop
            └── E2E: Chat flow with tools
 
-Week 13-14: Wave 5 (Orchestration) ✅ DONE + Wave 6 (Integration) pending
-           ├── Implement: API Gateway
+Week 13-14: Wave 5 (Orchestration) ✅ DONE + Wave 6 (Integration) ✅ DONE
+           ├── Implement: API Gateway ✅
            ├── Wire: Full application bootstrap
            └── Implement: PhoneMinion
 
@@ -1450,7 +1490,7 @@ cortex/
 ├── migrations/               # Wave 0 ✅
 ├── docker/                   # Wave 0 ✅
 ├── tests/
-│   └── unit/                 # 375 tests (all waves)
+│   └── unit/                 # 386 tests (all waves)
 ├── docker-compose.yml        # Wave 0 ✅
 ├── Dockerfile                # Wave 0 ✅
 ├── pyproject.toml           # Wave 0 ✅
