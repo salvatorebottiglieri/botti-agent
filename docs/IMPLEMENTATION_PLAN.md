@@ -48,6 +48,12 @@
               ╠════════════════════════════════════════════════════════╣
               │  ✅ 6.1 cortex-protocol   │ App Bootstrap │ Minions      ║
               ╚════════════════════════════════════════════════════════╝
+                                              │
+              ╔═══════════════════════════════════════════════════════╗
+              │              WAVE 7: LEARNING MODULE                   ║
+              ╠════════════════════════════════════════════════════════╣
+              │  7.1 Reservoir + Salience │ 7.2 Module │ 7.3 Patterns   ║
+              ╚════════════════════════════════════════════════════════╝
 ```
 
 ---
@@ -1108,6 +1114,177 @@ src/minion/
 
 ---
 
+## 🌀 Wave 7: Learning Module
+
+**Goal:** Detect patterns and salience in continuous minion event streams cheaply enough to score every event without LLM cost. Three components ship across this wave; **7.1 establishes the engine and a single end-to-end vertical slice (salience scoring)**.
+
+**Status:** Planned 2026-05-05
+
+> Architectural rationale: see [`adr/0001-reservoir-computing-for-learning-module.md`](./adr/0001-reservoir-computing-for-learning-module.md).
+> Original proposal: [`FEATURES_TO_ADD.md`](./FEATURES_TO_ADD.md).
+
+### Dependencies
+
+- **Hard:** Wave 1 (EventBus, DB) ✅, Wave 2.3 (MinionMQTT) ✅, Wave 2.4 (FactStore) ✅, Wave 3 (MinionService, MemoryService) ✅
+- **Soft:** Wave 6.3 (Phone Minion) — improves training data quality once live data flows; **not** a blocker. 7.1 is developed in parallel against synthetic event streams.
+- **New runtime dependency:** `numpy` (no other ML libraries).
+
+### 7.1 ReservoirEngine + Salience Readout
+
+**Scope:** End-to-end vertical slice — encoder + reservoir + a single salience readout + offline batch training + persistence + CLI.
+
+**Non-goals (deferred to 7.2 / 7.3):**
+
+- ❌ Event-bus subscription / `LearningModule` class
+- ❌ Attaching salience to in-flight `EventMetadata.salience`
+- ❌ Anomaly readout
+- ❌ Pattern catalogue and `pattern.detected` events
+- ❌ Online / RLS training
+- ❌ Free-text string features (`merchant_name`, `app_name`, …)
+- ❌ Per-user lat/lon anchor learning
+
+**Package layout:**
+
+```
+src/cortex/learning/
+├── __init__.py
+├── models.py          # FeatureVector, ReadoutVersion, TrainingSample, ReservoirConfig
+├── interfaces.py      # ReservoirEngine, ReadoutModel, ReadoutRepository (ABCs)
+├── encoder.py         # MinionEventEncoder: MinionEvent → np.ndarray, INPUT_DIM = 64
+├── engine.py          # ESNReservoirEngine — pure-NumPy ESN, deterministic from seed
+├── readout.py         # RidgeReadout — closed-form weights = (XᵀX + λI)⁻¹ XᵀY
+├── labeler.py         # SalienceLabeler — heuristic 0.5·rarity + 0.3·hour_anomaly + 0.2·recency
+├── persistence.py     # PostgresReadoutRepository — bytea round-trip via np.save / np.load
+├── service.py         # LearningService — stateful inference + offline batch training
+└── cli.py             # python -m cortex.learning.cli train-salience [...]
+```
+
+**Encoder contract (fixed for 7.1; changing it requires retraining all readouts):**
+
+```
+INPUT_DIM = 64
+
+[0:12]  type one-hot (12 minion event types)
+[12:16] time features: sin/cos(2π · hour/24), sin/cos(2π · weekday/7)
+[16:64] type-specific dense features, zero-padded:
+        - numeric fields: amounts log-scaled, durations log-scaled, lat/lon centred, etc.
+        - low-cardinality enums (ActivityType, MerchantCategory, AppCategory,
+          NetworkType, TransactionType, UsageType) one-hot inline
+        - free-text strings dropped in 7.1 (deferred to 7.3)
+```
+
+**Service shape (stateful, single-writer):**
+
+```python
+class LearningService:
+    async def warmup(self, n_events: int = 256) -> None: ...
+
+    # Inference (hot path) — mutates live x_t
+    async def score_salience(self, event: MinionEvent) -> float: ...
+
+    # Training (cold path) — uses a *throwaway* reservoir; does not touch live state
+    async def train_salience_readout(
+        self,
+        window_days: int = 30,
+        ridge_lambda: float = 1e-3,
+    ) -> ReadoutVersion: ...
+
+    async def get_active_readout(self, target: str) -> ReadoutVersion: ...
+```
+
+- Live reservoir state `x_t` is in-memory only. One `asyncio.Lock` around mutation.
+- On startup, `warmup()` replays the last N events from `MinionService` to settle dynamics (~10–50 events suffice with leak rate α = 0.3).
+- Training builds a freshly-seeded throwaway reservoir to compute historical `(X, Y)`; the live reservoir is never disturbed.
+- App Bootstrap (Wave 6.2) is responsible for ordering: `MinionService` ready → `LearningService.warmup()` → service available.
+
+**Reservoir defaults (replaceable hyperparameters):**
+
+| Parameter         | Default | Notes                                                   |
+| ----------------- | ------- | ------------------------------------------------------- |
+| `reservoir_dim`   | 500     | small enough for one container, big enough for 12-modal input |
+| `spectral_radius` | 0.9     | edge-of-chaos default                                   |
+| `leak_rate` (α)   | 0.3     | ~10–50 events of warmup                                 |
+| `sparsity`        | 0.1     | 10% non-zero entries in `W_res`                         |
+| `input_scaling`   | 1.0     |                                                         |
+| `seed`            | 42      | matrices regenerated deterministically from seed        |
+| `ridge_lambda`    | 1e-3    | salience training default                               |
+
+**Salience label heuristic (fixed for 7.1):**
+
+```
+salience(event) = 0.5 · type_rarity + 0.3 · hour_anomaly + 0.2 · recency_anomaly
+
+  type_rarity     = 1 - clamp01(count(this.type, last_30d) / max_count_any_type)
+  hour_anomaly    = 1 - P(this.type | this.hour_of_day, last_30d)
+  recency_anomaly = clamp01( log1p(seconds_since_last_same_type) / log1p(7 · 86400) )
+```
+
+The 7.1 readout learns to approximate this heuristic in reservoir-state space. Richer labels (LLM-graded, user-feedback) plug in by *replacing* `SalienceLabeler` and re-training; reservoir, encoder, schema, and service API are unchanged.
+
+**Migration:**
+
+```sql
+-- migrations/00X_learning.sql
+
+CREATE TABLE reservoir_configs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    seed BIGINT NOT NULL,
+    reservoir_dim INT NOT NULL,
+    input_dim INT NOT NULL,
+    spectral_radius REAL NOT NULL,
+    leak_rate REAL NOT NULL,
+    sparsity REAL NOT NULL,
+    input_scaling REAL NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    active BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TABLE readout_models (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    config_id UUID NOT NULL REFERENCES reservoir_configs(id),
+    target VARCHAR(32) NOT NULL,            -- 'salience' for 7.1; 'anomaly', 'pattern.<name>' later
+    weights BYTEA NOT NULL,                 -- np.save format, ~reservoir_dim floats
+    bias REAL NOT NULL,
+    ridge_lambda REAL NOT NULL,
+    training_samples INT NOT NULL,
+    train_rmse REAL,
+    trained_at TIMESTAMP DEFAULT NOW(),
+    active BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE INDEX idx_readout_active ON readout_models(target, active) WHERE active;
+```
+
+Reservoir matrices `W_res`, `W_in` are **not** stored — regenerated deterministically from `seed + reservoir_dim + input_dim + sparsity` on startup.
+
+**Definition of Done:**
+
+- [ ] Package layout above implemented
+- [ ] Migration applied: `reservoir_configs` + `readout_models` tables
+- [ ] CLI: `python -m cortex.learning.cli train-salience [--window-days 30] [--ridge-lambda 1e-3]`
+      pulls events from `MinionService` → encoder → fresh seeded reservoir → `SalienceLabeler` →
+      ridge fit → inserts a new active `readout_models` row, deactivates prior
+- [ ] Unit tests (~40–50):
+  - encoder: per-type output shape == 64, type one-hot correctness, time sin/cos identity
+  - engine: state update converges to fixed point on constant input; spectral radius respected
+  - readout: ridge regression recovers known weights on synthetic linearly-separable data
+  - labeler: each component bounded in [0,1]; deterministic on fixed events
+  - service.train_salience_readout: end-to-end happy path with in-memory minion stub
+  - service.score_salience: mutates state; multiple calls produce different `x_t`
+  - persistence: round-trip readout weights through `bytea`
+- [ ] Integration test (1): CLI invoked against docker-compose Postgres + seeded minion events
+      produces an active `readout_models` row; `score_salience` returns values in [0, 1]
+
+### 7.2 LearningModule + Anomaly Readout (deferred)
+
+**Scope:** Subscribe to `*` on the event bus. Score every minion event's salience and attach to `EventMetadata.salience`. Add an anomaly readout. Decide attachment mechanism (publisher-side middleware in `events/bus.py` vs `event.scored` correlation event).
+
+### 7.3 Pattern Catalogue + `pattern.detected` (deferred)
+
+**Scope:** Named pattern readouts (commute, dining, work-from-home, …). Per-user lat/lon anchor learning. Free-text string features via hashing trick or learned embeddings.
+
+---
+
 ## 📋 Wave Summary Table
 
 | Wave    | Modules       | Deliverables                                      | Status                 |
@@ -1122,6 +1299,7 @@ src/minion/
 | **4**   | Agentic       | ContextBuilder, Reasoner, Executor, Loop          | ✅ DONE (79 tests)     |
 | **5**   | Orchestration | ExecutionModule, InteractionModule                | ✅ DONE (39 tests)     |
 | **6**   | Integration   | cortex-protocol                                   | ✅ 6.1 done (38 tests) |
+| **7.1** | Learning      | ReservoirEngine + Salience Readout + CLI          | 📋 Planned             |
 
 ---
 
@@ -1160,6 +1338,11 @@ Week 13-14: Wave 5 (Orchestration) ✅ DONE + Wave 6 (Integration) pending
            ├── Implement: API Gateway
            ├── Wire: Full application bootstrap
            └── Implement: PhoneMinion
+
+Week 15-16: Wave 7.1 (Learning — ReservoirEngine + Salience)
+           ├── TDD: encoder, ESN engine, ridge readout, labeler
+           ├── Migration: reservoir_configs, readout_models
+           └── CLI: `cortex.learning train-salience` + integration test
 ```
 
 ---
@@ -1252,6 +1435,18 @@ cortex/
 │   ├── __init__.py
 │   └── service.py
 │
+├── learning/                 # Wave 7.1 📋 (planned)
+│   ├── __init__.py
+│   ├── models.py
+│   ├── interfaces.py
+│   ├── encoder.py
+│   ├── engine.py
+│   ├── readout.py
+│   ├── labeler.py
+│   ├── persistence.py
+│   ├── service.py
+│   └── cli.py
+│
 ├── migrations/               # Wave 0 ✅
 ├── docker/                   # Wave 0 ✅
 ├── tests/
@@ -1281,6 +1476,9 @@ cortex/
 | **Minion language** | Python vs Go vs Rust                  | Python (shares code with Cortex)      |
 | **Session storage** | Postgres vs Redis                     | Postgres (already in stack)           |
 | **Config format**   | YAML only vs JSON vs TOML             | YAML + env vars                       |
+| **Learning ML stack** | LLM-only vs sklearn vs reservoir computing | **Reservoir computing (NumPy)** — see [ADR-0001](./adr/0001-reservoir-computing-for-learning-module.md) |
+| **Reservoir library** | reservoirpy vs scratch NumPy         | **NumPy** (~80 LoC, no transitive deps) |
+| **Readout training** | Online RLS vs offline batch ridge     | **Offline batch ridge** (closed form) |
 
 ---
 
@@ -1317,6 +1515,13 @@ After Wave 6:
 - [ ] Docker compose brings up entire stack
 - [ ] Health endpoint returns healthy status
 
+### Learning Module — 7.1 (Wave 7)
+
+- [ ] `python -m cortex.learning.cli train-salience` produces an active `readout_models` row
+- [ ] `LearningService.score_salience(event)` returns a value in [0, 1] from the trained readout
+- [ ] Reservoir warmup completes for 256 events on startup without blocking the event loop
+- [ ] `reservoir_configs` and `readout_models` tables present after migration
+
 ---
 
-_Last updated: 2026-05-03_ (Wave 0-5 ✅, Wave 6.1 ✅, 375 tests)
+_Last updated: 2026-05-05_ (Wave 0-5 ✅, Wave 6.1 ✅, Wave 7 planned, 375 tests)
