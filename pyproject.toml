@@ -24,6 +24,7 @@ dependencies = [
     "uvicorn>=0.30",
     "fastapi>=0.115",
     "httpx>=0.27",
+    "typer>=0.15",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
 ]
@@ -39,7 +40,7 @@ dev = [
 ]
 
 [project.scripts]
-cortex = "cortex.main:main"
+cortex = "cortex.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cortex"]
