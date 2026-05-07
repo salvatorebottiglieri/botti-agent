@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Cortex API...")
 
 
-def create_app() -> FastAPI:
+def create_api_app() -> FastAPI:
     """
     Create and configure the FastAPI application.
 
@@ -103,6 +103,11 @@ def create_app() -> FastAPI:
         }
 
     return app
+
+
+def create_app() -> FastAPI:
+    """Alias for create_api_app for backward compatibility."""
+    return create_api_app()
 
 
 def bootstrap_app(state: dict) -> FastAPI:
