@@ -15,16 +15,21 @@ from cortex.api.dependencies import (
     get_execution_module,
     get_interaction_service,
 )
-from cortex.api.schemas import ChatRequest, ChatResponse
+from cortex.api.schemas import ChatRequest, ChatResponse, ErrorResponse
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 @router.post(
     "",
-    response_model=ChatResponse,
     summary="Chat completion (non-streaming)",
     description="Send a message and receive a response from the agent.",
+    responses={
+        400: {"model": ErrorResponse, "description": "Bad request"},
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    },
 )
 async def chat(
     request: ChatRequest,
@@ -137,12 +142,14 @@ async def chat_stream(
 
             # Stream the response text
             yield _sse_event("text", {"delta": response.message})
+    # Stream the response text
             yield _sse_event(
                 "done",
                 {
-                    "session_id": str(session_id),
+                    "final_message": response.message,
+                    "tool_calls": response.tools_used or [],
                     "iterations": response.iterations,
-                    "tools_used": response.tools_used or [],
+                    "duration_ms": 0,  # TODO: track duration
                 },
             )
 

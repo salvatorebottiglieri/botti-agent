@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from cortex.config.loader import get_settings
 from cortex.config.models import Settings
 from cortex.logging.setup import configure_logging
+from cortex.tools.interfaces import ToolExecutor
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -111,22 +112,24 @@ async def initialize_app() -> CortexApp:
     settings = get_settings()
 
     # Configure logging
-    configure_logging(settings.logging)
+    configure_logging(settings)
 
     logger.info(f"Cortex v{settings.version} - Initializing...")
 
     # Create the app container
     cortex = CortexApp(settings=settings)
 
-    # 2. Run DB migrations
+
+    # 2. Create DB pool
+    logger.info("Creating database pool...")
+    from cortex.db.pool import create_pool
+    cortex.db_pool = await create_pool(settings)
+
+    # 3. Run DB migrations
     logger.info("Running database migrations...")
     from cortex.db.migrations.runner import run_migrations
     await run_migrations()
 
-    # 3. Create DB pool
-    logger.info("Creating database pool...")
-    from cortex.db.pool import create_pool
-    cortex.db_pool = await create_pool(settings)
 
     # 4. Initialize event bus
     logger.info("Starting event bus...")
@@ -269,9 +272,9 @@ async def initialize_app() -> CortexApp:
     return cortex
 
 
-def _wrap_tool_executor(service) -> "ToolExecutor":
+def _wrap_tool_executor(service) -> ToolExecutor:
     """Wrap ToolExecutorService for ToolExecutor interface."""
-    from cortex.tools.interfaces import ToolExecutor, ToolCall, ToolResult
+    from cortex.tools.interfaces import ToolCall, ToolExecutor, ToolResult
 
     class WrappedExecutor(ToolExecutor):
         async def execute(self, tool_call: ToolCall, *, timeout: int | None = None) -> ToolResult:

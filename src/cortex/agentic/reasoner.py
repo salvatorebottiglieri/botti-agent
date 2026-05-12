@@ -11,7 +11,7 @@ from cortex.agentic.models import (
     Decision,
     DecisionType,
 )
-from cortex.llm.models import ChatMessage
+from cortex.llm.models import ChatMessage, Role
 
 if TYPE_CHECKING:
     from cortex.llm.base import LLMClient
@@ -106,7 +106,7 @@ Always be helpful, concise, and precise."""
                     tool_section += f"- {tool.name}: {getattr(tool, 'description', '')}\n"
             system += tool_section
 
-        messages.append(ChatMessage(role="system", content=system))
+        messages.append(ChatMessage(role=Role.SYSTEM, content=system))
 
         # Add ambient context
         if context.ambient:
@@ -120,7 +120,7 @@ Always be helpful, concise, and precise."""
 
             if ambient_parts:
                 messages.append(ChatMessage(
-                    role="system",
+                    role=Role.SYSTEM,
                     content=f"Context: {', '.join(ambient_parts)}"
                 ))
 
@@ -139,14 +139,14 @@ Always be helpful, concise, and precise."""
 
             if personality_parts:
                 messages.append(ChatMessage(
-                    role="system",
+                    role=Role.SYSTEM,
                     content=f"Style: {', '.join(personality_parts)}"
                 ))
 
         # Add goal context
         if context.goal:
             messages.append(ChatMessage(
-                role="system",
+                role=Role.SYSTEM,
                 content=f"Goal: {context.goal.description}"
             ))
 
@@ -155,7 +155,7 @@ Always be helpful, concise, and precise."""
             fact_texts = [f.natural_lang_repr for f in context.facts[:5]]
             if fact_texts:
                 messages.append(ChatMessage(
-                    role="system",
+                    role=Role.SYSTEM,
                     content=f"Known facts: {', '.join(fact_texts)}"
                 ))
 

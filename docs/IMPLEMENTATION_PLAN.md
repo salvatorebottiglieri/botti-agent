@@ -46,7 +46,7 @@
               ╚════════════════════════════════════════════════════════╝
                                               │
               ╠════════════════════════════════════════════════════════╣
-              │  ✅ 6.1 cortex-protocol   │ ✅ 6.2 API Gateway │ 6.3 Bootstrap │ 6.4 Minions ║
+              │  ✅ 6.1 cortex-protocol   │ ✅ 6.2 API Gateway │ ✅ 6.3 Bootstrap │ ✅ 6.4 Minions ║
               ╚════════════════════════════════════════════════════════╝
                                               │
               ╔═══════════════════════════════════════════════════════╗
@@ -1062,7 +1062,7 @@ See [Wave 5: Orchestration > 5.3 API Gateway](#53-api-gateway-) section above.
 
 ---
 
-### 6.3 Application Bootstrap (PENDING)
+### 6.3 Application Bootstrap ✅ COMPLETE (2026-05-03)
 
 ```
 src/cortex/
@@ -1131,7 +1131,7 @@ async def create_app() -> CortexApp:
     )
 ```
 
-### 6.3 Phone Minion
+### 6.4 Laptop Minion ✅ COMPLETE (2026-05-12)
 
 ```
 src/minion/
@@ -1339,6 +1339,8 @@ Reservoir matrices `W_res`, `W_in` are **not** stored — regenerated determinis
 | **5**   | Orchestration | ExecutionModule, InteractionModule, API Gateway    | ✅ DONE (386 tests)    |
 | **6.1** | Integration   | cortex-protocol                                   | ✅ DONE (38 tests)     |
 | **6.2** | Integration   | API Gateway                                        | ✅ DONE (11 tests)     |
+| **6.3** | Integration   | Application Bootstrap (CortexApp wiring)           | ✅ DONE                |
+| **6.4** | Integration   | Laptop Minion                                      | ✅ DONE                |
 | **7.1** | Learning      | ReservoirEngine + Salience Readout + CLI          | 📋 Planned             |
 
 ---
@@ -1549,11 +1551,11 @@ After Wave 6:
 
 ### Full System (Wave 6)
 
-- [ ] Minion location events flow to Cortex
-- [ ] Facts are extracted and stored in Postgres
-- [ ] Conversation history persists across sessions
-- [ ] Docker compose brings up entire stack
-- [ ] Health endpoint returns healthy status
+- [x] Minion location events flow to Cortex
+- [x] Facts are extracted and stored in Postgres
+- [x] Conversation history persists across sessions
+- [x] Docker compose brings up entire stack
+- [x] Health endpoint returns healthy status
 
 ### Learning Module — 7.1 (Wave 7)
 
@@ -1564,4 +1566,4 @@ After Wave 6:
 
 ---
 
-_Last updated: 2026-05-05_ (Wave 0-5 ✅, Wave 6.1 ✅, Wave 7 planned, 375 tests)
+_Last updated: 2026-05-12_ (Wave 0-6 ✅, Wave 7.1 planned, 394 tests)
