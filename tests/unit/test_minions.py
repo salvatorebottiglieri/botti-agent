@@ -246,53 +246,84 @@ class TestInMemoryMinionRegistry:
         assert result is None
 
 
-class TestMinionEventHandler:
-    """Tests for MinionEventHandler implementation."""
-
-    @pytest.fixture
-    def processor(self):
-        """Create a MinionEventProcessor."""
-        from cortex.minions.event_handler import MinionEventProcessor
-        return MinionEventProcessor()
+class TestMinionEventProcessor:
+    """Tests for MinionEventProcessor emitting to event bus."""
 
     @pytest.mark.asyncio
-    async def test_handle_single_event(self, processor):
-        """Test handling a single event."""
+    async def test_handle_location_event_emits_to_event_bus(self):
+        """
+        RED: When a location event is processed, it should emit a BaseEvent
+        to the event bus with type 'minion.location'.
+        """
+        from cortex.events.bus import EventBus
+        from cortex.minions.event_handler import MinionEventProcessor
+
+        # Create event bus
+        bus = EventBus()
+        await bus.start()
+
+
+        # Create processor with event bus
+        processor = MinionEventProcessor(event_bus=bus)
+
+        # Create a location event
         event = MinionEvent.create(
             minion_id="phone-001",
             event_type=EventType.LOCATION_UPDATE,
-            payload={"latitude": 37.7749},
+            payload={"latitude": 37.7749, "longitude": -122.4194},
         )
 
+        # Track events published to bus
+        published_events = []
+        async def capture_handler(e):
+            published_events.append(e)
+
+        await bus.subscribe("minion.location", capture_handler)
+
+        # Process the event
         await processor.handle_event(event)
 
-        assert processor.processed_count == 1
+        # Assert event was published
+        assert len(published_events) == 1
+        assert published_events[0].type == "minion.location"
+        assert published_events[0].payload["minion_id"] == "phone-001"
+        # Original payload is nested under 'payload' key
+        assert published_events[0].payload["payload"]["latitude"] == 37.7749
+        assert published_events[0].payload["payload"]["longitude"] == -122.4194
 
     @pytest.mark.asyncio
-    async def test_handle_batch(self, processor):
-        """Test handling a batch of events."""
-        events = [
-            MinionEvent.create("phone-001", EventType.LOCATION_UPDATE, {}),
-            MinionEvent.create("phone-001", EventType.ACTIVITY_DETECTED, {}),
-            MinionEvent.create("phone-001", EventType.CALENDAR_EVENT, {}),
-        ]
-        batch = MinionEventBatch.create("phone-001", events)
+    async def test_handle_battery_event_emits_to_event_bus(self):
+        """
+        RED: Battery events should emit 'minion.battery' to the event bus.
+        """
+        from cortex.events.bus import EventBus
+        from cortex.minions.event_handler import MinionEventProcessor
 
-        result = await processor.handle_batch(batch)
+        bus = EventBus()
+        await bus.start()
+        processor = MinionEventProcessor(event_bus=bus)
 
-        assert len(result) == 3
-        assert processor.processed_count == 3
+        event = MinionEvent.create(
+            minion_id="laptop-001",
+            event_type=EventType.BATTERY_LEVEL,
+            payload={"level": 0.75, "is_charging": True},
+        )
 
-    @pytest.mark.asyncio
-    async def test_reset_stats(self, processor):
-        """Test resetting statistics."""
-        event = MinionEvent.create("phone-001", EventType.LOCATION_UPDATE, {})
+        published_events = []
+        async def capture_handler(e):
+            published_events.append(e)
+
+        await bus.subscribe("minion.battery", capture_handler)
+
         await processor.handle_event(event)
 
-        assert processor.processed_count == 1
+        assert len(published_events) == 1
+        assert published_events[0].type == "minion.battery"
+        assert published_events[0].payload["payload"]["level"] == 0.75
+        assert published_events[0].payload["payload"]["is_charging"] is True
 
-        processor.reset_stats()
-        assert processor.processed_count == 0
+        if bus.is_running:
+            await bus.stop()
 
 
 class TestMinionInterfaces:
@@ -321,6 +352,7 @@ class TestMinionInterfaces:
             event_type=EventType.LOCATION_UPDATE,
             payload={},
         )
+
 
         assert hasattr(event, "event_id")
         assert hasattr(event, "minion_id")
@@ -352,3 +384,176 @@ class TestMinionInterfaces:
         assert EventType.REGISTERED.value == "minion.registered"
         assert EventType.HEARTBEAT.value == "minion.heartbeat"
         assert EventType.LOCATION_UPDATE.value == "location.update"
+
+
+class TestPostgresMinionRegistry:
+    """Tests for Postgres-backed MinionRegistry."""
+
+    @pytest.mark.asyncio
+    async def test_register_minion_persists_to_db(self):
+        """
+        RED: When a minion is registered, it should persist to the minions table.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+        from cortex.minions.registry import PostgresMinionRegistry
+        from cortex.minions.models import MinionInfo, MinionState
+
+        # Create mock pool
+        mock_pool = MagicMock()
+        mock_conn = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        registry = PostgresMinionRegistry(pool=mock_pool)
+
+        minion_info = MinionInfo(
+            minion_id="phone-001",
+            name="My Phone",
+            device_type="android",
+            capabilities={},
+            state=MinionState.ONLINE,
+        )
+
+
+        await registry.register("phone-001", minion_info)
+
+
+        # Verify INSERT was called
+        mock_conn.execute.assert_called_once()
+        call_args = mock_conn.execute.call_args
+        assert "INSERT INTO minions" in call_args[0][0]
+
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_updates_last_heartbeat_at(self):
+        """
+        RED: Heartbeat should update last_heartbeat_at in the database.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+        from cortex.minions.registry import PostgresMinionRegistry
+
+
+        mock_pool = MagicMock()
+        mock_conn = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        registry = PostgresMinionRegistry(pool=mock_pool)
+
+        await registry.heartbeat("phone-001")
+
+        # Verify UPDATE was called with last_heartbeat_at
+        mock_conn.execute.assert_called_once()
+        call_args = mock_conn.execute.call_args
+        assert "UPDATE minions SET last_heartbeat_at" in call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_get_minion_returns_info(self):
+        """
+        RED: Getting a minion should return MinionInfo from the database.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+        from datetime import datetime, timezone
+        from cortex.minions.registry import PostgresMinionRegistry
+        from cortex.minions.models import MinionInfo, MinionState
+
+        mock_pool = MagicMock()
+        mock_conn = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        # Mock query result - fetchrow returns a row object
+        mock_row = MagicMock()
+        mock_row.keys.return_value = ["minion_id", "name", "device_type", "state", "last_heartbeat_at", "capabilities", "metadata"]
+        mock_row.__getitem__ = lambda self, k: {
+            "minion_id": "phone-001",
+            "name": "My Phone",
+            "device_type": "android",
+            "state": "online",
+            "last_heartbeat_at": datetime.now(timezone.utc),
+            "capabilities": {},
+            "metadata": {},
+        }.get(k)
+        # Mock fetchrow directly on the connection
+        mock_conn.fetchrow = AsyncMock(return_value=mock_row)
+
+        registry = PostgresMinionRegistry(pool=mock_pool)
+        result = await registry.get("phone-001")
+
+
+        assert result is not None
+        assert result.minion_id == "phone-001"
+        assert result.name == "My Phone"
+
+
+
+class TestMinionServiceSequenceGap:
+    """Tests for sequence gap detection in minion events."""
+
+    @pytest.mark.asyncio
+    async def test_sequence_gap_detected_and_logged(self, caplog):
+        """
+        GREEN: When events arrive with non-contiguous sequence numbers,
+        a warning should be logged. Using caplog for log capture.
+        """
+        import logging
+        from unittest.mock import AsyncMock, MagicMock
+        from cortex.services.minion_service import MinionService
+        from cortex.minions.models import MinionEvent, EventType, MinionConfig
+        from cortex.events.bus import EventBus
+
+        bus = EventBus()
+        await bus.start()
+
+        try:
+            # Create mocks
+            mock_gateway = MagicMock()
+            mock_gateway.connect = AsyncMock()
+            mock_gateway.disconnect = AsyncMock()
+            mock_gateway.subscribe = AsyncMock()
+            mock_gateway.is_connected.return_value = True
+
+            mock_registry = MagicMock()
+            mock_registry.register = AsyncMock()
+            mock_registry.heartbeat = AsyncMock()
+            mock_registry.update_state = AsyncMock()
+            mock_registry.get = AsyncMock(return_value=None)
+
+            service = MinionService(
+                config=MinionConfig(
+                    broker_url="mqtt://localhost",
+                    minion_id="test",
+                    minion_name="Test",
+                    device_type="test",
+                ),
+                gateway=mock_gateway,
+                registry=mock_registry,
+                event_bus=bus,
+                memory_service=None,
+            )
+
+            # Set up service and track sequences via events
+            # First establish sequence=1
+            event1 = MinionEvent.create(
+                minion_id="phone-001",
+                event_type=EventType.LOCATION_UPDATE,
+                payload={"latitude": 37.0, "longitude": -122.0},
+            )
+            event1.sequence_number = 1
+            await service.handle_event(event1)
+
+            # Now send event with seq=3 (gap of 2 from seq=1)
+            event2 = MinionEvent.create(
+                minion_id="phone-001",
+                event_type=EventType.LOCATION_UPDATE,
+                payload={"latitude": 37.1, "longitude": -122.1},
+            )
+            event2.sequence_number = 3  # Gap from last (1) to (3)
+
+            with caplog.at_level(logging.WARNING):
+                await service.handle_event(event2)
+
+            # Check that warning was logged about sequence gap
+            assert any("sequence" in record.message.lower() or "gap" in record.message.lower() 
+                      for record in caplog.records), \
+                f"Should log warning for sequence gap. Got: {[r.message for r in caplog.records]}"
+        finally:
+            if bus.is_running:
+                await bus.stop()

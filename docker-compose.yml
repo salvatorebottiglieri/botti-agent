@@ -26,6 +26,7 @@ services:
       - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log
+      - mosquitto_config:/mosquitto/config
     ports:
       - "1883:1883"
       - "9001:9001"
@@ -41,10 +42,14 @@ services:
       dockerfile: Dockerfile
     container_name: cortex-app
     environment:
-      DB_URL: postgresql://cortex:cortex@postgres:5432/cortex
+      DATABASE_URL: postgresql://cortex:cortex@postgres:5432/cortex
       MQTT_BROKER_URL: mqtt://mosquitto:1883
+      MQTT_PASSWD_PATH: /mosquitto/config/passwd.conf
+      LLM_API_KEY: ${LLM_API_KEY}
       LOG_LEVEL: INFO
       LOG_FORMAT: console
+    volumes:
+      - mosquitto_config:/mosquitto/config:rw
     ports:
       - "8000:8000"
     depends_on:
@@ -57,9 +62,10 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
 
 volumes:
   postgres_data:
   mosquitto_data:
   mosquitto_logs:
+  mosquitto_config:

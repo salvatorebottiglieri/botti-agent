@@ -19,6 +19,7 @@ class MinionService:
     - Registry integration
     - Event processing
     - Fact extraction
+    - Sequence gap detection
     - Health monitoring
     """
     
@@ -35,6 +36,9 @@ class MinionService:
         self._registry = registry
         self._event_bus = event_bus
         self._memory_service = memory_service
+        
+        # Sequence tracking for gap detection
+        self._last_sequence: dict[str, int] = {}
         
         # Create event handler
         self._handler = MinionEventProcessor(event_bus, memory_service)
@@ -101,7 +105,11 @@ class MinionService:
         Handle an incoming minion event.
         
         Processes the event and may emit derived events or facts.
+        Also detects sequence gaps.
         """
+        # Check for sequence gaps
+        await self._check_sequence_gap(event)
+        
         # Update heartbeat
         await self.heartbeat()
         
@@ -125,6 +133,29 @@ class MinionService:
                 },
                 source_module="minion_service"
             ))
+    
+    async def _check_sequence_gap(self, event: MinionEvent) -> None:
+        """
+        Check for sequence gaps in incoming events.
+        
+        Logs a warning if sequence numbers are not contiguous.
+        No retransmit in v1.
+        """
+        if event.sequence_number == 0:
+            # No sequence tracking for this event
+            return
+            
+        last_seq = self._last_sequence.get(event.minion_id, 0)
+        if last_seq > 0 and event.sequence_number != last_seq + 1:
+            gap = event.sequence_number - last_seq - 1
+            logger.warning(
+                f"Sequence gap detected for minion {event.minion_id}: "
+                f"expected {last_seq + 1}, got {event.sequence_number} "
+                f"(gap of {gap} event(s))"
+            )
+        
+        # Update last sequence
+        self._last_sequence[event.minion_id] = event.sequence_number
     
     async def handle_batch(self, batch: MinionEventBatch) -> list[MinionEvent]:
         """Handle a batch of events."""

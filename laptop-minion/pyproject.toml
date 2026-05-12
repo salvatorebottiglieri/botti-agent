@@ -1,0 +1,77 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "laptop-minion"
+version = "0.1.0"
+description = "Cortex laptop minion - sensor data collector"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Cortex Team" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "paho-mqtt>=2.0.0",
+    "pyyaml>=6.0",
+    "plyer>=2.1.0",           # Cross-platform notifications (battery, network)
+    "psutil>=5.9.0",          # System info (battery, network)
+    "platformdirs>=4.0.0",   # Cross-platform config paths
+]
+
+# For local development, install cortex-protocol from path:
+# pip install -e /path/to/src/cortex_protocol
+# Or add this in editable mode with path override:
+dependencies_local = [
+    "cortex-protocol @ file:///${PROJECT_ROOT}/../src/cortex_protocol",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+]
+# Platform-specific extras
+macos = ["osascript-python>=0.1.0"]
+windows = ["pywin32>=306"]
+linux = []
+
+[project.scripts]
+laptop-minion = "laptop_minion.main:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/laptop_minion"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/README.md",
+    "/LICENSE",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true

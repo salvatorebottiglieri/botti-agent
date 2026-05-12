@@ -20,6 +20,9 @@ RUN uv sync --frozen --no-install-project
 COPY src/ ./src/
 COPY migrations/ ./migrations/
 
+# Copy migrations to expected location (migrations runner looks for src/../migrations)
+RUN mkdir -p src/migrations && cp -r migrations/* src/migrations/
+
 # Set Python path
 ENV PYTHONPATH=/app/src
 
