@@ -16,6 +16,7 @@ from cortex.agentic.models import (
     MaxIterationsError,
 )
 from cortex.agentic.loop import AgentLoop
+from cortex.events import EventEmitter
 
 if TYPE_CHECKING:
     from cortex.events import EventBus
@@ -23,72 +24,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class GoalStore:
-    """
-    Persistence layer for goals.
-
-    Uses the database pool to store goal state.
-    """
-
-    def __init__(self, db_pool: Any):
-        self._db = db_pool
-
-    async def create(
-        self,
-        description: str,
-        priority: str = "normal",
-        deadline: Any | None = None,
-    ) -> Goal:
-        """Create a new goal."""
-        goal = Goal(
-            id=uuid4(),
-            description=description,
-            priority=priority,
-            deadline=deadline,
-            status=GoalStatus.PENDING,
-            created_at=time.time(),
-        )
-
-        # TODO: Persist to database
-        # await self._db.execute("INSERT INTO goals ...")
-
-        return goal
-
-    async def get(self, goal_id: UUID) -> Goal | None:
-        """Get a goal by ID."""
-        # TODO: Fetch from database
-        return None
-
-    async def update_status(self, goal_id: UUID, status: GoalStatus) -> None:
-        """Update goal status."""
-        # TODO: Update in database
-        pass
-
-    async def list_active(self) -> list[Goal]:
-        """List active (pending/running) goals."""
-        # TODO: Fetch from database
-        return []
-
-    async def mark_completed(self, goal_id: UUID, message: str = "") -> None:
-        """Mark a goal as completed."""
-        await self.update_status(goal_id, GoalStatus.COMPLETED)
-
-    async def mark_failed(self, goal_id: UUID, error: str) -> None:
-        """Mark a goal as failed."""
-        goal = await self.get(goal_id)
-        if goal:
-            goal.error = error
-        await self.update_status(goal_id, GoalStatus.FAILED)
-
-    async def add_step(self, goal_id: UUID, step: str) -> None:
-        """Add a completed step to a goal."""
-        # TODO: Update in database
-        pass
+_ACTIVE_STATUSES = {GoalStatus.PENDING, GoalStatus.RUNNING, GoalStatus.PAUSED}
 
 
 class ExecutionModule:
     """
     Execution Module wraps the AgentLoop.
+
+    Goals live in process memory (`self._goals`). They are not durable across
+    restarts; a real persistence adapter is a future feature, not a stubbed
+    facade pretending to be one.
 
     Handles:
     - Chat mode execution
@@ -108,12 +53,12 @@ class ExecutionModule:
     def __init__(
         self,
         agent_loop: AgentLoop,
-        goal_store: GoalStore | None = None,
         event_bus: EventBus | None = None,
     ):
         self._agent_loop = agent_loop
-        self._goal_store = goal_store or GoalStore(db_pool=None)
         self._event_bus = event_bus
+        self._emitter = EventEmitter(event_bus, source_module="execution_module")
+        self._goals: dict[UUID, Goal] = {}
 
     async def run_chat(
         self,
@@ -162,28 +107,33 @@ class ExecutionModule:
         Returns:
             The created Goal
         """
-        # Create goal in store
-        goal = await self._goal_store.create(description, priority, deadline)
+        goal = Goal(
+            id=uuid4(),
+            description=description,
+            priority=priority,
+            deadline=deadline,
+            status=GoalStatus.PENDING,
+            created_at=time.time(),
+        )
+        self._goals[goal.id] = goal
 
-        # Emit started event
         await self._emit_goal_event(goal.id, "created", {
             "description": description,
             "priority": priority,
-            "timestamp": time.time(),
+            "timestamp": goal.created_at,
         })
 
-        # Start background execution
         asyncio.create_task(self._run_goal_async(goal))
 
         return goal
 
     async def get_goal(self, goal_id: UUID) -> Goal | None:
         """Get a goal by ID."""
-        return await self._goal_store.get(goal_id)
+        return self._goals.get(goal_id)
 
     async def list_active_goals(self) -> list[Goal]:
-        """List active goals."""
-        return await self._goal_store.list_active()
+        """List active goals (pending, running, or paused)."""
+        return [g for g in self._goals.values() if g.status in _ACTIVE_STATUSES]
 
     async def run_goal(
         self,
@@ -195,6 +145,10 @@ class ExecutionModule:
         """
         Run a specific goal.
 
+        If the goal isn't already tracked (e.g. the call arrived via an external
+        `goal.created` event), a Goal entry is created on the fly so its state
+        is queryable afterwards.
+
         Args:
             goal_id: Goal identifier
             description: Goal description
@@ -203,12 +157,22 @@ class ExecutionModule:
         Returns:
             GoalResult
         """
-        # Update status to running
-        await self._goal_store.update_status(goal_id, GoalStatus.RUNNING)
+        goal = self._goals.get(goal_id)
+        if goal is None:
+            goal = Goal(
+                id=goal_id,
+                description=description,
+                status=GoalStatus.PENDING,
+                created_at=time.time(),
+            )
+            self._goals[goal_id] = goal
+
+        goal.status = GoalStatus.RUNNING
+        goal.started_at = time.time()
 
         await self._emit_goal_event(goal_id, "started", {
             "description": description,
-            "timestamp": time.time(),
+            "timestamp": goal.started_at,
         })
 
         try:
@@ -218,23 +182,25 @@ class ExecutionModule:
                 max_iterations=max_iterations,
             )
 
-            # Mark completed
-            await self._goal_store.mark_completed(goal_id, result.message)
+            goal.status = GoalStatus.COMPLETED
+            goal.completed_at = time.time()
 
             await self._emit_goal_event(goal_id, "completed", {
                 "message": result.message,
                 "iterations": result.iterations,
-                "timestamp": time.time(),
+                "timestamp": goal.completed_at,
             })
 
             return result
 
         except MaxIterationsError:
-            await self._goal_store.mark_failed(goal_id, "Max iterations exceeded")
+            goal.status = GoalStatus.FAILED
+            goal.error = "Max iterations exceeded"
+            goal.completed_at = time.time()
 
             await self._emit_goal_event(goal_id, "failed", {
-                "error": "Max iterations exceeded",
-                "timestamp": time.time(),
+                "error": goal.error,
+                "timestamp": goal.completed_at,
             })
 
             return GoalResult(
@@ -245,11 +211,13 @@ class ExecutionModule:
             )
 
         except Exception as e:
-            await self._goal_store.mark_failed(goal_id, str(e))
+            goal.status = GoalStatus.FAILED
+            goal.error = str(e)
+            goal.completed_at = time.time()
 
             await self._emit_goal_event(goal_id, "failed", {
-                "error": str(e),
-                "timestamp": time.time(),
+                "error": goal.error,
+                "timestamp": goal.completed_at,
             })
 
             return GoalResult(
@@ -293,22 +261,10 @@ class ExecutionModule:
 
     async def _emit_goal_event(self, goal_id: UUID, status: str, data: dict) -> None:
         """Emit a goal status event."""
-        if not self._event_bus:
-            return
-
-        try:
-            from cortex.events import BaseEvent
-            event = BaseEvent.create(
-                event_type=f"goal.{status}",
-                payload={
-                    "goal_id": str(goal_id),
-                    **data,
-                },
-                source_module="execution_module"
-            )
-            await self._event_bus.publish(event)
-        except Exception as e:
-            logger.warning(f"Failed to emit goal event: {e}")
+        await self._emitter.emit(
+            f"goal.{status}",
+            {"goal_id": str(goal_id), **data},
+        )
 
     def subscribe(self) -> None:
         """Subscribe to events."""

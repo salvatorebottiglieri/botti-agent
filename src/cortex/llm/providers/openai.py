@@ -12,10 +12,9 @@ from cortex.llm.models import (
     ChatMessage,
     ChatResult,
     Role,
-    ToolCall,
-    ToolDefinition,
     UsageStats,
 )
+from cortex.tools.interfaces import ToolCall, ToolDefinition
 from cortex.config.models import Settings
 
 logger = logging.getLogger(__name__)

@@ -6,12 +6,13 @@ import logging
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from cortex.agentic.models import ChatResponse, Mode, PersonalityContext
-from cortex.sessions.models import Message, MessageRole
+from cortex.agentic.models import PersonalityContext
+from cortex.sessions import policy
 
 if TYPE_CHECKING:
     from cortex.execution import ExecutionModule
-    from cortex.sessions.service import SessionService
+    from cortex.sessions.interfaces import SessionRepository
+    from cortex.sessions.models import Session
 
 logger = logging.getLogger(__name__)
 
@@ -125,117 +126,26 @@ class PersonalityService:
 
 class InteractionService:
     """
-    Thin interface: receives requests, calls Agentic Loop, formats responses.
+    Thin facade used by the chat route to look up or create a session.
 
-    Does NOT contain the loop itself.
+    Holds the personality service and a reference to the session repository.
+    The agentic loop is invoked directly via ExecutionModule from the route.
     """
 
     def __init__(
         self,
         execution_module: ExecutionModule,
-        session_service: SessionService,
+        session_repository: SessionRepository,
         personality_service: PersonalityService | None = None,
     ):
         self._execution = execution_module
-        self._session_service = session_service
+        self._session_repository = session_repository
         self._personality = personality_service or PersonalityService()
 
-    async def handle_message(
-        self,
-        session_id: UUID | None,
-        content: str,
-        mode: Mode = Mode.CHAT,
-        *,
-        max_iterations: int | None = None,
-    ) -> ChatResponse:
-        """
-        Handle incoming user message.
-
-        Args:
-            session_id: Existing session ID (or None for new)
-            content: User's message
-            mode: CHAT or GOAL mode
-            max_iterations: Optional iteration limit
-
-        Returns:
-            ChatResponse with formatted message
-        """
-        # Get or create session
-        session = await self._get_or_create_session(session_id)
-
-        # Call execution module
-        if mode == Mode.CHAT:
-            response = await self._execution.run_chat(
-                session_id=session.id,
-                user_message=content,
-                max_iterations=max_iterations,
-            )
-        else:
-            # GOAL mode
-            from cortex.agentic.models import GoalResult
-            result: GoalResult = await self._execution.run_goal(
-                goal_id=session.id,  # Reuse session ID for goal
-                description=content,
-            )
-            response = ChatResponse(
-                message=result.message,
-                iterations=result.iterations,
-            )
-
-        # Add messages to conversation
-        await self._session_service.add_message(
-            session.id,
-            Message(session_id=session.id, role=MessageRole.USER, content=content)
-        )
-        await self._session_service.add_message(
-            session.id,
-            Message(session_id=session.id, role=MessageRole.ASSISTANT, content=response.message)
-        )
-
-        # Format response with personality
-        personality = await self._personality.get_personality(session.id)
-        formatted_message = self._personality.format_response(
-            response.message,
-            formality=personality.formality,
-            verbosity=personality.verbosity,
-        )
-
-        response.message = formatted_message
-
-        return response
-
-    async def get_session(self, session_id: UUID) -> Any | None:
+    async def get_session(self, session_id: UUID) -> Session | None:
         """Get a session by ID."""
-        return await self._session_service.get(session_id)
+        return await self._session_repository.get(session_id)
 
-    async def get_conversation_history(
-        self,
-        session_id: UUID,
-        limit: int = 50,
-    ) -> list[Message]:
-        """Get conversation history for a session."""
-        return await self._session_service.get_messages(session_id, limit=limit)
-
-    async def _get_or_create_session(self, session_id: UUID | None) -> Any:
-        """Get existing session or create new one."""
-        if session_id:
-            session = await self._session_service.get(session_id)
-            if session:
-                return session
-
-        # Create new session
-        return await self._session_service.create()
-
-    async def _format_with_personality(
-        self,
-        text: str,
-        session_id: UUID | None,
-    ) -> str:
-        """Format text with personality context."""
-        personality = await self._personality.get_personality(session_id)
-
-        return self._personality.format_response(
-            text,
-            formality=personality.formality,
-            verbosity=personality.verbosity,
-        )
+    async def _get_or_create_session(self, session_id: UUID | None) -> Session:
+        """Get existing session or create a new ACTIVE one."""
+        return await policy.get_or_create_session(self._session_repository, session_id)

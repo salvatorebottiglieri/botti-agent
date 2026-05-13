@@ -35,7 +35,7 @@ class CortexApp:
     settings: Settings = field(default=None)
     db_pool: Any = field(default=None)
     event_bus: Any = field(default=None)
-    session_service: Any = field(default=None)
+    session_repository: Any = field(default=None)
     execution_module: Any = field(default=None)
     interaction_service: Any = field(default=None)
     personality_service: Any = field(default=None)
@@ -143,10 +143,9 @@ async def initialize_app() -> CortexApp:
     # 5a. Create session repository
     from cortex.sessions.repository import PostgresSessionRepository
     from cortex.sessions.interfaces import SessionRepository
-    from cortex.sessions.service import SessionService
 
     session_repo: SessionRepository = PostgresSessionRepository(cortex.db_pool)
-    cortex.session_service = SessionService(repository=session_repo)
+    cortex.session_repository = session_repo
 
     # 5b. Create memory repositories
     from cortex.memory.repository import PostgresFactRepository, PostgresConceptRepository
@@ -181,7 +180,7 @@ async def initialize_app() -> CortexApp:
     from cortex.agentic.reasoner import Reasoner
     from cortex.agentic.executor import LoopExecutor
     from cortex.agentic.loop import AgentLoop
-    from cortex.execution.module import ExecutionModule, GoalStore
+    from cortex.execution.module import ExecutionModule
 
     # Create placeholder memory service first (needed for context builder)
     from cortex.services.memory_service import MemoryService
@@ -194,7 +193,7 @@ async def initialize_app() -> CortexApp:
     )
 
     context_builder = ContextBuilder(
-        session_service=cortex.session_service,
+        session_repository=cortex.session_repository,
         memory_service=cortex.memory_service,
         tool_registry=tool_registry,
     )
@@ -214,14 +213,11 @@ async def initialize_app() -> CortexApp:
         reasoner=reasoner,
         executor=loop_executor,
         event_bus=cortex.event_bus,
-        session_service=cortex.session_service,
     )
 
     # Create execution module
-    goal_store = GoalStore(db_pool=cortex.db_pool)
     cortex.execution_module = ExecutionModule(
         agent_loop=agent_loop,
-        goal_store=goal_store,
         event_bus=cortex.event_bus,
     )
 
@@ -233,7 +229,7 @@ async def initialize_app() -> CortexApp:
     from cortex.interaction.service import InteractionService
     cortex.interaction_service = InteractionService(
         execution_module=cortex.execution_module,
-        session_service=cortex.session_service,
+        session_repository=cortex.session_repository,
         personality_service=cortex.personality_service,
     )
 
@@ -241,7 +237,7 @@ async def initialize_app() -> CortexApp:
     state = {
         "db_pool": cortex.db_pool,
         "event_bus": cortex.event_bus,
-        "session_service": cortex.session_service,
+        "session_repository": cortex.session_repository,
         "execution_module": cortex.execution_module,
         "interaction_service": cortex.interaction_service,
         "personality_service": cortex.personality_service,

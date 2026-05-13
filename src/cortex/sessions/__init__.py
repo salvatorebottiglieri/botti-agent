@@ -12,12 +12,11 @@ from cortex.sessions.models import (
 )
 from cortex.sessions.interfaces import SessionRepository
 from cortex.sessions.repository import PostgresSessionRepository
-from cortex.sessions.service import SessionService
 
 __all__ = [
     # Models
     "Session",
-    "SessionState", 
+    "SessionState",
     "Message",
     "MessageRole",
     "SessionWithMessages",
@@ -25,6 +24,4 @@ __all__ = [
     "SessionRepository",
     # Implementations
     "PostgresSessionRepository",
-    # Services
-    "SessionService",
 ]

@@ -6,6 +6,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from cortex.events import EventEmitter
 from cortex.tools.interfaces import ToolCall, ToolResult
 
 if TYPE_CHECKING:
@@ -33,7 +34,7 @@ class LoopExecutor:
         max_parallel: int = 5,
     ):
         self._executor = tool_executor
-        self._event_bus = event_bus
+        self._emitter = EventEmitter(event_bus, source_module="loop_executor")
         self._max_parallel = max_parallel
 
     async def execute_tools(
@@ -119,7 +120,7 @@ class LoopExecutor:
         start_time = time.time()
 
         # Emit start event
-        await self._emit_event("agent.tool.started", {
+        await self._emitter.emit("agent.tool.started", {
             "tool_call_id": tool_call.id,
             "tool_name": tool_call.name,
             "arguments": tool_call.arguments,
@@ -131,7 +132,7 @@ class LoopExecutor:
             result = await self._executor.execute(tool_call, timeout=timeout)
 
             # Emit completion event
-            await self._emit_event("agent.tool.completed", {
+            await self._emitter.emit("agent.tool.completed", {
                 "tool_call_id": tool_call.id,
                 "tool_name": tool_call.name,
                 "success": result.success,
@@ -143,7 +144,7 @@ class LoopExecutor:
 
         except Exception as e:
             # Emit error event
-            await self._emit_event("agent.tool.error", {
+            await self._emitter.emit("agent.tool.error", {
                 "tool_call_id": tool_call.id,
                 "tool_name": tool_call.name,
                 "error": str(e),
@@ -159,20 +160,3 @@ class LoopExecutor:
                 execution_time_ms=(time.time() - start_time) * 1000,
             )
 
-    async def _emit_event(self, event_type: str, data: dict) -> None:
-        """Emit an event to the event bus."""
-        if not self._event_bus:
-            return
-
-        try:
-            from cortex.events import BaseEvent
-            event = BaseEvent.create(
-                event_type=event_type,
-                payload=data,
-                source_module="loop_executor"
-            )
-            if hasattr(self._event_bus, 'publish'):
-                await self._event_bus.publish(event)
-        except Exception as e:
-            # Don't let event failures affect tool execution
-            logger.warning(f"Failed to emit event {event_type}: {e}")

@@ -117,49 +117,38 @@ class TestMemoryService:
         assert stored == fact
 
     @pytest.mark.asyncio
-    async def test_get_relevant_calls_search(self, service, mock_fact_repo):
-        """Getting relevant facts calls repository search."""
+    async def test_get_memory_context_populates_facts(self, service, mock_fact_repo):
+        """get_memory_context populates facts via the fact repository search."""
         facts = [
             Fact(symbolic_repr="location.work", natural_lang_repr="User is at work"),
             Fact(symbolic_repr="activity.meeting", natural_lang_repr="User is in a meeting")
         ]
         mock_fact_repo.search.return_value = facts
-        
-        result = await service.get_relevant("location")
-        
+
+        bundle = await service.get_memory_context(session_id=None, query="location")
+
         mock_fact_repo.search.assert_called_once()
-        assert len(result) == 2
+        assert len(bundle.facts) == 2
+        assert bundle.degraded_dimensions == []
 
     @pytest.mark.asyncio
-    async def test_get_relevant_with_session_boost(self, service, mock_fact_repo):
-        """Facts from current session are boosted."""
+    async def test_get_memory_context_boosts_session_facts(self, service, mock_fact_repo):
+        """Facts from current session are boosted in the bundle's facts list."""
+        session_id = uuid4()
         session_fact = Fact(
             symbolic_repr="session.info",
             natural_lang_repr="User mentioned project X",
-            payload={"session_id": str(uuid4())}
+            payload={"session_id": str(session_id)}
         )
         mock_fact_repo.search.return_value = [session_fact]
-        
-        result = await service.get_relevant("project", session_id=session_fact.payload["session_id"])
-        
-        assert len(result) >= 1
+
+        bundle = await service.get_memory_context(session_id=session_id, query="project")
+
+        assert len(bundle.facts) >= 1
 
     @pytest.mark.asyncio
-    async def test_get_relevant_filters_by_confidence(self, service, mock_fact_repo):
-        """Low confidence facts are filtered."""
-        low_conf_fact = Fact(symbolic_repr="low", confidence=0.1)
-        high_conf_fact = Fact(symbolic_repr="high", confidence=0.9)
-        mock_fact_repo.search.return_value = [low_conf_fact, high_conf_fact]
-        
-        result = await service.get_relevant("test", min_confidence=0.5)
-        
-        # Results are sorted, low conf may still appear but high should be first
-        # Just verify we get results
-        assert len(result) >= 0
-
-    @pytest.mark.asyncio
-    async def test_get_context_returns_ambient_info(self, service, mock_fact_repo):
-        """Getting context returns ambient information."""
+    async def test_get_memory_context_returns_ambient(self, service, mock_fact_repo):
+        """get_memory_context returns a typed AmbientContext built from ambient facts."""
         location_fact = Fact(
             type=FactType.LOCATION,
             symbolic_repr="location.current",
@@ -170,15 +159,29 @@ class TestMemoryService:
             symbolic_repr="activity.current",
             natural_lang_repr="Working"
         )
-        
+
         mock_fact_repo.get_by_type.side_effect = lambda t, **kw: {
             FactType.LOCATION: [location_fact],
             FactType.ACTIVITY: [activity_fact]
         }.get(t, [])
-        
-        context = await service.get_context()
-        
-        assert "location" in context or "time" in context
+
+        bundle = await service.get_memory_context(session_id=None, query="anything")
+
+        assert bundle.ambient is not None
+        assert bundle.ambient.location == "Home"
+        assert bundle.ambient.activity == "Working"
+
+    @pytest.mark.asyncio
+    async def test_get_memory_context_records_degraded_dimensions(self, service, mock_fact_repo):
+        """When a dimension's underlying call raises, the bundle records it in degraded_dimensions."""
+        mock_fact_repo.search.side_effect = Exception("repo down")
+        # personality and ambient go through get_by_type, which still works
+        mock_fact_repo.get_by_type.return_value = []
+
+        bundle = await service.get_memory_context(session_id=None, query="x")
+
+        assert "facts" in bundle.degraded_dimensions
+        assert bundle.facts == []
 
     @pytest.mark.asyncio
     async def test_extract_from_conversation(self, service, mock_extractor):

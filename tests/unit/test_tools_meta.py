@@ -1,6 +1,7 @@
 """Tests for meta tools."""
 
 import os
+import shutil
 import tempfile
 
 import pytest
@@ -160,6 +161,10 @@ class TestShellTool:
         assert result.success is False
         assert result.metadata.get("exit_code") == 1
 
+    @pytest.mark.skipif(
+        shutil.which("sleep") is None,
+        reason="needs `sleep` on PATH (bash/POSIX); skipped under cmd/PowerShell",
+    )
     @pytest.mark.asyncio
     async def test_command_timeout(self, tool):
         """Command timeout works."""

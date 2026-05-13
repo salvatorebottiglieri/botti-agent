@@ -10,6 +10,7 @@ from cortex.agentic.models import (
     Decision,
     DecisionType,
     Mode,
+    MemoryContext,
     PersonalityContext,
     AmbientContext,
 )
@@ -161,39 +162,79 @@ class TestReasoner:
         assert decision is not None
 
     @pytest.mark.asyncio
-    async def test_reason_includes_tools_in_prompt(self):
-        """Reason should include available tools in context."""
-        mock_tool_registry = MagicMock()
-        mock_tool_registry.get_schemas = MagicMock(return_value=[
-            {"name": "file_read", "description": "Read a file"}
-        ])
+    async def test_reason_passes_tools_via_structured_argument(self):
+        """Tools are advertised via llm.chat(tools=...), not as system-prompt text."""
+        from cortex.tools.interfaces import ToolDefinition
 
         mock_llm_client = MagicMock()
         mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="Using file_read tool",
+            content="Using a tool",
             tool_calls=[],
         ))
 
         reasoner = Reasoner(
             llm_client=mock_llm_client,
-            tool_registry=mock_tool_registry,
+            tool_registry=MagicMock(),
         )
 
-        # Create a mock tool with a name attribute
-        class MockToolSchema:
-            name = "file_read"
-            description = "Read a file"
-
-        context = Context(session_id=uuid4(), tools=[MockToolSchema()])
+        tool_def = ToolDefinition(
+            name="file_read",
+            description="Read a file",
+            input_schema={"type": "object", "properties": {}},
+        )
+        context = Context(session_id=uuid4(), tools=[tool_def])
 
         await reasoner.reason(context)
 
-        # Verify the system prompt includes tool info
-        call_args = mock_llm_client.chat.call_args
-        messages = call_args[0][0] if call_args[0] else []
-        system_msgs = [m for m in messages if getattr(m, 'role', '') == 'system']
-        tool_in_prompt = any('tool' in str(m.content).lower() or 'file_read' in str(m.content) for m in system_msgs)
-        assert tool_in_prompt or len(context.tools) > 0  # Either in prompt or context has tools
+        call_kwargs = mock_llm_client.chat.call_args.kwargs
+        assert call_kwargs.get("tools") is not None
+        assert len(call_kwargs["tools"]) == 1
+        assert call_kwargs["tools"][0].name == "file_read"
+        assert call_kwargs["tools"][0].description == "Read a file"
+
+    @pytest.mark.asyncio
+    async def test_reason_omits_tools_kwarg_when_context_has_no_tools(self):
+        """When context has no tools, llm.chat is called with tools=None."""
+        mock_llm_client = MagicMock()
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content="ok",
+            tool_calls=[],
+        ))
+
+        reasoner = Reasoner(
+            llm_client=mock_llm_client,
+            tool_registry=MagicMock(),
+        )
+
+        await reasoner.reason(Context(session_id=uuid4()))
+
+        call_kwargs = mock_llm_client.chat.call_args.kwargs
+        assert call_kwargs.get("tools") is None
+
+    @pytest.mark.asyncio
+    async def test_reason_passes_tool_calls_through_unchanged(self):
+        """ToolCall is one type at both seams — no translation, just pass-through."""
+        from cortex.tools.interfaces import ToolCall
+
+        llm_call = ToolCall(id="call_1", name="file_read", arguments={"path": "/x"})
+        mock_llm_client = MagicMock()
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
+            content=None,
+            tool_calls=[llm_call],
+        ))
+
+        reasoner = Reasoner(
+            llm_client=mock_llm_client,
+            tool_registry=MagicMock(),
+        )
+
+        decision = await reasoner.reason(Context(session_id=uuid4()))
+
+        assert decision.tool_calls is not None
+        assert len(decision.tool_calls) == 1
+        assert decision.tool_calls[0] is llm_call
+        assert decision.tool_calls[0].name == "file_read"
+        assert decision.tool_calls[0].arguments == {"path": "/x"}
 
 
 class TestReasonerEdgeCases:
@@ -264,7 +305,7 @@ class TestReasonerEdgeCases:
 
         context = Context(
             session_id=uuid4(),
-            personality=PersonalityContext(formality=0.9),
+            memory=MemoryContext(personality=PersonalityContext(formality=0.9)),
         )
 
         decision = await reasoner.reason(context)
@@ -286,7 +327,7 @@ class TestReasonerEdgeCases:
 
         context = Context(
             session_id=uuid4(),
-            ambient=AmbientContext(time_of_day="morning", location="home"),
+            memory=MemoryContext(ambient=AmbientContext(time_of_day="morning", location="home")),
         )
 
         decision = await reasoner.reason(context)

@@ -7,6 +7,7 @@ import logging
 
 from cortex.minions.models import MinionInfo, MinionEvent, MinionEventBatch, MinionConfig, MinionState
 from cortex.minions.interfaces import MinionGateway, MinionEventHandler, MinionRegistry
+from cortex.events import EventEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +35,12 @@ class MinionService:
         self._config = config
         self._gateway = gateway
         self._registry = registry
-        self._event_bus = event_bus
         self._memory_service = memory_service
-        
+        self._emitter = EventEmitter(event_bus, source_module="minion_service")
+
         # Sequence tracking for gap detection
         self._last_sequence: dict[str, int] = {}
-        
+
         # Create event handler
         self._handler = MinionEventProcessor(event_bus, memory_service)
     
@@ -76,21 +77,16 @@ class MinionService:
     async def send_event(self, event: MinionEvent) -> None:
         """
         Send an event to the event bus.
-        
+
         Args:
             event: The event to send
         """
-        if self._event_bus:
-            from cortex.events import BaseEvent
-            await self._event_bus.publish(BaseEvent.create(
-                event_type=f"minion.event.{event.event_type}",
-                payload=event.to_dict() if hasattr(event, 'to_dict') else {
-                    "minion_id": event.minion_id,
-                    "event_type": event.event_type,
-                    "payload": event.payload
-                },
-                source_module="minion_service"
-            ))
+        payload = event.to_dict() if hasattr(event, 'to_dict') else {
+            "minion_id": event.minion_id,
+            "event_type": event.event_type,
+            "payload": event.payload,
+        }
+        await self._emitter.emit(f"minion.event.{event.event_type}", payload)
     
     async def get_active_minions(self) -> list[MinionInfo]:
         """Get all active minions."""
@@ -121,18 +117,14 @@ class MinionService:
         elif event.event_type == "calendar":
             await self._handle_calendar_event(event)
         
-        # Emit to event bus
-        if self._event_bus:
-            from cortex.events import BaseEvent
-            await self._event_bus.publish(BaseEvent.create(
-                event_type="minion.event",
-                payload={
-                    "minion_id": event.minion_id,
-                    "event_type": event.event_type,
-                    "payload": event.payload
-                },
-                source_module="minion_service"
-            ))
+        await self._emitter.emit(
+            "minion.event",
+            {
+                "minion_id": event.minion_id,
+                "event_type": event.event_type,
+                "payload": event.payload,
+            },
+        )
     
     async def _check_sequence_gap(self, event: MinionEvent) -> None:
         """
@@ -213,8 +205,8 @@ class MinionEventProcessor(MinionEventHandler):
     """
     
     def __init__(self, event_bus: Any | None = None, memory_service: Any | None = None):
-        self._event_bus = event_bus
         self._memory_service = memory_service
+        self._emitter = EventEmitter(event_bus, source_module="minion_event_processor")
     
     async def handle_event(self, event: MinionEvent) -> None:
         """
@@ -254,82 +246,61 @@ class MinionEventProcessor(MinionEventHandler):
     async def _process_location(self, event: MinionEvent) -> None:
         """Process a location event."""
         payload = event.payload
-        
-        # Emit to bus if available
-        if self._event_bus:
-            from cortex.events import BaseEvent
-            await self._event_bus.publish(BaseEvent.create(
-                event_type="minion.location",
-                payload={
-                    "minion_id": event.minion_id,
-                    "latitude": payload.get("latitude"),
-                    "longitude": payload.get("longitude"),
-                    "place": payload.get("place"),
-                    "accuracy": payload.get("accuracy")
-                },
-                source_module="minion_event_processor"
-            ))
-    
+        await self._emitter.emit(
+            "minion.location",
+            {
+                "minion_id": event.minion_id,
+                "latitude": payload.get("latitude"),
+                "longitude": payload.get("longitude"),
+                "place": payload.get("place"),
+                "accuracy": payload.get("accuracy"),
+            },
+        )
+
     async def _process_activity(self, event: MinionEvent) -> None:
         """Process an activity event."""
         payload = event.payload
-        
-        if self._event_bus:
-            from cortex.events import BaseEvent
-            await self._event_bus.publish(BaseEvent.create(
-                event_type="minion.activity",
-                payload={
-                    "minion_id": event.minion_id,
-                    "activity": payload.get("activity"),
-                    "confidence": payload.get("confidence")
-                },
-                source_module="minion_event_processor"
-            ))
-    
+        await self._emitter.emit(
+            "minion.activity",
+            {
+                "minion_id": event.minion_id,
+                "activity": payload.get("activity"),
+                "confidence": payload.get("confidence"),
+            },
+        )
+
     async def _process_battery(self, event: MinionEvent) -> None:
         """Process a battery event."""
         payload = event.payload
-        
-        if self._event_bus:
-            from cortex.events import BaseEvent
-            await self._event_bus.publish(BaseEvent.create(
-                event_type="minion.battery",
-                payload={
-                    "minion_id": event.minion_id,
-                    "level": payload.get("level"),
-                    "is_charging": payload.get("is_charging")
-                },
-                source_module="minion_event_processor"
-            ))
-    
+        await self._emitter.emit(
+            "minion.battery",
+            {
+                "minion_id": event.minion_id,
+                "level": payload.get("level"),
+                "is_charging": payload.get("is_charging"),
+            },
+        )
+
     async def _process_app_usage(self, event: MinionEvent) -> None:
         """Process an app usage event."""
         payload = event.payload
-        
-        if self._event_bus:
-            from cortex.events import BaseEvent
-            await self._event_bus.publish(BaseEvent.create(
-                event_type="minion.app_usage",
-                payload={
-                    "minion_id": event.minion_id,
-                    "app": payload.get("app"),
-                    "duration": payload.get("duration")
-                },
-                source_module="minion_event_processor"
-            ))
-    
+        await self._emitter.emit(
+            "minion.app_usage",
+            {
+                "minion_id": event.minion_id,
+                "app": payload.get("app"),
+                "duration": payload.get("duration"),
+            },
+        )
+
     async def _process_calendar(self, event: MinionEvent) -> None:
         """Process a calendar event."""
         payload = event.payload
-        
-        if self._event_bus:
-            from cortex.events import BaseEvent
-            await self._event_bus.publish(BaseEvent.create(
-                event_type="minion.calendar",
-                payload={
-                    "minion_id": event.minion_id,
-                    "event": payload.get("title"),
-                    "start_time": payload.get("start_time")
-                },
-                source_module="minion_event_processor"
-            ))
+        await self._emitter.emit(
+            "minion.calendar",
+            {
+                "minion_id": event.minion_id,
+                "event": payload.get("title"),
+                "start_time": payload.get("start_time"),
+            },
+        )

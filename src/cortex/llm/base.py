@@ -5,7 +5,8 @@ from typing import Any
 
 from cortex.config.models import Settings
 from cortex.llm.config import GenerationConfig
-from cortex.llm.models import ChatMessage, ChatResult, ToolCall, ToolDefinition
+from cortex.llm.models import ChatMessage, ChatResult
+from cortex.tools.interfaces import ToolCall, ToolDefinition
 
 
 class LLMClient(ABC):

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from cortex.events import EventEmitter
 from cortex.tools.interfaces import Tool, ToolCall, ToolExecutor, ToolResult
 
 if TYPE_CHECKING:
@@ -134,7 +135,7 @@ class ToolExecutorService:
         circuit_breaker: CircuitBreaker | None = None
     ):
         self._base_executor = base_executor
-        self._event_bus = event_bus
+        self._emitter = EventEmitter(event_bus, source_module="tool_executor_service")
         self._circuit_breaker = circuit_breaker or CircuitBreaker()
         self._metrics = ServiceExecutionMetrics()
     
@@ -178,7 +179,7 @@ class ToolExecutorService:
             )
         
         # Emit started event
-        await self._emit_event("tool.started", {
+        await self._emitter.emit("tool.started", {
             "tool_call_id": tool_call.id,
             "tool_name": tool_call.name,
             "arguments": tool_call.arguments,
@@ -198,7 +199,7 @@ class ToolExecutorService:
                 self._metrics.failed_calls += 1
             
             # Emit result event
-            await self._emit_event("tool.result", {
+            await self._emitter.emit("tool.result", {
                 "tool_call_id": result.tool_call_id,
                 "tool_name": result.tool_name,
                 "success": result.success,
@@ -221,7 +222,7 @@ class ToolExecutorService:
                 error=str(e)
             )
             
-            await self._emit_event("tool.error", {
+            await self._emitter.emit("tool.error", {
                 "tool_call_id": tool_call.id,
                 "tool_name": tool_call.name,
                 "error": str(e),
@@ -258,22 +259,6 @@ class ToolExecutorService:
                 results.append(result)
             return results
     
-    async def _emit_event(self, event_type: str, data: dict) -> None:
-        """Emit an event to the event bus."""
-        try:
-            from cortex.events import BaseEvent
-            event = BaseEvent.create(
-                event_type=event_type,
-                payload=data,
-                source_module="tool_executor_service"
-            )
-            if hasattr(self._event_bus, 'publish'):
-                await self._event_bus.publish(event)
-        except Exception:
-            # Don't let event emission failures affect tool execution
-            pass
-
-
 class ServiceToolExecutor(ToolExecutor):
     """
     ToolExecutor interface implementation that delegates to ToolExecutorService.

@@ -120,26 +120,6 @@ class TestAgentLoop:
             await loop.run_chat(session_id, "Loop test", max_iterations=5)
 
     @pytest.mark.asyncio
-    async def test_run_chat_stores_messages(self, loop, mock_context_builder, mock_reasoner):
-        """Run chat should store messages in session."""
-        from cortex.sessions.service import SessionService
-
-        session_id = uuid4()
-        mock_session_service = MagicMock(spec=SessionService)
-        mock_session_service.add_message = AsyncMock()
-        mock_session_service.get_messages = AsyncMock(return_value=[])
-
-        loop._session_service = mock_session_service
-
-        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
-        mock_reasoner.reason = AsyncMock(return_value=Decision.respond("Hi!"))
-
-        await loop.run_chat(session_id, "Hello")
-
-        # Should have tried to add messages
-        assert mock_session_service.add_message.called or mock_context_builder.build.called
-
-    @pytest.mark.asyncio
     async def test_run_chat_empty_message(self, loop):
         """Run chat handles empty message."""
         session_id = uuid4()

@@ -90,294 +90,72 @@ class TestPersonalityService:
 
 
 class TestInteractionService:
-    """Tests for InteractionService."""
+    """Tests for InteractionService (slim facade for the chat route)."""
 
     @pytest.fixture
     def mock_execution_module(self):
-        """Create a mock execution module."""
         module = MagicMock()
-        module.run_chat = AsyncMock(return_value=ChatResponse(
-            message="Hello!",
-            iterations=0,
-        ))
         return module
 
     @pytest.fixture
-    def mock_session_service(self):
-        """Create a mock session service."""
-        service = MagicMock()
-        service.create = AsyncMock()
-        service.get = AsyncMock()
-        service.get_messages = AsyncMock(return_value=[])
-        service.add_message = AsyncMock()
-        return service
+    def mock_session_repository(self):
+        repo = MagicMock()
+        repo.get = AsyncMock(return_value=None)
+        repo.create = AsyncMock(return_value=MagicMock(id=uuid4()))
+        repo.update_state = AsyncMock()
+        return repo
 
     @pytest.fixture
     def mock_personality_service(self):
-        """Create a mock personality service."""
-        service = MagicMock()
-        service.get_personality = AsyncMock()
-        service.format_response = MagicMock(return_value="formatted")
-        return service
+        return MagicMock()
 
     @pytest.fixture
-    def service(self, mock_execution_module, mock_session_service, mock_personality_service):
-        """Create an InteractionService."""
+    def service(self, mock_execution_module, mock_session_repository, mock_personality_service):
         return InteractionService(
             execution_module=mock_execution_module,
-            session_service=mock_session_service,
+            session_repository=mock_session_repository,
             personality_service=mock_personality_service,
         )
 
     @pytest.mark.asyncio
-    async def test_handle_message_new_session(self, service, mock_execution_module, mock_session_service):
-        """Handle message creates new session when needed."""
-        mock_session_service.create = AsyncMock(return_value=MagicMock(id=uuid4()))
-
-        response = await service.handle_message(
-            session_id=None,
-            content="Hello",
-        )
-
-        assert response is not None
-        mock_execution_module.run_chat.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_handle_message_existing_session(self, service, mock_execution_module, mock_session_service):
-        """Handle message reuses existing session."""
+    async def test_get_session_delegates_to_repository(self, service, mock_session_repository):
         session_id = uuid4()
-        mock_session_service.get = AsyncMock(return_value=MagicMock(id=session_id))
-
-        response = await service.handle_message(
-            session_id=session_id,
-            content="Hello again",
-        )
-
-        assert response is not None
-
-    @pytest.mark.asyncio
-    async def test_handle_message_stores_messages(self, service, mock_session_service):
-        """Handle message stores user and assistant messages."""
-        session_id = uuid4()
-        mock_session_service.create = AsyncMock(return_value=MagicMock(id=session_id))
-
-        await service.handle_message(
-            session_id=None,
-            content="Hello",
-        )
-
-        # Should have added messages
-        assert mock_session_service.add_message.call_count >= 1
-
-    @pytest.mark.asyncio
-    async def test_handle_message_formats_response(self, service, mock_personality_service):
-        """Handle message applies personality formatting."""
-        session_id = uuid4()
-        service._session_service.create = AsyncMock(return_value=MagicMock(id=session_id))
-
-        await service.handle_message(
-            session_id=None,
-            content="Hello",
-        )
-
-        # Personality service should be called
-        assert mock_personality_service.get_personality.called or mock_personality_service.format_response.called
-
-    @pytest.mark.asyncio
-    async def test_handle_message_chat_mode(self, service, mock_execution_module):
-        """Handle message uses CHAT mode by default."""
-        session_id = uuid4()
-        service._session_service.create = AsyncMock(return_value=MagicMock(id=session_id))
-
-        await service.handle_message(
-            session_id=None,
-            content="Hi",
-            mode=Mode.CHAT,
-        )
-
-        mock_execution_module.run_chat.assert_called()
-
-    @pytest.mark.asyncio
-    async def test_handle_message_with_max_iterations(self, service, mock_execution_module):
-        """Handle message respects max iterations parameter."""
-        session_id = uuid4()
-        service._session_service.create = AsyncMock(return_value=MagicMock(id=session_id))
-
-        await service.handle_message(
-            session_id=None,
-            content="Complex task",
-            max_iterations=5,
-        )
-
-        # Should pass max_iterations to execution
-        assert mock_execution_module.run_chat.called
-
-    @pytest.mark.asyncio
-    async def test_handle_message_empty_content(self, service, mock_execution_module):
-        """Handle message handles empty content."""
-        session_id = uuid4()
-        service._session_service.create = AsyncMock(return_value=MagicMock(id=session_id))
-
-        response = await service.handle_message(
-            session_id=None,
-            content="",
-        )
-
-        # Should still return a response
-        assert response is not None
-
-    @pytest.mark.asyncio
-    async def test_get_session(self, service, mock_session_service):
-        """Get session returns session by ID."""
-        session_id = uuid4()
-
         await service.get_session(session_id)
-
-        mock_session_service.get.assert_called_with(session_id)
-
-    @pytest.mark.asyncio
-    async def test_get_conversation_history(self, service, mock_session_service):
-        """Get conversation history returns messages."""
-        session_id = uuid4()
-
-        history = await service.get_conversation_history(session_id, limit=10)
-
-        mock_session_service.get_messages.assert_called_with(session_id, limit=10)
-
-
-class TestInteractionServiceEdgeCases:
-    """Edge case tests for InteractionService."""
-
-    @pytest.fixture
-    def mock_execution_module(self):
-        module = MagicMock()
-        module.run_chat = AsyncMock(return_value=ChatResponse(
-            message="Hi!",
-            iterations=0,
-        ))
-        return module
-
-    @pytest.fixture
-    def mock_session_service(self):
-        service = MagicMock()
-        service.create = AsyncMock()
-        return service
+        mock_session_repository.get.assert_called_with(session_id)
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Mock async issues - revisit with real async fixtures")
-    async def test_handle_message_creates_session(self):
-        """Handle message creates session when needed."""
+    async def test_get_or_create_returns_existing_session_when_found(
+        self, service, mock_session_repository
+    ):
         session_id = uuid4()
+        existing = MagicMock(id=session_id)
+        mock_session_repository.get = AsyncMock(return_value=existing)
 
-        mock_exec = MagicMock()
-        mock_exec.run_chat = AsyncMock(return_value=ChatResponse(message="Hi!", iterations=0))
+        result = await service._get_or_create_session(session_id)
 
-        mock_sessions = MagicMock()
-        mock_sessions.create = AsyncMock(return_value=MagicMock(id=session_id))
-        mock_sessions.get = AsyncMock(return_value=None)  # Not found
-        mock_sessions.add_message = AsyncMock()
-
-        service = InteractionService(
-            execution_module=mock_exec,
-            session_service=mock_sessions,
-            personality_service=MagicMock(),
-        )
-
-        await service.handle_message(
-            session_id=session_id,
-            content="Hello",
-        )
-
-        # Should have tried to get session
-        assert mock_sessions.get.called or mock_sessions.create.called
+        assert result is existing
+        mock_session_repository.create.assert_not_called()
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Mock async issues - revisit with real async fixtures")
-    async def test_handle_message_long_content(self):
-        """Handle message handles long content."""
-        session_id = uuid4()
+    async def test_get_or_create_creates_new_session_when_id_is_none(
+        self, service, mock_session_repository
+    ):
+        new_session = MagicMock(id=uuid4())
+        active_session = MagicMock(id=new_session.id)
+        mock_session_repository.create = AsyncMock(return_value=new_session)
+        mock_session_repository.update_state = AsyncMock(return_value=active_session)
 
-        mock_exec = MagicMock()
-        mock_exec.run_chat = AsyncMock(return_value=ChatResponse(message="OK", iterations=0))
+        result = await service._get_or_create_session(None)
 
-        mock_sessions = MagicMock()
-        mock_sessions.create = AsyncMock(return_value=MagicMock(id=session_id))
-        mock_sessions.add_message = AsyncMock()
+        assert result is active_session
+        mock_session_repository.create.assert_called_once()
 
-        service = InteractionService(
-            execution_module=mock_exec,
-            session_service=mock_sessions,
-            personality_service=MagicMock(),
-        )
 
-        long_content = "Hello " * 1000  # Very long message
-
-        response = await service.handle_message(
-            session_id=None,
-            content=long_content,
-        )
-
-        assert response is not None
-
-    @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Mock async issues - revisit with real async fixtures")
-    async def test_handle_message_with_special_characters(self):
-        """Handle message handles special characters."""
-        session_id = uuid4()
-
-        mock_exec = MagicMock()
-        mock_exec.run_chat = AsyncMock(return_value=ChatResponse(message="OK", iterations=0))
-
-        mock_sessions = MagicMock()
-        mock_sessions.create = AsyncMock(return_value=MagicMock(id=session_id))
-        mock_sessions.add_message = AsyncMock()
-
-        service = InteractionService(
-            execution_module=mock_exec,
-            session_service=mock_sessions,
-            personality_service=MagicMock(),
-        )
-
-        content = "Hello! 😊 How are you? 🎉"
-
-        response = await service.handle_message(
-            session_id=None,
-            content=content,
-        )
-
-        assert response is not None
-
-    @pytest.mark.asyncio
-    async def test_handle_message_error_handling(self):
-        """Handle message handles errors gracefully."""
-        mock_execution = MagicMock()
-        mock_execution.run_chat = AsyncMock(side_effect=Exception("Error"))
-
-        session_id = uuid4()
-        mock_sessions = MagicMock()
-        mock_sessions.create = AsyncMock(return_value=MagicMock(id=session_id))
-
-        service = InteractionService(
-            execution_module=mock_execution,
-            session_service=mock_sessions,
-            personality_service=MagicMock(),
-        )
-
-        # Should handle error - try/except in code
-        try:
-            response = await service.handle_message(
-                session_id=None,
-                content="Hello",
-            )
-            # If it succeeds, that's fine too
-            assert response is not None or True
-        except Exception:
-            # If it raises, that's acceptable given mock nature
-            pass
+class TestPersonalityFormatting:
+    """Personality should affect response formatting end-to-end."""
 
     @pytest.mark.asyncio
     async def test_personality_affects_formatting(self):
-        """Personality should affect response formatting."""
         from cortex.agentic.models import PersonalityContext
 
         mock_memory = MagicMock()
@@ -387,43 +165,7 @@ class TestInteractionServiceEdgeCases:
 
         service = PersonalityService(memory_service=mock_memory)
 
-        # Get personality
         personality = await service.get_personality(uuid4())
+        formatted = service.format_response("hi there!", formality=personality.formality)
 
-        # Format with high formality
-        text = "hi there!"
-        formatted = service.format_response(text, formality=personality.formality)
-
-        # Should be formatted
         assert formatted is not None
-
-    @pytest.mark.asyncio
-    async def test_multiple_sessions_independent(self):
-        """Multiple sessions should be handled independently."""
-        session1_id = uuid4()
-        session2_id = uuid4()
-
-        mock_exec = MagicMock()
-        mock_exec.run_chat = AsyncMock(return_value=ChatResponse(message="OK", iterations=0))
-
-        mock_sessions = MagicMock()
-        mock_sessions.create = AsyncMock()
-        mock_sessions.add_message = AsyncMock()
-        mock_sessions.get = MagicMock(return_value=None)
-
-        service = InteractionService(
-            execution_module=mock_exec,
-            session_service=mock_sessions,
-            personality_service=MagicMock(),
-        )
-
-        # Handle messages for both sessions
-        try:
-            await service.handle_message(session_id=session1_id, content="Hello")
-            await service.handle_message(session_id=session2_id, content="Hi")
-        except Exception:
-            # May fail due to mock setup, that's ok
-            pass
-
-        # Should have processed
-        assert mock_exec.run_chat.called or True  # Always pass

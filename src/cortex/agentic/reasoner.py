@@ -2,22 +2,29 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from cortex.agentic.models import (
     Context,
     Decision,
-    DecisionType,
 )
 from cortex.llm.models import ChatMessage, Role
+from cortex.sessions.models import MessageRole
 
 if TYPE_CHECKING:
     from cortex.llm.base import LLMClient
     from cortex.tools.interfaces import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+
+_MESSAGE_ROLE_TO_LLM_ROLE: dict[str, Role] = {
+    MessageRole.SYSTEM.value: Role.SYSTEM,
+    MessageRole.USER.value: Role.USER,
+    MessageRole.ASSISTANT.value: Role.ASSISTANT,
+    MessageRole.TOOL_RESULT.value: Role.TOOL,
+}
 
 
 class Reasoner:
@@ -42,20 +49,11 @@ class Reasoner:
 
     def _default_system_prompt(self) -> str:
         """Get the default system prompt."""
-        return """You are Cortex, an intelligent AI assistant with access to tools.
-
-You can use tools to:
-- file_read: Read files from the filesystem
-- file_write: Write content to files
-- shell: Execute shell commands
-- grep: Search for patterns in files
-
-When a user asks something:
-1. If you can answer directly, respond with a RESPOND decision
-2. If you need to use tools, respond with an EXECUTE_TOOLS decision
-3. If you need more information, ask a question
-
-Always be helpful, concise, and precise."""
+        return (
+            "You are Cortex, an intelligent AI assistant. "
+            "When a tool fits the user's request, call it; otherwise respond directly. "
+            "Always be helpful, concise, and precise."
+        )
 
     async def reason(self, context: Context) -> Decision:
         """
@@ -67,14 +65,11 @@ Always be helpful, concise, and precise."""
         Returns:
             Decision on what to do next
         """
-        # Build the prompt
         messages = self._build_prompt(context)
+        tools = context.tools if context.tools else None
 
-        # Call LLM
         try:
-            result = await self._llm.chat(messages)
-
-            # Parse the response
+            result = await self._llm.chat(messages, tools=tools)
             return self._parse_response(result, context)
         except Exception as e:
             logger.error(f"Reasoner error: {e}")
@@ -87,36 +82,22 @@ Always be helpful, concise, and precise."""
         """
         Build the prompt from context.
 
-        Args:
-            context: Reasoning context
-
-        Returns:
-            List of messages for the LLM
+        Tools are advertised structurally via the `tools=` argument to
+        `llm.chat`; they are not duplicated in the system prompt text.
         """
         messages = []
 
-        # System prompt
-        system = self._system_prompt
+        messages.append(ChatMessage(role=Role.SYSTEM, content=self._system_prompt))
 
-        # Add tool definitions
-        if context.tools:
-            tool_section = "\n\nAvailable tools:\n"
-            for tool in context.tools:
-                if hasattr(tool, 'name'):
-                    tool_section += f"- {tool.name}: {getattr(tool, 'description', '')}\n"
-            system += tool_section
-
-        messages.append(ChatMessage(role=Role.SYSTEM, content=system))
-
-        # Add ambient context
-        if context.ambient:
+        ambient = context.memory.ambient
+        if ambient:
             ambient_parts = []
-            if context.ambient.time_of_day:
-                ambient_parts.append(f"Time: {context.ambient.time_of_day}")
-            if context.ambient.location:
-                ambient_parts.append(f"Location: {context.ambient.location}")
-            if context.ambient.activity:
-                ambient_parts.append(f"Activity: {context.ambient.activity}")
+            if ambient.time_of_day:
+                ambient_parts.append(f"Time: {ambient.time_of_day}")
+            if ambient.location:
+                ambient_parts.append(f"Location: {ambient.location}")
+            if ambient.activity:
+                ambient_parts.append(f"Activity: {ambient.activity}")
 
             if ambient_parts:
                 messages.append(ChatMessage(
@@ -124,17 +105,16 @@ Always be helpful, concise, and precise."""
                     content=f"Context: {', '.join(ambient_parts)}"
                 ))
 
-        # Add personality context
-        if context.personality:
+        personality = context.memory.personality
+        if personality:
             personality_parts = []
-            p = context.personality
-            if p.formality > 0.7:
+            if personality.formality > 0.7:
                 personality_parts.append("Use formal language")
-            elif p.formality < 0.3:
+            elif personality.formality < 0.3:
                 personality_parts.append("Be casual and friendly")
-            if p.verbosity > 0.7:
+            if personality.verbosity > 0.7:
                 personality_parts.append("Be thorough and detailed")
-            elif p.verbosity < 0.3:
+            elif personality.verbosity < 0.3:
                 personality_parts.append("Be concise")
 
             if personality_parts:
@@ -143,73 +123,50 @@ Always be helpful, concise, and precise."""
                     content=f"Style: {', '.join(personality_parts)}"
                 ))
 
-        # Add goal context
         if context.goal:
             messages.append(ChatMessage(
                 role=Role.SYSTEM,
                 content=f"Goal: {context.goal.description}"
             ))
 
-        # Add relevant facts
-        if context.facts:
-            fact_texts = [f.natural_lang_repr for f in context.facts[:5]]
+        if context.memory.facts:
+            fact_texts = [f.natural_lang_repr for f in context.memory.facts[:5]]
             if fact_texts:
                 messages.append(ChatMessage(
                     role=Role.SYSTEM,
                     content=f"Known facts: {', '.join(fact_texts)}"
                 ))
 
-        # Add conversation history
         for msg in context.conversation:
-            role = getattr(msg, 'role', 'user')
-            if hasattr(role, 'value'):
-                role = role.value
-            content = getattr(msg, 'content', '')
-            messages.append(ChatMessage(role=role, content=content))
+            messages.append(ChatMessage(
+                role=_MESSAGE_ROLE_TO_LLM_ROLE[msg.role],
+                content=msg.content,
+            ))
 
         return messages
 
     def _parse_response(self, result: Any, context: Context) -> Decision:
-        """
-        Parse LLM response into a Decision.
+        """Parse LLM response into a Decision."""
+        message = getattr(result, "message", None)
+        content = getattr(message, "content", None) if message is not None else None
+        if content is None:
+            content = getattr(result, "content", "")
+        tool_calls = getattr(result, "tool_calls", None) or []
 
-        Args:
-            result: LLM response
-            context: Original context (for fallbacks)
-
-        Returns:
-            Parsed Decision
-        """
-        content = getattr(result, 'content', '')
-        tool_calls = getattr(result, 'tool_calls', []) or []
-
-        # Check if we have tool calls
         if tool_calls:
             return Decision.execute_tools(
-                tool_calls=tool_calls,
-                reasoning=f"Using {len(tool_calls)} tool(s) to complete the request"
+                tool_calls=list(tool_calls),
+                reasoning=f"Using {len(tool_calls)} tool(s) to complete the request",
             )
 
-        # Return text response
         if content:
             return Decision.respond(
                 text=content,
-                reasoning="Direct response to user"
+                reasoning="Direct response to user",
             )
 
-        # Fallback
         return Decision.respond(
             text="I'm not sure how to respond. Could you clarify?",
-            reasoning="Empty response from LLM"
+            reasoning="Empty response from LLM",
         )
 
-    def _format_conversation(self, messages: list[Any]) -> str:
-        """Format conversation for the prompt."""
-        lines = []
-        for msg in messages:
-            role = getattr(msg, 'role', 'unknown')
-            if hasattr(role, 'value'):
-                role = role.value
-            content = getattr(msg, 'content', '')
-            lines.append(f"{role.upper()}: {content}")
-        return "\n".join(lines)

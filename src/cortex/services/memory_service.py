@@ -6,7 +6,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from cortex.agentic.models import PersonalityContext
+from cortex.agentic.models import AmbientContext, MemoryContext, PersonalityContext
 from cortex.memory.interfaces import ConceptRepository, FactExtractor, FactRepository
 from cortex.memory.models import Concept, Fact, FactMutability, FactType
 
@@ -80,9 +80,52 @@ class MemoryService:
         if self._concept_repo:
             await self._concept_repo.invalidate_from_fact(fact_id)
 
+    # ─── Bundle Seam ─────────────────────────────────────────────────────
+
+    async def get_memory_context(
+        self,
+        session_id: UUID | None,
+        query: str,
+        *,
+        max_facts: int = 10,
+        fact_types: list[FactType] | None = None,
+    ) -> MemoryContext:
+        """
+        Single call that returns everything Memory contributes to a reasoning step.
+
+        Failures in any one dimension (facts, personality, ambient) are caught
+        and recorded in `degraded_dimensions` rather than raising.
+        """
+        bundle = MemoryContext()
+
+        try:
+            bundle.facts = await self._get_relevant_facts(
+                query=query,
+                limit=max_facts,
+                session_id=session_id,
+                fact_types=fact_types,
+            )
+        except Exception as e:
+            logger.warning(f"MemoryContext: facts dimension failed: {e}")
+            bundle.degraded_dimensions.append("facts")
+
+        try:
+            bundle.personality = await self.get_personality_context(session_id)
+        except Exception as e:
+            logger.warning(f"MemoryContext: personality dimension failed: {e}")
+            bundle.degraded_dimensions.append("personality")
+
+        try:
+            bundle.ambient = await self._get_ambient_context()
+        except Exception as e:
+            logger.warning(f"MemoryContext: ambient dimension failed: {e}")
+            bundle.degraded_dimensions.append("ambient")
+
+        return bundle
+
     # ─── Query Methods ───────────────────────────────────────────────────
 
-    async def get_relevant(
+    async def _get_relevant_facts(
         self,
         query: str,
         *,
@@ -99,16 +142,6 @@ class MemoryService:
         2. Boost facts from current session
         3. Boost recent facts
         4. Boost high-confidence facts
-
-        Args:
-            query: Text to search for
-            limit: Max results to return
-            session_id: Current session (boosts facts from this session)
-            fact_types: Filter by fact types
-            min_confidence: Minimum confidence threshold
-
-        Returns:
-            Relevant facts, sorted by relevance
         """
         # Search repository
         facts = await self._fact_repo.search(
@@ -163,41 +196,27 @@ class MemoryService:
 
         return score
 
-    async def get_context(
-        self, dimensions: list[str] = ["time", "location", "activity", "weather"]
-    ) -> dict[str, Any]:
+    async def _get_ambient_context(self) -> AmbientContext | None:
         """
-        Get current ambient context.
+        Get current ambient context (time, location, activity, weather).
 
-        Args:
-            dimensions: Which context dimensions to include
-
-        Returns:
-            Dict with requested context dimensions
+        Returns None when no ambient facts exist; otherwise an AmbientContext
+        with whichever dimensions were populated.
         """
-        context = {}
+        time_facts = await self._fact_repo.get_by_type(FactType.TIME, limit=1)
+        loc_facts = await self._fact_repo.get_by_type(FactType.LOCATION, limit=1)
+        act_facts = await self._fact_repo.get_by_type(FactType.ACTIVITY, limit=1)
+        weather_facts = await self._fact_repo.get_by_type(FactType.WEATHER, limit=1)
 
-        if "time" in dimensions:
-            time_facts = await self._fact_repo.get_by_type(FactType.TIME, limit=1)
-            if time_facts:
-                context["time"] = time_facts[0].natural_lang_repr
+        if not any((time_facts, loc_facts, act_facts, weather_facts)):
+            return None
 
-        if "location" in dimensions:
-            loc_facts = await self._fact_repo.get_by_type(FactType.LOCATION, limit=1)
-            if loc_facts:
-                context["location"] = loc_facts[0].natural_lang_repr
-
-        if "activity" in dimensions:
-            act_facts = await self._fact_repo.get_by_type(FactType.ACTIVITY, limit=1)
-            if act_facts:
-                context["activity"] = act_facts[0].natural_lang_repr
-
-        if "weather" in dimensions:
-            weather_facts = await self._fact_repo.get_by_type(FactType.WEATHER, limit=1)
-            if weather_facts:
-                context["weather"] = weather_facts[0].natural_lang_repr
-
-        return context
+        return AmbientContext(
+            time_of_day=time_facts[0].natural_lang_repr if time_facts else None,
+            location=loc_facts[0].natural_lang_repr if loc_facts else None,
+            activity=act_facts[0].natural_lang_repr if act_facts else None,
+            weather=weather_facts[0].natural_lang_repr if weather_facts else None,
+        )
 
     async def get_personality_context(self, session_id: UUID | None = None) -> PersonalityContext:
         """

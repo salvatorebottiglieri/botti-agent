@@ -44,9 +44,13 @@ class ToolResult:
 
 @dataclass
 class ToolCall:
-    """A call to a tool with arguments."""
+    """A call to a tool with arguments.
 
-    id: str = field(default_factory=lambda: str(uuid4()))
+    `id` follows the OpenAI ``call_<hex>`` convention so a value generated
+    locally and one returned by a provider look the same downstream.
+    """
+
+    id: str = field(default_factory=lambda: f"call_{uuid4().hex[:8]}")
     name: str = ""
     arguments: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))

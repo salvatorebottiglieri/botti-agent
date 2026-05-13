@@ -1,11 +1,16 @@
-"""LLM data models."""
+"""LLM data models.
+
+`ToolCall` and `ToolDefinition` are not redefined here — they live in
+`cortex.tools.interfaces`. The LLM seam consumes/produces them directly so
+there is one type per concept across the codebase.
+"""
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
-from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from cortex.tools.interfaces import ToolCall, ToolDefinition
 
 
 class Role(str, Enum):
@@ -22,37 +27,8 @@ class ChatMessage(BaseModel):
 
     role: Role
     content: str | None = None
-    name: str | None = None  # For tool messages
-    tool_call_id: str | None = None  # For tool result messages
-
-    model_config = {
-        "extra": "allow",
-    }
-
-
-class ToolCall(BaseModel):
-    """A tool call requested by the LLM."""
-
-    id: str = Field(default_factory=lambda: f"call_{uuid4().hex[:8]}")
-    name: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
-
-    model_config = {
-        "extra": "allow",
-    }
-
-
-class ToolDefinition(BaseModel):
-    """
-    Definition of a tool available to the LLM.
-
-    Uses JSON Schema for input/output validation.
-    """
-
-    name: str
-    description: str
-    input_schema: dict[str, Any] = Field(default_factory=dict)
-    output_schema: dict[str, Any] | None = None
+    name: str | None = None
+    tool_call_id: str | None = None
 
     model_config = {
         "extra": "allow",
@@ -68,7 +44,14 @@ class UsageStats(BaseModel):
 
 
 class ChatResult(BaseModel):
-    """Result of a chat completion."""
+    """Result of a chat completion.
+
+    Holds executor-side ``ToolCall`` instances directly; pydantic is configured
+    with ``arbitrary_types_allowed`` so the stdlib dataclass passes through
+    without revalidation.
+    """
+
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
 
     message: ChatMessage
     tool_calls: list[ToolCall] | None = None
@@ -77,6 +60,12 @@ class ChatResult(BaseModel):
     finish_reason: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
-    model_config = {
-        "extra": "allow",
-    }
+
+__all__ = [
+    "Role",
+    "ChatMessage",
+    "UsageStats",
+    "ChatResult",
+    "ToolCall",
+    "ToolDefinition",
+]

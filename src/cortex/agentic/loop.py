@@ -16,6 +16,7 @@ from cortex.agentic.models import (
     MaxIterationsError,
     Mode,
 )
+from cortex.events import EventEmitter
 from cortex.sessions.models import Message, MessageRole
 
 if TYPE_CHECKING:
@@ -23,7 +24,6 @@ if TYPE_CHECKING:
     from cortex.agentic.reasoner import Reasoner
     from cortex.agentic.executor import LoopExecutor
     from cortex.events import EventBus
-    from cortex.sessions.service import SessionService
 
 logger = logging.getLogger(__name__)
 
@@ -50,15 +50,13 @@ class AgentLoop:
         reasoner: Reasoner,
         executor: LoopExecutor,
         event_bus: EventBus | None = None,
-        session_service: SessionService | None = None,
         max_chat_iterations: int = 20,
         max_goal_iterations: int = 100,
     ):
         self._context_builder = context_builder
         self._reasoner = reasoner
         self._executor = executor
-        self._event_bus = event_bus
-        self._session_service = session_service
+        self._emitter = EventEmitter(event_bus, source_module="agent_loop")
         self._max_chat_iterations = max_chat_iterations
         self._max_goal_iterations = max_goal_iterations
 
@@ -280,19 +278,7 @@ class AgentLoop:
 
     async def _emit_goal_event(self, goal_id: UUID, status: str, data: dict) -> None:
         """Emit a goal status event."""
-        if not self._event_bus:
-            return
-
-        try:
-            from cortex.events import BaseEvent
-            event = BaseEvent.create(
-                event_type=f"goal.{status}",
-                payload={
-                    "goal_id": str(goal_id),
-                    **data,
-                },
-                source_module="agent_loop"
-            )
-            await self._event_bus.publish(event)
-        except Exception as e:
-            logger.warning(f"Failed to emit goal event: {e}")
+        await self._emitter.emit(
+            f"goal.{status}",
+            {"goal_id": str(goal_id), **data},
+        )

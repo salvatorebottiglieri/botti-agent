@@ -80,9 +80,9 @@ class TestCortexAppBootstrap:
     @pytest.mark.asyncio
     async def test_services_are_wired(self, mock_settings):
         """Services should be wired through dependency injection."""
-        from cortex.api.dependencies import get_session_service, get_execution_module
+        from cortex.api.dependencies import get_session_repository, get_execution_module
         from cortex.main import create_app, CortexApp
-        
+
         # Create a minimal CortexApp with mock services
         mock_db_pool = MagicMock()
         mock_event_bus = MagicMock()
@@ -90,18 +90,18 @@ class TestCortexAppBootstrap:
         mock_event_bus.subscribe = AsyncMock()
         mock_event_bus.start = AsyncMock()
         mock_event_bus.stop = AsyncMock()
-        mock_session_service = MagicMock()
+        mock_session_repository = MagicMock()
         mock_execution_module = MagicMock()
         mock_interaction_service = MagicMock()
         mock_personality_service = MagicMock()
         mock_memory_service = MagicMock()
         mock_minion_service = MagicMock()
         mock_llm_client = MagicMock()
-        
+
         state = {
             "db_pool": mock_db_pool,
             "event_bus": mock_event_bus,
-            "session_service": mock_session_service,
+            "session_repository": mock_session_repository,
             "execution_module": mock_execution_module,
             "interaction_service": mock_interaction_service,
             "personality_service": mock_personality_service,
@@ -109,15 +109,15 @@ class TestCortexAppBootstrap:
             "minion_service": mock_minion_service,
             "llm_client": mock_llm_client,
         }
-        
+
         with patch("cortex.main.get_settings", return_value=mock_settings):
             app = create_app(cortex_state=state)
-        
+
         # Dependencies should resolve
         from cortex.api.dependencies import get_app_state
-        
+
         resolved_state = get_app_state()
-        assert resolved_state["session_service"] == mock_session_service
+        assert resolved_state["session_repository"] == mock_session_repository
         assert resolved_state["execution_module"] == mock_execution_module
 
 
@@ -155,7 +155,7 @@ class TestStartupShutdown:
         # Verify the dataclass has the expected fields
         assert hasattr(app, 'db_pool')
         assert hasattr(app, 'event_bus')
-        assert hasattr(app, 'session_service')
+        assert hasattr(app, 'session_repository')
         assert hasattr(app, 'execution_module')
         assert hasattr(app, 'interaction_service')
         assert hasattr(app, 'personality_service')

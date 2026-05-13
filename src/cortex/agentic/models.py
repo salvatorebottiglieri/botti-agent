@@ -101,6 +101,19 @@ class AmbientContext:
 
 
 @dataclass
+class MemoryContext:
+    """Bundle of everything the Memory Module contributes to a reasoning step.
+
+    `degraded_dimensions` lists the names of dimensions that failed to populate
+    ("facts", "personality", "ambient"). Empty when Memory answered fully.
+    """
+    facts: list[Fact] = field(default_factory=list)
+    personality: PersonalityContext | None = None
+    ambient: AmbientContext | None = None
+    degraded_dimensions: list[str] = field(default_factory=list)
+
+
+@dataclass
 class GoalContext:
     """Context for goal-oriented mode."""
     goal_id: UUID
@@ -114,21 +127,17 @@ class GoalContext:
 class Context:
     """
     All context needed for LLM reasoning.
-    
-    Assembled by ContextBuilder before each reasoning step.
+
+    Assembled by ContextBuilder before each reasoning step. Everything the
+    Memory Module contributes (facts, personality, ambient, degraded flags)
+    lives behind the single `memory: MemoryContext` field so Memory's seam
+    has one shape on both producer and consumer sides.
     """
     session_id: UUID
     conversation: list[Message] = field(default_factory=list)
-    facts: list[Fact] = field(default_factory=list)
     tools: list[ToolDefinition] = field(default_factory=list)
-    personality: PersonalityContext | None = None
+    memory: MemoryContext = field(default_factory=lambda: MemoryContext())
     goal: GoalContext | None = None
-    ambient: AmbientContext | None = None
-    
-    @property
-    def tool_schemas(self) -> list[dict]:
-        """Get JSON schemas for available tools."""
-        return [tool for tool in self.tools]
 
 
 @dataclass

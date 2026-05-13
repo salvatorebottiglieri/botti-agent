@@ -9,8 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.params import Path
 
 from cortex.api.auth import get_api_key
-from cortex.api.dependencies import get_session_service
+from cortex.api.dependencies import get_session_repository
 from cortex.api.schemas import MessageCreate, MessageResponse, SessionResponse, SessionWithMessages
+from cortex.sessions import policy
+from cortex.sessions.models import MessageRole
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -22,11 +24,11 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 )
 async def list_sessions(
     key: str = Depends(get_api_key),
-    session_service=Depends(get_session_service),
+    session_repo=Depends(get_session_repository),
     limit: int = 10,
 ) -> list[SessionResponse]:
     """List active sessions."""
-    sessions = await session_service.list_active_sessions(limit=limit)
+    sessions = await session_repo.list_active(limit=limit)
     return [
         SessionResponse(
             id=s.id,
@@ -47,10 +49,10 @@ async def list_sessions(
 )
 async def create_session(
     key: str = Depends(get_api_key),
-    session_service=Depends(get_session_service),
+    session_repo=Depends(get_session_repository),
 ) -> SessionResponse:
     """Create a new session."""
-    session = await session_service.create_session()
+    session = await policy.create_session(session_repo)
     return SessionResponse(
         id=session.id,
         state=session.state.value,
@@ -69,11 +71,11 @@ async def create_session(
 async def get_session(
     session_id: Annotated[UUID, Path(description="Session ID")],
     key: str = Depends(get_api_key),
-    session_service=Depends(get_session_service),
+    session_repo=Depends(get_session_repository),
     limit: int = 50,
 ) -> SessionWithMessages:
     """Get a session with its messages."""
-    result = await session_service.get_conversation(session_id, limit=limit)
+    result = await policy.get_conversation(session_repo, session_id, limit=limit)
 
     if result is None:
         raise HTTPException(
@@ -112,11 +114,11 @@ async def create_message(
     session_id: Annotated[UUID, Path(description="Session ID")],
     message: MessageCreate,
     key: str = Depends(get_api_key),
-    session_service=Depends(get_session_service),
+    session_repo=Depends(get_session_repository),
 ) -> MessageResponse:
     """Add a message to a session."""
     # Verify session exists
-    session = await session_service.get_session(session_id)
+    session = await session_repo.get(session_id)
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -125,13 +127,21 @@ async def create_message(
 
     # Add message based on role
     if message.role == "user":
-        msg = await session_service.add_user_message(session_id, message.content)
+        msg = await policy.add_user_message(session_repo, session_id, message.content)
     elif message.role == "assistant":
-        msg = await session_service.add_assistant_message(
-            session_id, message.content, message.tool_calls
+        msg = await session_repo.add_message(
+            session_id=session_id,
+            role=MessageRole.ASSISTANT,
+            content=message.content,
+            tool_calls=message.tool_calls,
         )
     else:  # tool_result
-        msg = await session_service.add_tool_result(session_id, message.content, message.tool_calls)
+        msg = await session_repo.add_message(
+            session_id=session_id,
+            role=MessageRole.TOOL_RESULT,
+            content=message.content,
+            tool_calls=message.tool_calls,
+        )
 
     return MessageResponse(
         id=msg.id,
@@ -150,10 +160,10 @@ async def create_message(
 async def end_session(
     session_id: Annotated[UUID, Path(description="Session ID")],
     key: str = Depends(get_api_key),
-    session_service=Depends(get_session_service),
+    session_repo=Depends(get_session_repository),
 ) -> SessionResponse:
     """End a session."""
-    session = await session_service.end_session(session_id)
+    session = await policy.end_session(session_repo, session_id)
 
     if session is None:
         raise HTTPException(
@@ -179,10 +189,10 @@ async def end_session(
 async def resume_session(
     session_id: Annotated[UUID, Path(description="Session ID")],
     key: str = Depends(get_api_key),
-    session_service=Depends(get_session_service),
+    session_repo=Depends(get_session_repository),
 ) -> SessionResponse:
     """Resume an idle session."""
-    session = await session_service.resume_session(session_id)
+    session = await policy.resume_session(session_repo, session_id)
 
     if session is None:
         raise HTTPException(

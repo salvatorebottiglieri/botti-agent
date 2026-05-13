@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from cortex.interaction.service import InteractionService, PersonalityService
     from cortex.services.memory_service import MemoryService
     from cortex.services.minion_service import MinionService
-    from cortex.sessions.service import SessionService
+    from cortex.sessions.interfaces import SessionRepository
 
 
 # Global app state (set during app startup)
@@ -34,10 +34,10 @@ def get_app_state() -> dict:
 # ─── Service Dependencies ────────────────────────────────────────────────────
 
 
-async def get_session_service() -> SessionService:
-    """Get the session service."""
+async def get_session_repository() -> SessionRepository:
+    """Get the session repository."""
     state = get_app_state()
-    return state["session_service"]
+    return state["session_repository"]
 
 
 async def get_execution_module() -> ExecutionModule:
@@ -83,7 +83,7 @@ async def get_llm_client():
 
 
 # Type aliases for cleaner route signatures
-SessionServiceDep = Depends(get_session_service)
+SessionRepositoryDep = Depends(get_session_repository)
 ExecutionModuleDep = Depends(get_execution_module)
 InteractionServiceDep = Depends(get_interaction_service)
 PersonalityServiceDep = Depends(get_personality_service)

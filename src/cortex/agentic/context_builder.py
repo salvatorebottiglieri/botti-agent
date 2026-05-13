@@ -10,13 +10,11 @@ from cortex.agentic.models import (
     Context,
     Mode,
     GoalContext,
-    PersonalityContext,
-    AmbientContext,
 )
 from cortex.memory.models import FactType
 
 if TYPE_CHECKING:
-    from cortex.sessions.service import SessionService
+    from cortex.sessions.interfaces import SessionRepository
     from cortex.services.memory_service import MemoryService
     from cortex.tools.interfaces import ToolRegistry
 
@@ -38,13 +36,13 @@ class ContextBuilder:
 
     def __init__(
         self,
-        session_service: SessionService,
+        session_repository: SessionRepository,
         memory_service: MemoryService,
         tool_registry: ToolRegistry,
         max_messages: int = 20,
         max_facts: int = 10,
     ):
-        self._session_service = session_service
+        self._session_repository = session_repository
         self._memory_service = memory_service
         self._tool_registry = tool_registry
         self.max_messages = max_messages
@@ -73,9 +71,9 @@ class ContextBuilder:
             Assembled Context
         """
         # 1. Get conversation history (limit to max_messages - 1 for user message)
-        messages = await self._session_service.get_messages(
-            session_id, 
-            limit=self.max_messages - 1
+        messages = await self._session_repository.get_messages(
+            session_id,
+            limit=self.max_messages - 1,
         )
         
         # 2. Add user message to conversation
@@ -93,16 +91,20 @@ class ContextBuilder:
         # 3. Get tools
         tools = self._get_tools()
 
-        # 4. Get facts
-        facts = await self._get_facts(user_message, session_id, fact_types)
+        # 4. Get everything Memory contributes in one call
+        types = [FactType(t) for t in fact_types] if fact_types else None
+        memory_ctx = await self._memory_service.get_memory_context(
+            session_id=session_id,
+            query=user_message,
+            max_facts=self.max_facts,
+            fact_types=types,
+        )
+        if memory_ctx.degraded_dimensions:
+            logger.warning(
+                f"MemoryContext degraded: {memory_ctx.degraded_dimensions}"
+            )
 
-        # 5. Get personality
-        personality = await self._get_personality(session_id)
-
-        # 6. Get ambient context
-        ambient = await self._get_ambient_context()
-
-        # 7. Get goal context (if GOAL mode)
+        # 5. Get goal context (if GOAL mode)
         goal = None
         if mode == Mode.GOAL and goal_id:
             goal = GoalContext(
@@ -113,11 +115,9 @@ class ContextBuilder:
         return Context(
             session_id=session_id,
             conversation=messages,
-            facts=facts,
             tools=tools,
-            personality=personality,
+            memory=memory_ctx,
             goal=goal,
-            ambient=ambient,
         )
 
     def _get_tools(self) -> list[Any]:
@@ -127,56 +127,6 @@ class ContextBuilder:
         except Exception as e:
             logger.warning(f"Failed to get tool schemas: {e}")
             return []
-
-    async def _get_facts(
-        self,
-        query: str,
-        session_id: UUID,
-        fact_types: list[str] | None = None,
-    ) -> list[Any]:
-        """Get relevant facts from memory."""
-        try:
-            types = None
-            if fact_types:
-                types = [FactType(t) for t in fact_types]
-
-            return await self._memory_service.get_relevant(
-                query=query,
-                limit=self.max_facts,
-                session_id=session_id,
-                fact_types=types,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to get relevant facts: {e}")
-            return []
-
-    async def _get_personality(self, session_id: UUID | None) -> PersonalityContext | None:
-        """Get personality context."""
-        try:
-            return await self._memory_service.get_personality_context(session_id)
-        except Exception as e:
-            logger.warning(f"Failed to get personality context: {e}")
-            return None
-
-    async def _get_ambient_context(self) -> AmbientContext | None:
-        """Get ambient context."""
-        try:
-            context_dict = await self._memory_service.get_context(
-                dimensions=["time", "location", "activity", "weather"]
-            )
-
-            if not context_dict:
-                return None
-
-            return AmbientContext(
-                time_of_day=context_dict.get("time"),
-                location=context_dict.get("location"),
-                activity=context_dict.get("activity"),
-                weather=context_dict.get("weather"),
-            )
-        except Exception as e:
-            logger.warning(f"Failed to get ambient context: {e}")
-            return None
 
     async def build_quick(
         self,

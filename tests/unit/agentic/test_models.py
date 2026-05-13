@@ -124,14 +124,14 @@ class TestContext:
 
     def test_context_creation(self):
         """Context can be created with all fields."""
+        from cortex.agentic.models import MemoryContext
+
         context = Context(
             session_id=uuid4(),
             conversation=[],
-            facts=[],
             tools=[],
-            personality=None,
+            memory=MemoryContext(),
             goal=None,
-            ambient=None,
         )
 
         assert context.session_id is not None
@@ -148,7 +148,6 @@ class TestContext:
         context = Context(
             session_id=uuid4(),
             conversation=messages,
-            facts=[],
             tools=[],
         )
 
@@ -167,23 +166,26 @@ class TestContext:
             )
         ]
 
+        from cortex.agentic.models import MemoryContext
+
         context = Context(
             session_id=uuid4(),
             conversation=[],
-            facts=facts,
             tools=[],
+            memory=MemoryContext(facts=facts),
         )
 
-        assert len(context.facts) == 1
+        assert len(context.memory.facts) == 1
 
     def test_context_defaults(self):
         """Context has sensible defaults."""
         context = Context(session_id=uuid4())
 
         assert context.conversation == []
-        assert context.facts == []
+        assert context.memory.facts == []
         assert context.tools == []
-        assert context.personality is None
+        assert context.memory.personality is None
+        assert context.memory.ambient is None
         assert context.goal is None
 
 
