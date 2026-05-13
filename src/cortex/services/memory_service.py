@@ -3,46 +3,14 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from cortex.agentic.models import PersonalityContext
 from cortex.memory.interfaces import ConceptRepository, FactExtractor, FactRepository
 from cortex.memory.models import Concept, Fact, FactMutability, FactType
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class PersonalityContext:
-    """
-    Personality traits for response formatting.
-
-    Values are 0.0 to 1.0 where:
-    - formality: 0 = casual, 1 = formal
-    - verbosity: 0 = terse, 1 = verbose
-    - technical_level: 0 = simple, 1 = technical
-    """
-
-    formality: float = 0.5
-    verbosity: float = 0.5
-    technical_level: float = 0.5
-    humor_level: float = 0.5
-
-    # Additional traits
-    empathy: float = 0.5
-    directness: float = 0.5
-
-
-@dataclass
-class AmbientContext:
-    """Current ambient context (time, location, activity)."""
-
-    time_of_day: str | None = None  # "morning", "afternoon", "evening", "night"
-    day_of_week: str | None = None  # "weekday", "weekend"
-    location: str | None = None
-    activity: str | None = None
-    weather: str | None = None
 
 
 class MemoryService:

@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from cortex.agentic.models import ChatResponse, Mode
+from cortex.agentic.models import ChatResponse, Mode, PersonalityContext
 from cortex.sessions.models import Message, MessageRole
 
 if TYPE_CHECKING:
@@ -39,8 +39,6 @@ class PersonalityService:
         Returns:
             PersonalityContext with formatting traits
         """
-        from cortex.agentic.models import PersonalityContext
-
         if self._memory and hasattr(self._memory, 'get_personality_context'):
             try:
                 personality = await self._memory.get_personality_context(session_id)
@@ -123,13 +121,6 @@ class PersonalityService:
 
         except Exception as e:
             logger.warning(f"Failed to update preferences: {e}")
-
-
-class PersonalityContext:
-    """Personality traits for response formatting."""
-    formality: float = 0.5
-    verbosity: float = 0.5
-    technical_level: float = 0.5
 
 
 class InteractionService:

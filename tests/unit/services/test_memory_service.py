@@ -4,13 +4,10 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from cortex.agentic.models import PersonalityContext, AmbientContext
 from cortex.memory.models import Fact, Concept, FactType, FactMutability, ConfidenceLevel
 from cortex.memory.interfaces import FactRepository, FactExtractor
-from cortex.services.memory_service import (
-    MemoryService,
-    PersonalityContext,
-    AmbientContext,
-)
+from cortex.services.memory_service import MemoryService
 
 
 class TestPersonalityContext:
