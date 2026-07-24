@@ -48,6 +48,9 @@ class Settings(BaseSettings):
         default=None,
         description="Base URL for API-compatible providers"
     )
+    circuit_breaker_threshold: int = Field(default=5, ge=1)
+    circuit_breaker_timeout: float = Field(default=30.0, ge=0.0)
+    circuit_breaker_half_open_successes: int = Field(default=3, ge=1)
     llm_timeout: int = Field(default=60, ge=1)
 
     # ─── MQTT ─────────────────────────────────────────────────
