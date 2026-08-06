@@ -1,13 +1,12 @@
 """Tests for session models."""
 
-import pytest
 from uuid import uuid4
 
 from cortex.sessions.models import (
-    Session,
-    SessionState,
     Message,
     MessageRole,
+    Session,
+    SessionState,
     SessionWithMessages,
 )
 
@@ -18,7 +17,7 @@ class TestSession:
     def test_create_session_with_defaults(self):
         """Test creating a session with default values."""
         session = Session()
-        
+
         assert session.id is not None
         assert session.state == SessionState.CREATED
         assert session.ended_at is None
@@ -32,7 +31,7 @@ class TestSession:
             state=SessionState.ACTIVE,
             metadata={"source": "api"},
         )
-        
+
         assert session.id == session_id
         assert session.state == SessionState.ACTIVE
         assert session.metadata == {"source": "api"}
@@ -56,7 +55,7 @@ class TestMessage:
             role=MessageRole.USER,
             content="Hello!",
         )
-        
+
         assert message.id is not None
         assert message.session_id == session_id
         assert message.role == "user"  # enum value
@@ -73,7 +72,7 @@ class TestMessage:
             content="Running command...",
             tool_calls=tool_calls,
         )
-        
+
         assert message.tool_calls == tool_calls
 
     def test_message_role_enum_values(self):
@@ -94,9 +93,9 @@ class TestSessionWithMessages:
             Message(session_id=session.id, role=MessageRole.USER, content="Hi"),
             Message(session_id=session.id, role=MessageRole.ASSISTANT, content="Hello!"),
         ]
-        
+
         combined = SessionWithMessages(session=session, messages=messages)
-        
+
         assert combined.session == session
         assert len(combined.messages) == 2
         assert combined.messages[0].content == "Hi"

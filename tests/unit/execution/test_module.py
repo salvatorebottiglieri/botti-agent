@@ -1,11 +1,13 @@
 """Tests for ExecutionModule."""
 
-import pytest
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
+
+from cortex.agentic.models import ChatResponse, GoalResult, GoalStatus
 from cortex.execution.module import ExecutionModule
-from cortex.agentic.models import ChatResponse, Goal, GoalResult, GoalStatus
 
 
 class TestExecutionModule:
@@ -64,8 +66,8 @@ class TestExecutionModule:
 
     @pytest.mark.asyncio
     async def test_create_goal_with_priority_and_deadline(self, module):
-        from datetime import datetime, timezone
-        deadline = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        from datetime import datetime
+        deadline = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
 
         goal = await module.create_goal(
             description="Urgent task",

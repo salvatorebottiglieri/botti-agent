@@ -1,25 +1,24 @@
 """File writing tool."""
 
-import os
 from pathlib import Path
 from typing import Any
 
-from cortex.tools.interfaces import Tool, ToolCall, ToolResult, ToolErrorSeverity
+from cortex.tools.interfaces import ToolErrorSeverity, ToolResult
 from cortex.tools.meta.base import BaseMetaTool, FileToolMixin
 
 
 class FileWriteTool(BaseMetaTool, FileToolMixin):
     """
     Write content to a file.
-    
+
     Creates parent directories if needed.
     Will overwrite existing files.
     """
-    
+
     @property
     def name(self) -> str:
         return "file_write"
-    
+
     @property
     def description(self) -> str:
         return (
@@ -27,7 +26,7 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
             "if they don't exist. Will overwrite existing files. "
             "Use this to create new files or update existing ones."
         )
-    
+
     @property
     def input_schema(self) -> dict[str, Any]:
         return {
@@ -54,21 +53,21 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
             },
             "required": ["path", "content"]
         }
-    
+
     @property
     def tags(self) -> list[str]:
         return ["file", "write", "filesystem", "io"]
-    
+
     @property
     def idempotent(self) -> bool:
         return False  # Writing has side effects
-    
+
     async def execute(self, arguments: dict[str, Any]) -> ToolResult:
         path = arguments.get("path", "")
         content = arguments.get("content", "")
         encoding = arguments.get("encoding", "utf-8")
         append = arguments.get("append", False)
-        
+
         # Validate path
         path_error = self._validate_path(path)
         if path_error:
@@ -79,7 +78,7 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
                 error=path_error,
                 error_severity=ToolErrorSeverity.ERROR
             )
-        
+
         # Validate content
         if content is None:
             return ToolResult(
@@ -89,7 +88,7 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
                 error="Content cannot be None",
                 error_severity=ToolErrorSeverity.ERROR
             )
-        
+
         # Resolve path
         try:
             file_path = Path(path).resolve()
@@ -101,7 +100,7 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
                 error=f"Invalid path: {e}",
                 error_severity=ToolErrorSeverity.ERROR
             )
-        
+
         # Create parent directories
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,13 +112,13 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
                 error=f"Failed to create parent directory: {e}",
                 error_severity=ToolErrorSeverity.ERROR
             )
-        
+
         # Write file
         mode = 'a' if append else 'w'
         try:
             with open(file_path, mode, encoding=encoding) as f:
                 f.write(content)
-            
+
             return ToolResult(
                 tool_call_id="",
                 tool_name=self.name,
@@ -131,7 +130,7 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
                     "append": append
                 }
             )
-            
+
         except PermissionError:
             return ToolResult(
                 tool_call_id="",
@@ -140,7 +139,7 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
                 error=f"Permission denied: {path}",
                 error_severity=ToolErrorSeverity.ERROR
             )
-            
+
         except Exception as e:
             return ToolResult(
                 tool_call_id="",

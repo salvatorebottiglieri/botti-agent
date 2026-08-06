@@ -4,8 +4,9 @@ Context management for logging (trace IDs).
 
 import contextvars
 import uuid
-from typing import Any
+from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 
 import structlog
 
@@ -40,7 +41,7 @@ def clear_trace_id() -> None:
 
 
 @contextmanager
-def trace_context(trace_id: str | None = None):
+def trace_context(trace_id: str | None = None) -> Iterator[str]:
     """
     Context manager for trace ID.
 

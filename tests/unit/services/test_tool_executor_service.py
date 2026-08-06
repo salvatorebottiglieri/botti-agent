@@ -1,16 +1,17 @@
 """Tests for ToolExecutorService."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-from cortex.tools.interfaces import Tool, ToolCall, ToolResult, ToolDefinition, ToolRegistry
-from cortex.tools.executor import DefaultToolExecutor
+import pytest
+
 from cortex.services.tool_executor import (
-    ToolExecutorService,
-    ServiceToolExecutor,
     CircuitBreaker,
     CircuitState,
+    ServiceToolExecutor,
+    ToolExecutorService,
 )
+from cortex.tools.executor import DefaultToolExecutor
+from cortex.tools.interfaces import Tool, ToolCall, ToolRegistry, ToolResult
 
 
 class MockTool(Tool):
@@ -54,12 +55,12 @@ class TestCircuitBreaker:
     def test_opens_after_threshold(self):
         """Circuit opens after reaching failure threshold."""
         cb = CircuitBreaker(failure_threshold=3)
-        
+
         # Record failures
         cb.record_failure()
         cb.record_failure()
         cb.record_failure()
-        
+
         assert cb.state == CircuitState.OPEN
         assert cb.failure_count == 3
 
@@ -68,11 +69,10 @@ class TestCircuitBreaker:
         cb = CircuitBreaker(failure_threshold=1, open_timeout_seconds=0.01)
         cb.record_failure()  # Opens circuit
         assert cb.state == CircuitState.OPEN
-        
-        import asyncio
+
         import time
         time.sleep(0.02)  # Wait for timeout
-        
+
         # Access should trigger half-open
         cb.can_execute()
         assert cb.state == CircuitState.HALF_OPEN
@@ -80,22 +80,22 @@ class TestCircuitBreaker:
     def test_resets_on_success(self):
         """Circuit resets failure count on success."""
         cb = CircuitBreaker(failure_threshold=3)
-        
+
         cb.record_failure()
         cb.record_failure()
         cb.record_success()  # Resets
-        
+
         assert cb.failure_count == 0
 
     def test_closes_from_half_open_on_success(self):
         """Circuit closes after successful call in half-open."""
         cb = CircuitBreaker(failure_threshold=1, success_threshold=1, open_timeout_seconds=0.01)
         cb.record_failure()
-        
+
         import time
         time.sleep(0.02)
         cb.can_execute()  # Move to half-open
-        
+
         cb.record_success()  # With success_threshold=1, this should close it
         assert cb.state == CircuitState.CLOSED
 
@@ -103,11 +103,11 @@ class TestCircuitBreaker:
         """Circuit reopens after failure in half-open."""
         cb = CircuitBreaker(failure_threshold=1, open_timeout_seconds=0.01)
         cb.record_failure()
-        
+
         import time
         time.sleep(0.02)
         cb.can_execute()  # Move to half-open
-        
+
         cb.record_failure()
         assert cb.state == CircuitState.OPEN
 
@@ -141,9 +141,9 @@ class TestToolExecutorService:
     async def test_execute_publishes_start_event(self, service, mock_event_bus):
         """Executing a tool publishes tool.started event."""
         tool_call = ToolCall(name="test_tool", arguments={})
-        
+
         await service.execute(tool_call)
-        
+
         # Check that publish was called
         assert mock_event_bus.publish.called or mock_event_bus.emit.called
 
@@ -151,9 +151,9 @@ class TestToolExecutorService:
     async def test_execute_publishes_result_event(self, service, mock_event_bus):
         """Executing a tool publishes tool.result event."""
         tool_call = ToolCall(name="test_tool", arguments={})
-        
+
         await service.execute(tool_call)
-        
+
         # Verify result was published
         assert mock_event_bus.publish.called or mock_event_bus.emit.called
 
@@ -161,9 +161,9 @@ class TestToolExecutorService:
     async def test_execute_returns_result(self, service):
         """Execute returns a valid ToolResult."""
         tool_call = ToolCall(name="test_tool", arguments={})
-        
+
         result = await service.execute(tool_call)
-        
+
         assert isinstance(result, ToolResult)
         assert result.success is True
 
@@ -171,10 +171,10 @@ class TestToolExecutorService:
     async def test_execute_circuit_open_rejects(self, service):
         """Execute rejects when circuit is open."""
         service.circuit_breaker.state = CircuitState.OPEN
-        
+
         tool_call = ToolCall(name="test_tool", arguments={})
         result = await service.execute(tool_call)
-        
+
         assert result.success is False
         assert result.error is not None
         assert "circuit breaker is open" in result.error.lower()
@@ -186,9 +186,9 @@ class TestToolExecutorService:
             ToolCall(name="test_tool", arguments={}),
             ToolCall(name="test_tool", arguments={}),
         ]
-        
+
         results = await service.execute_many(calls)
-        
+
         assert len(results) == 2
 
     @pytest.mark.asyncio
@@ -198,9 +198,9 @@ class TestToolExecutorService:
             ToolCall(name="test_tool", arguments={}),
             ToolCall(name="test_tool", arguments={}),
         ]
-        
+
         results = await service.execute_many(calls, parallel=True)
-        
+
         assert len(results) == 2
 
 
@@ -228,18 +228,18 @@ class TestServiceToolExecutor:
     async def test_execute_delegates_to_service(self, executor, mock_service):
         """Execute calls the underlying service."""
         tool_call = ToolCall(name="test", arguments={})
-        
+
         await executor.execute(tool_call)
-        
+
         mock_service.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_execute_many_delegates(self, executor, mock_service):
         """Execute many calls the underlying service."""
         calls = [ToolCall(name="test", arguments={})]
-        
+
         await executor.execute_many(calls)
-        
+
         # Should call service's execute_many, not execute
         mock_service.execute_many.assert_called_once()
 
@@ -247,9 +247,9 @@ class TestServiceToolExecutor:
     async def test_execute_with_timeout(self, executor, mock_service):
         """Execute passes timeout to service."""
         tool_call = ToolCall(name="test", arguments={})
-        
+
         await executor.execute(tool_call, timeout=30)
-        
+
         mock_service.execute.assert_called()
         call_kwargs = mock_service.execute.call_args.kwargs
         assert "timeout" in call_kwargs or call_kwargs.get("timeout") == 30

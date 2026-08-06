@@ -1,7 +1,7 @@
 """Request/Response schemas for the API."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -62,7 +62,7 @@ class MessageCreate(BaseModel):
 
     role: Literal["user", "assistant", "tool_result"] = Field(..., description="Message role")
     content: str = Field(..., description="Message content", min_length=1)
-    tool_calls: list[dict] | None = Field(None, description="Tool calls if any")
+    tool_calls: list[dict[str, Any]] | None = Field(None, description="Tool calls if any")
 
 
 class SessionResponse(BaseModel):
@@ -73,7 +73,7 @@ class SessionResponse(BaseModel):
     created_at: datetime
     last_activity_at: datetime
     ended_at: datetime | None = None
-    metadata: dict = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SessionWithMessages(BaseModel):
@@ -89,7 +89,7 @@ class MessageResponse(BaseModel):
     id: UUID
     role: str
     content: str
-    tool_calls: list[dict] | None = None
+    tool_calls: list[dict[str, Any]] | None = None
     created_at: datetime
 
 
@@ -151,7 +151,7 @@ class MinionResponse(BaseModel):
     last_heartbeat_at: datetime | None = None
     last_known_ip: str | None = None
     state: str = "unknown"
-    metadata: dict = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class MinionTokenRequest(BaseModel):
@@ -171,7 +171,7 @@ class MinionTokenResponse(BaseModel):
 class MinionConfigRequest(BaseModel):
     """Request to push config to a minion."""
 
-    config: dict = Field(..., description="Configuration to push")
+    config: dict[str, Any] = Field(..., description="Configuration to push")
 
 
 # ─── Health Schemas ───────────────────────────────────────────────────────────

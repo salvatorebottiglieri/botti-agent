@@ -1,11 +1,7 @@
 """Database migrations runner."""
 
 import logging
-import os
 from pathlib import Path
-from typing import Any
-
-import asyncpg
 
 from cortex.db.pool import get_pool
 

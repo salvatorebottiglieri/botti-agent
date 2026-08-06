@@ -1,15 +1,16 @@
 """Tests for the Memory module."""
-import pytest
+from datetime import UTC
 from uuid import uuid4
 
+import pytest
+
+from cortex.memory.interfaces import ConceptRepository, FactExtractor, FactRepository
 from cortex.memory.models import (
-    Fact,
     Concept,
-    FactType,
+    Fact,
     FactMutability,
-    ConfidenceLevel,
+    FactType,
 )
-from cortex.memory.interfaces import FactRepository, ConceptRepository, FactExtractor
 
 
 class TestFactModel:
@@ -87,8 +88,8 @@ class TestFactModel:
         assert fact.is_active()
 
         # Simulate retraction
-        from datetime import datetime, timezone
-        fact.retracted_at = datetime.now(timezone.utc)
+        from datetime import datetime
+        fact.retracted_at = datetime.now(UTC)
         assert not fact.is_active()
 
     def test_fact_to_search_text(self):

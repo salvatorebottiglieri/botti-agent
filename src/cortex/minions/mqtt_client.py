@@ -4,13 +4,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
-from typing import Callable
+from typing import Any
 
 import aiomqtt
 
-from .interfaces import MinionGateway, MinionEventHandler
-from .models import MinionEvent, MinionEventBatch, MinionConfig
+from .interfaces import MinionEventHandler, MinionGateway
+from .models import MinionConfig, MinionEvent, MinionEventBatch
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ class MinionMQTTClient(MinionGateway):
         self._client: aiomqtt.Client | None = None
         self._handlers: list[MinionEventHandler] = []
         self._connected = False
-        self._tasks: list[asyncio.Task] = []
+        self._tasks: list[asyncio.Task[None]] = []
         self._loop = asyncio.get_event_loop()
 
     async def connect(self) -> None:
@@ -102,7 +101,7 @@ class MinionMQTTClient(MinionGateway):
 
         # Also subscribe to topics if client is connected
         if self._client and self._connected:
-            for topic in self._config.topics:
+            for topic in self._config.topics or []:
                 await self._client.subscribe(topic, qos=self._config.qos)
                 logger.info("Subscribed to topic", extra={"topic": topic})
 
@@ -128,7 +127,7 @@ class MinionMQTTClient(MinionGateway):
         logger.info("Starting MQTT listener", extra={"topics": self._config.topics})
 
         try:
-            async for message in self._client.messages():
+            async for message in self._client.messages:
                 await self._handle_message(message)
         except asyncio.CancelledError:
             logger.info("MQTT listener cancelled")
@@ -182,7 +181,7 @@ class MinionMQTTClient(MinionGateway):
         return None
 
     def _parse_event(
-        self, minion_id: str, data: dict, topic: str
+        self, minion_id: str, data: dict[str, Any], topic: str
     ) -> MinionEvent | MinionEventBatch | None:
         """Parse message data into an event or batch."""
         # Check if this is a batch

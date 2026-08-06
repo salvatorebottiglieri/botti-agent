@@ -1,16 +1,17 @@
 """LLM generation configuration."""
 
 from typing import Any
+
 from pydantic import BaseModel, Field
 
 
 class GenerationConfig(BaseModel):
     """
     Configuration for LLM generation.
-    
+
     All parameters are optional with sensible defaults.
     """
-    
+
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1)
     top_p: float | None = Field(default=None, ge=0.0, le=1.0)

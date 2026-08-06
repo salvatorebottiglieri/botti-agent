@@ -1,12 +1,13 @@
 """Tests for MemoryService."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from cortex.agentic.models import PersonalityContext, AmbientContext
-from cortex.memory.models import Fact, Concept, FactType, FactMutability, ConfidenceLevel
-from cortex.memory.interfaces import FactRepository, FactExtractor
+import pytest
+
+from cortex.agentic.models import AmbientContext, PersonalityContext
+from cortex.memory.interfaces import FactExtractor, FactRepository
+from cortex.memory.models import Fact, FactType
 from cortex.services.memory_service import MemoryService
 
 
@@ -110,9 +111,9 @@ class TestMemoryService:
         )
         mock_fact_repo.get_by_symbolic_repr.return_value = None  # No duplicate
         mock_fact_repo.store.return_value = fact
-        
+
         stored = await service.store_fact(fact)
-        
+
         mock_fact_repo.store.assert_called_once_with(fact)
         assert stored == fact
 
@@ -195,12 +196,12 @@ class TestMemoryService:
             )
         ]
         mock_extractor.extract_from_text.return_value = facts
-        
+
         extracted = await service.extract_from_conversation(
             "I prefer dark mode in my editor",
             session_id=uuid4()
         )
-        
+
         mock_extractor.extract_from_text.assert_called_once()
         assert len(extracted) == 1
         assert extracted[0].type == FactType.USER_FACT
@@ -212,18 +213,18 @@ class TestMemoryService:
         mock_extractor.extract_from_text.return_value = [fact]
         mock_fact_repo.get_by_symbolic_repr.return_value = None
         mock_fact_repo.store.return_value = fact
-        
+
         await service.extract_from_conversation("test text", session_id=uuid4())
-        
+
         mock_fact_repo.store.assert_called_once_with(fact)
 
     @pytest.mark.asyncio
     async def test_retract_fact(self, service, mock_fact_repo):
         """Retracting a fact calls repository."""
         fact_id = uuid4()
-        
+
         await service.retract_fact(fact_id, reason="Outdated")
-        
+
         mock_fact_repo.retract.assert_called_once_with(fact_id, "Outdated")
 
     @pytest.mark.asyncio
@@ -233,9 +234,9 @@ class TestMemoryService:
         concept_repo = MagicMock()
         concept_repo.invalidate_from_fact = AsyncMock()
         service._concept_repo = concept_repo
-        
+
         await service.retract_fact(fact_id)
-        
+
         concept_repo.invalidate_from_fact.assert_called_once_with(fact_id)
 
     @pytest.mark.asyncio
@@ -248,9 +249,9 @@ class TestMemoryService:
             payload={"formality": 0.8}
         )
         mock_fact_repo.get_by_type.return_value = [pref_fact]
-        
+
         ctx = await service.get_personality_context()
-        
+
         assert isinstance(ctx, PersonalityContext)
         # The implementation should parse the payload
         assert ctx.formality >= 0  # Should be derived from facts
@@ -260,7 +261,7 @@ class TestMemoryService:
         """Location events create facts."""
         mock_fact_repo.get_by_symbolic_repr.return_value = None
         mock_fact_repo.store.return_value = Fact()
-        
+
         event = MagicMock()
         event.type = "location"
         event.payload = {
@@ -268,9 +269,9 @@ class TestMemoryService:
             "longitude": -122.4194,
             "place": "home"
         }
-        
+
         await service.handle_event(event)
-        
+
         # Check that store was called (create a location fact)
         mock_fact_repo.store.assert_called()
         call_args = mock_fact_repo.store.call_args[0][0]
@@ -280,14 +281,14 @@ class TestMemoryService:
     async def test_search_facts(self, service, mock_fact_repo):
         """Search calls repository with correct params."""
         mock_fact_repo.search.return_value = []
-        
+
         await service.search_facts(
             query="home location",
             fact_types=[FactType.LOCATION],
             min_confidence=0.7,
             limit=5
         )
-        
+
         mock_fact_repo.search.assert_called_once_with(
             "home location",
             limit=5,
@@ -299,9 +300,9 @@ class TestMemoryService:
     async def test_get_recent_facts(self, service, mock_fact_repo):
         """Get recent facts calls repository."""
         mock_fact_repo.get_recent.return_value = []
-        
+
         result = await service.get_recent_facts(limit=10)
-        
+
         mock_fact_repo.get_recent.assert_called_once_with(limit=10)
         assert isinstance(result, list)
 
@@ -312,9 +313,9 @@ class TestMemoryService:
             Fact(symbolic_repr="fact.1", natural_lang_repr="Fact 1"),
             Fact(symbolic_repr="fact.2", natural_lang_repr="Fact 2"),
         ]
-        
+
         await service.store_batch(facts)
-        
+
         mock_fact_repo.store_batch.assert_called_once_with(facts)
 
     @pytest.mark.asyncio
@@ -332,14 +333,14 @@ class TestMemoryService:
                 confidence=0.8
             )
         ]
-        
+
         concept = await service.build_concept(
             symbolic_repr="context.evening_home",
             natural_lang_repr="User is at home in the evening",
             source_facts=source_facts,
             derivation_method="rule_based"
         )
-        
+
         assert concept.symbolic_repr == "context.evening_home"
         assert len(concept.source_facts) == 2
         assert concept.derivation_method == "rule_based"

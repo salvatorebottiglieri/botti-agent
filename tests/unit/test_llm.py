@@ -1,16 +1,16 @@
 """Tests for the LLM Client."""
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from cortex.llm import (
     ChatMessage,
-    ChatResult,
-    ToolCall,
-    ToolDefinition,
-    Role,
     GenerationConfig,
     LLMClientFactory,
+    Role,
+    ToolCall,
+    ToolDefinition,
 )
 from cortex.llm.providers import OpenAIClient
 

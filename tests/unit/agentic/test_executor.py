@@ -1,11 +1,10 @@
 """Tests for LoopExecutor."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+
+import pytest
 
 from cortex.agentic.executor import LoopExecutor
-from cortex.agentic.models import Decision, DecisionType, ChatResponse
 from cortex.tools.interfaces import ToolCall, ToolResult
 
 

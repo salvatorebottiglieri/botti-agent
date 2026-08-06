@@ -1,10 +1,10 @@
 """Memory module types and models."""
 from .models import (
-    Fact,
     Concept,
-    FactType,
-    FactMutability,
     ConfidenceLevel,
+    Fact,
+    FactMutability,
+    FactType,
 )
 
 __all__ = [

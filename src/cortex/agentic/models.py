@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
-    from cortex.sessions.models import Message
     from cortex.memory.models import Fact
+    from cortex.sessions.models import Message
     from cortex.tools.interfaces import ToolCall, ToolDefinition
 
 
@@ -39,7 +39,7 @@ class GoalStatus(Enum):
 class Decision:
     """
     Represents a decision made by the reasoning engine.
-    
+
     Attributes:
         decision_type: What type of decision was made
         text: Text response (for RESPOND or ASK_QUESTION)
@@ -50,7 +50,7 @@ class Decision:
     text: str | None = None
     tool_calls: list[ToolCall] | None = None
     reasoning: str = ""
-    
+
     @classmethod
     def respond(cls, text: str, reasoning: str = "") -> Decision:
         """Create a RESPOND decision."""
@@ -59,7 +59,7 @@ class Decision:
             text=text,
             reasoning=reasoning,
         )
-    
+
     @classmethod
     def execute_tools(cls, tool_calls: list[ToolCall], reasoning: str = "") -> Decision:
         """Create an EXECUTE_TOOLS decision."""
@@ -68,7 +68,7 @@ class Decision:
             tool_calls=tool_calls,
             reasoning=reasoning,
         )
-    
+
     @classmethod
     def ask_question(cls, question: str, reasoning: str = "") -> Decision:
         """Create an ASK_QUESTION decision."""
@@ -147,7 +147,7 @@ class ChatResponse:
     iterations: int = 0
     tools_used: list[str] = field(default_factory=list)
     session_id: UUID | None = None
-    
+
     @property
     def tool_names(self) -> list[str]:
         """Get names of tools that were used."""
@@ -193,7 +193,7 @@ class GoalResult:
 
 class MaxIterationsError(Exception):
     """Raised when the agent loop exceeds max iterations."""
-    
+
     def __init__(self, max_iterations: int):
         self.max_iterations = max_iterations
         super().__init__(f"Agent loop exceeded {max_iterations} iterations")

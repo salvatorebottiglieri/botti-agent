@@ -3,26 +3,26 @@
 Provides the core agentic loop: Think → Act → Observe → Respond.
 """
 
-from cortex.agentic.models import (
-    Mode,
-    Decision,
-    DecisionType,
-    Context,
-    GoalContext,
-    PersonalityContext,
-    AmbientContext,
-    MemoryContext,
-    ChatResponse,
-    Goal,
-    GoalStep,
-    GoalStatus,
-    GoalResult,
-    MaxIterationsError,
-)
 from cortex.agentic.context_builder import ContextBuilder
-from cortex.agentic.reasoner import Reasoner
 from cortex.agentic.executor import LoopExecutor
 from cortex.agentic.loop import AgentLoop
+from cortex.agentic.models import (
+    AmbientContext,
+    ChatResponse,
+    Context,
+    Decision,
+    DecisionType,
+    Goal,
+    GoalContext,
+    GoalResult,
+    GoalStatus,
+    GoalStep,
+    MaxIterationsError,
+    MemoryContext,
+    Mode,
+    PersonalityContext,
+)
+from cortex.agentic.reasoner import Reasoner
 
 __all__ = [
     # Enums

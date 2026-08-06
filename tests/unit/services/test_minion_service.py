@@ -1,11 +1,17 @@
 """Tests for MinionService."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock
 
-from cortex.minions.models import MinionInfo, MinionEvent, MinionEventBatch, MinionConfig, MinionState
-from cortex.minions.interfaces import MinionGateway, MinionEventHandler, MinionRegistry
+import pytest
+
+from cortex.minions.interfaces import MinionEventHandler, MinionGateway, MinionRegistry
+from cortex.minions.models import (
+    MinionConfig,
+    MinionEvent,
+    MinionEventBatch,
+    MinionInfo,
+    MinionState,
+)
 from cortex.services.minion_service import MinionService
 
 
@@ -73,7 +79,7 @@ class TestMinionService:
     async def test_connect(self, service, mock_gateway, mock_registry, config):
         """Connecting starts gateway and registers minion."""
         await service.connect()
-        
+
         mock_gateway.connect.assert_called_once()
         mock_gateway.subscribe.assert_called_once()
         mock_registry.register.assert_called_once()
@@ -82,16 +88,16 @@ class TestMinionService:
     async def test_disconnect(self, service, mock_gateway):
         """Disconnecting stops gateway."""
         await service.disconnect()
-        
+
         mock_gateway.disconnect.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_is_connected(self, service, mock_gateway):
         """is_connected delegates to gateway."""
         mock_gateway.is_connected.return_value = True
-        
+
         assert service.is_connected() is True
-        
+
         mock_gateway.is_connected.assert_called_once()
 
     @pytest.mark.asyncio
@@ -104,9 +110,9 @@ class TestMinionService:
             event_type=EventType.LOCATION_UPDATE,
             payload={"latitude": 37.77, "longitude": -122.41}
         )
-        
+
         await service.send_event(event)
-        
+
         mock_event_bus.publish.assert_called()
 
     @pytest.mark.asyncio
@@ -120,9 +126,9 @@ class TestMinionService:
             state=MinionState.ONLINE
         )
         mock_registry.list_active.return_value = [minion]
-        
+
         result = await service.get_active_minions()
-        
+
         mock_registry.list_active.assert_called_once()
         assert len(result) == 1
         assert result[0].minion_id == "minion-1"
@@ -131,7 +137,7 @@ class TestMinionService:
     async def test_heartbeat_updates_registry(self, service, mock_registry):
         """Heartbeat updates registry."""
         await service.heartbeat()
-        
+
         mock_registry.heartbeat.assert_called_once_with("test-minion-1")
 
     @pytest.mark.asyncio
@@ -144,9 +150,9 @@ class TestMinionService:
             event_type=EventType.ACTIVITY_DETECTED,
             payload={"activity": "walking"}
         )
-        
+
         await service.handle_event(event)
-        
+
         # Should emit to bus
         assert mock_event_bus.publish.called or mock_event_bus.emit.called
 
@@ -160,9 +166,9 @@ class TestMinionService:
             event_type=EventType.LOCATION_UPDATE,
             payload={"latitude": 37.77, "longitude": -122.41, "place": "work"}
         )
-        
+
         await service.handle_event(event)
-        
+
         # Event should be published
         assert mock_event_bus.publish.called
 
@@ -178,10 +184,10 @@ class TestMinionService:
                 MinionEvent(event_id="e2", minion_id="test", event_type=EventType.ACTIVITY_DETECTED, payload={}),
             ]
         )
-        
+
         # The handler should process each event
         processed = await service.handle_batch(batch)
-        
+
         assert processed is not None  # Should return processed events
 
 
@@ -210,7 +216,7 @@ class TestMinionEventHandler:
                 "place": "coffee_shop"
             }
         )
-        
+
         await processor.handle_event(event)
 
     @pytest.mark.asyncio
@@ -226,7 +232,7 @@ class TestMinionEventHandler:
                 "confidence": 0.85
             }
         )
-        
+
         await processor.handle_event(event)
 
     @pytest.mark.asyncio
@@ -241,9 +247,9 @@ class TestMinionEventHandler:
                 MinionEvent(event_id="e2", minion_id="test", event_type=EventType.BATTERY_LEVEL, payload={"level": 80}),
             ]
         )
-        
+
         results = await processor.handle_batch(batch)
-        
+
         assert len(results) == 2
 
 
@@ -257,7 +263,7 @@ class TestMinionConfig:
             minion_id="test",
             minion_name="Test"
         )
-        
+
         assert config.port == 1883
         assert config.keepalive == 60
         assert config.qos == 1
@@ -271,6 +277,6 @@ class TestMinionConfig:
             port=8883,
             keepalive=120
         )
-        
+
         assert config.port == 8883
         assert config.keepalive == 120

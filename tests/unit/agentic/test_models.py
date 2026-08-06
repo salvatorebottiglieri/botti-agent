@@ -1,22 +1,20 @@
 """Tests for agentic models."""
 
-import pytest
-from datetime import datetime
 from uuid import uuid4
-from dataclasses import dataclass, field
+
+import pytest
 
 from cortex.agentic.models import (
+    ChatResponse,
+    Context,
     Decision,
     DecisionType,
-    Mode,
-    Context,
-    GoalContext,
-    ChatResponse,
-    GoalResult,
-    GoalStatus,
     Goal,
+    GoalContext,
+    GoalStatus,
     GoalStep,
     MaxIterationsError,
+    Mode,
 )
 
 
@@ -155,7 +153,7 @@ class TestContext:
 
     def test_context_with_facts(self):
         """Context can hold relevant facts."""
-        from cortex.memory.models import Fact, FactType, FactMutability
+        from cortex.memory.models import Fact, FactMutability, FactType
 
         facts = [
             Fact(

@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from cortex.sessions.models import Message, MessageRole, Session, SessionState
@@ -42,7 +43,7 @@ class SessionRepository(ABC):
         session_id: UUID,
         role: MessageRole,
         content: str,
-        tool_calls: list[dict] | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
     ) -> Message:
         """Add a message to a session."""
         ...

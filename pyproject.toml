@@ -56,5 +56,16 @@ select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
+
+# asyncpg ships no stubs (no py.typed); nothing to annotate on our side.
+[[tool.mypy.overrides]]
+module = ["asyncpg", "asyncpg.*"]
+ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "types-colorama>=0.4.15.20260508",
+    "types-pyyaml>=6.0.12.20260724",
+]

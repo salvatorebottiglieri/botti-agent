@@ -1,14 +1,13 @@
 """Tests for ContextBuilder."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
+
+import pytest
 
 from cortex.agentic.context_builder import ContextBuilder
 from cortex.agentic.models import (
     AmbientContext,
-    Context,
-    GoalContext,
     MemoryContext,
     Mode,
     PersonalityContext,
@@ -151,7 +150,7 @@ class TestContextBuilder:
     @pytest.mark.asyncio
     async def test_build_includes_relevant_facts(self, builder, mock_memory_service):
         """Build should include relevant facts from the Memory bundle."""
-        from cortex.memory.models import Fact, FactType, FactMutability
+        from cortex.memory.models import Fact, FactMutability, FactType
 
         facts = [
             Fact(
@@ -182,11 +181,11 @@ class TestContextBuilder:
             Message(session_id=uuid4(), role=MessageRole.USER, content=f"Message {i}")
             for i in range(100)
         ]
-        
+
         # Mock respects the limit parameter
         async def mock_get_messages(session_id, limit=50):
             return many_messages[:limit]
-        
+
         mock_session_repository.get_messages = mock_get_messages
 
         context = await builder.build(

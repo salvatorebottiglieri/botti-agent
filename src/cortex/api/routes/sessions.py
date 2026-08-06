@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -14,6 +14,9 @@ from cortex.api.schemas import MessageCreate, MessageResponse, SessionResponse, 
 from cortex.sessions import policy
 from cortex.sessions.models import MessageRole
 
+if TYPE_CHECKING:
+    from cortex.sessions.interfaces import SessionRepository
+
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
@@ -24,7 +27,7 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 )
 async def list_sessions(
     key: str = Depends(get_api_key),
-    session_repo=Depends(get_session_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
     limit: int = 10,
 ) -> list[SessionResponse]:
     """List active sessions."""
@@ -49,7 +52,7 @@ async def list_sessions(
 )
 async def create_session(
     key: str = Depends(get_api_key),
-    session_repo=Depends(get_session_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
 ) -> SessionResponse:
     """Create a new session."""
     session = await policy.create_session(session_repo)
@@ -71,7 +74,7 @@ async def create_session(
 async def get_session(
     session_id: Annotated[UUID, Path(description="Session ID")],
     key: str = Depends(get_api_key),
-    session_repo=Depends(get_session_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
     limit: int = 50,
 ) -> SessionWithMessages:
     """Get a session with its messages."""
@@ -114,7 +117,7 @@ async def create_message(
     session_id: Annotated[UUID, Path(description="Session ID")],
     message: MessageCreate,
     key: str = Depends(get_api_key),
-    session_repo=Depends(get_session_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
 ) -> MessageResponse:
     """Add a message to a session."""
     # Verify session exists
@@ -160,7 +163,7 @@ async def create_message(
 async def end_session(
     session_id: Annotated[UUID, Path(description="Session ID")],
     key: str = Depends(get_api_key),
-    session_repo=Depends(get_session_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
 ) -> SessionResponse:
     """End a session."""
     session = await policy.end_session(session_repo, session_id)
@@ -189,7 +192,7 @@ async def end_session(
 async def resume_session(
     session_id: Annotated[UUID, Path(description="Session ID")],
     key: str = Depends(get_api_key),
-    session_repo=Depends(get_session_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
 ) -> SessionResponse:
     """Resume an idle session."""
     session = await policy.resume_session(session_repo, session_id)

@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, NotRequired, TypedDict
 
 
-class SensorType(str, Enum):
+class SensorType(StrEnum):
     """Types of sensors available on minions."""
 
     LOCATION = "location"
@@ -20,7 +20,7 @@ class SensorType(str, Enum):
     CUSTOM = "custom"
 
 
-class MinionState(str, Enum):
+class MinionState(StrEnum):
     """Minion connection states."""
 
     CONNECTING = "connecting"
@@ -29,7 +29,7 @@ class MinionState(str, Enum):
     OFFLINE = "offline"
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """Minion event types."""
 
     # Core lifecycle
@@ -135,7 +135,8 @@ class MinionInfo:
     capabilities: MinionCapabilities
     state: MinionState = MinionState.OFFLINE
     last_heartbeat: datetime | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_location: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -147,6 +148,7 @@ class MinionInfo:
             "capabilities": self.capabilities,
             "state": self.state.value,
             "last_heartbeat": self.last_heartbeat.isoformat() if self.last_heartbeat else None,
+            "last_location": self.last_location,
             "created_at": self.created_at.isoformat(),
             "metadata": self.metadata,
         }
@@ -161,7 +163,8 @@ class MinionInfo:
             capabilities=data.get("capabilities", {}),
             state=MinionState(data.get("state", "offline")),
             last_heartbeat=datetime.fromisoformat(data["last_heartbeat"]) if data.get("last_heartbeat") else None,
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(timezone.utc),
+            last_location=data.get("last_location"),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(UTC),
             metadata=data.get("metadata", {}),
         )
 
@@ -174,7 +177,7 @@ class MinionEvent:
     minion_id: str
     event_type: EventType
     payload: dict[str, Any]
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     sequence_number: int = 0
 
     @classmethod
@@ -190,7 +193,7 @@ class MinionEvent:
             minion_id=minion_id,
             event_type=EventType(event_type) if isinstance(event_type, str) else event_type,
             payload=payload,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             sequence_number=0,
         )
 
@@ -213,7 +216,7 @@ class MinionEventBatch:
     batch_id: str
     minion_id: str
     events: list[MinionEvent]
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     compressed: bool = False
 
     @classmethod
@@ -223,7 +226,7 @@ class MinionEventBatch:
             batch_id=str(uuid.uuid4()),
             minion_id=minion_id,
             events=events,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             compressed=False,
         )
 

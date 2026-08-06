@@ -2,10 +2,9 @@
 
 import asyncio
 import os
-import shlex
 from typing import Any
 
-from cortex.tools.interfaces import Tool, ToolCall, ToolErrorSeverity, ToolResult
+from cortex.tools.interfaces import ToolErrorSeverity, ToolResult
 from cortex.tools.meta.base import BaseMetaTool
 
 
@@ -114,7 +113,7 @@ class ShellTool(BaseMetaTool):
                 stdout_data, stderr_data = await asyncio.wait_for(
                     process.communicate(), timeout=timeout
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 process.kill()
                 await process.wait()
                 return ToolResult(

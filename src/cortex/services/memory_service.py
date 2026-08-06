@@ -292,7 +292,7 @@ class MemoryService:
         elif event_type == "calendar":
             await self._extract_calendar_facts(payload)
 
-    async def _extract_location_facts(self, payload: dict) -> None:
+    async def _extract_location_facts(self, payload: dict[str, Any]) -> None:
         """Extract facts from location events."""
         lat = payload.get("latitude")
         lon = payload.get("longitude")
@@ -309,7 +309,7 @@ class MemoryService:
 
         await self.store_fact(fact)
 
-    async def _extract_activity_facts(self, payload: dict) -> None:
+    async def _extract_activity_facts(self, payload: dict[str, Any]) -> None:
         """Extract facts from activity events."""
         activity = payload.get("activity")
         duration = payload.get("duration")
@@ -325,7 +325,7 @@ class MemoryService:
 
         await self.store_fact(fact)
 
-    async def _extract_calendar_facts(self, payload: dict) -> None:
+    async def _extract_calendar_facts(self, payload: dict[str, Any]) -> None:
         """Extract facts from calendar events."""
         title = payload.get("title")
         start = payload.get("start_time")

@@ -2,7 +2,6 @@
 
 import json
 import logging
-import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
@@ -16,7 +15,7 @@ logger = logging.getLogger(__name__)
 _pool: asyncpg.Pool | None = None
 
 
-def _parse_db_url(url: str) -> dict:
+def _parse_db_url(url: str) -> dict[str, str | int | None]:
     """
     Parse a PostgreSQL connection URL into components.
 

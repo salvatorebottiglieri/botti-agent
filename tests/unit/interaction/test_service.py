@@ -1,11 +1,11 @@
 """Tests for InteractionModule."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
+
 from cortex.interaction.service import InteractionService, PersonalityService
-from cortex.agentic.models import ChatResponse, Mode
 
 
 class TestPersonalityService:

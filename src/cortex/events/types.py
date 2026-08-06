@@ -1,9 +1,9 @@
 """Event type constants."""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class EventTypes(str, Enum):
+class EventTypes(StrEnum):
     """Core event types used throughout the system."""
 
     # ─── User Input ───────────────────────────────────────────

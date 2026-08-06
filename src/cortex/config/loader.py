@@ -71,16 +71,16 @@ def _resolve_env_refs(value: Any) -> Any:
     def _replace(match: re.Match[str]) -> str:
         name = match.group(0).strip("${}")
         if name not in os.environ:
-            raise _UnresolvedEnvRef(name)
+            raise _UnresolvedEnvRefError(name)
         return os.environ[name]
 
     try:
         return _UNRESOLVED_ENV_REF.sub(_replace, value)
-    except _UnresolvedEnvRef:
+    except _UnresolvedEnvRefError:
         return None
 
 
-class _UnresolvedEnvRef(Exception):
+class _UnresolvedEnvRefError(Exception):
     """Raised internally when a ${VAR} reference is not set in the environment."""
 
 

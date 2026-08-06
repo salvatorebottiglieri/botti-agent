@@ -1,10 +1,10 @@
 """Tests for the Database module."""
 
-import pytest
-from unittest.mock import patch
 
-from cortex.db.session import DbSession
+import pytest
+
 from cortex.db.pool import close_pool, get_pool
+from cortex.db.session import DbSession
 
 
 class TestDbSession:
@@ -14,7 +14,7 @@ class TestDbSession:
     async def test_session_not_active_without_context(self):
         """Test that session methods raise when not in context."""
         session = DbSession()
-        
+
         with pytest.raises(RuntimeError, match="not active"):
             await session.fetch("SELECT 1")
 
@@ -22,7 +22,7 @@ class TestDbSession:
     async def test_execute_not_active(self):
         """Test that execute raises when not in context."""
         session = DbSession()
-        
+
         with pytest.raises(RuntimeError, match="not active"):
             await session.execute("INSERT INTO test VALUES (1)")
 
@@ -30,7 +30,7 @@ class TestDbSession:
     async def test_fetchrow_not_active(self):
         """Test that fetchrow raises when not in context."""
         session = DbSession()
-        
+
         with pytest.raises(RuntimeError, match="not active"):
             await session.fetchrow("SELECT * FROM test")
 
@@ -44,9 +44,9 @@ class TestPoolManagement:
         import cortex.db.pool as pool_module
         original = pool_module._pool
         pool_module._pool = None
-        
+
         await close_pool()  # Should not raise
-        
+
         # Restore
         pool_module._pool = original
 
@@ -56,9 +56,9 @@ class TestPoolManagement:
         import cortex.db.pool as pool_module
         original = pool_module._pool
         pool_module._pool = None
-        
+
         with pytest.raises(RuntimeError, match="not initialized"):
             await get_pool()
-        
+
         # Restore
         pool_module._pool = original

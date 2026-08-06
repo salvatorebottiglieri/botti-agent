@@ -117,12 +117,13 @@ class CircuitBreaker:
             self._prune_old_failures()
 
             if self._state is CircuitState.OPEN:
-                elapsed = self._time() - self._opened_at
-                if elapsed < self.recovery_timeout:
-                    raise CircuitOpenError(
-                        opened_at=self._opened_at,
-                        retry_after=self.recovery_timeout - elapsed,
-                    )
+                if self._opened_at is not None:
+                    elapsed = self._time() - self._opened_at
+                    if elapsed < self.recovery_timeout:
+                        raise CircuitOpenError(
+                            opened_at=self._opened_at,
+                            retry_after=self.recovery_timeout - elapsed,
+                        )
                 # Timeout elapsed → transition to HALF_OPEN
                 self._state = CircuitState.HALF_OPEN
                 self._half_open_success_count = 0

@@ -4,6 +4,7 @@ Logging configuration for Cortex.
 
 import logging
 import sys
+from collections.abc import MutableMapping
 from typing import Any
 
 import structlog
@@ -79,11 +80,13 @@ def configure_logging(settings: Settings | None = None) -> None:
 
 
 def _inject_trace_id(
-    logger: logging.Logger, method_name: str, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+    logger: logging.Logger,
+    method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
     """Inject trace_id from context into log event."""
     from cortex.logging.context import _trace_id_var
-    
+
     trace_id = _trace_id_var.get()
     if trace_id:
         event_dict["trace_id"] = trace_id
