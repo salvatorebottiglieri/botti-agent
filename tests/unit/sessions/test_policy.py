@@ -180,3 +180,20 @@ class TestGetOrCreateSession:
 
         assert result.state == SessionState.ACTIVE
         mock_repo.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_ended_session_is_terminal_creates_new(self, mock_repo):
+        """INVARIANT SP1: an ENDED session is terminal — get_or_create must
+        never hand it back as a resumable session."""
+        ended = Session(id=uuid4(), state=SessionState.ENDED)
+        mock_repo.get.return_value = ended
+        new_session = Session(id=uuid4(), state=SessionState.CREATED)
+        active = Session(id=new_session.id, state=SessionState.ACTIVE)
+        mock_repo.create.return_value = new_session
+        mock_repo.update_state.return_value = active
+
+        result = await policy.get_or_create_session(mock_repo, ended.id)
+
+        assert result.state == SessionState.ACTIVE
+        mock_repo.create.assert_called_once()
+        mock_repo.update_state.assert_called_once_with(new_session.id, SessionState.ACTIVE)

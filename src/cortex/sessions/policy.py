@@ -77,9 +77,13 @@ async def end_session(repo: SessionRepository, session_id: UUID) -> Session | No
 async def get_or_create_session(
     repo: SessionRepository, session_id: UUID | None
 ) -> Session:
-    """Look up a session by id, or create a new ACTIVE one if id is None or missing."""
+    """Look up a session by id, or create a new ACTIVE one if id is None, missing, or ENDED.
+
+    An ENDED session is terminal (see SP1): it is never handed back as a
+    resumable session — a fresh one is created instead.
+    """
     if session_id is not None:
         session = await repo.get(session_id)
-        if session is not None:
+        if session is not None and session.state != SessionState.ENDED:
             return session
     return await create_session(repo)

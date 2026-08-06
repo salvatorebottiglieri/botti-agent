@@ -89,6 +89,29 @@ class TestCircuitBreakerClosedToOpen:
         assert exc_info.value.retry_after == 30.0
 
     @pytest.mark.asyncio
+    async def test_open_never_executes_underlying_coro(self):
+        """INVARIANT CB1: in OPEN, calls fast-fail WITHOUT awaiting the coro."""
+        cb = CircuitBreaker(failure_threshold=3, recovery_timeout=30.0, _time=lambda: 0.0)
+
+        for _ in range(3):
+            with pytest.raises(ValueError):
+                await cb.call(AsyncMock(side_effect=ValueError("fail"))())
+
+        assert cb.state == CircuitState.OPEN
+
+        # The underlying coroutine body must never run while OPEN.
+        executed = False
+
+        async def underlying() -> str:
+            nonlocal executed
+            executed = True
+            return "should-not-run"
+
+        with pytest.raises(CircuitOpenError):
+            await cb.call(underlying())
+        assert executed is False
+
+    @pytest.mark.asyncio
     async def test_old_failures_pruned(self):
         """Failures outside the window are pruned — resets the count."""
         cb = CircuitBreaker(failure_threshold=2, failure_window=60.0, _time=lambda: _time_val)
