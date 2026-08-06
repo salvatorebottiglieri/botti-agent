@@ -45,6 +45,8 @@ services:
       MQTT_BROKER_URL: mqtt://mosquitto:1883
       MQTT_PASSWD_PATH: /mosquitto/config/passwd.conf
       LLM_API_KEY: ${LLM_API_KEY}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
       LOG_LEVEL: INFO
       LOG_FORMAT: console
     volumes:
