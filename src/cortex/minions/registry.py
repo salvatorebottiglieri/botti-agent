@@ -1,7 +1,7 @@
 """In-memory minion registry implementation."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from .interfaces import MinionRegistry
@@ -45,9 +45,9 @@ class InMemoryMinionRegistry(MinionRegistry):
 
     async def heartbeat(self, minion_id: str) -> None:
         """Update heartbeat timestamp."""
-        self._last_heartbeat[minion_id] = datetime.now(timezone.utc)
+        self._last_heartbeat[minion_id] = datetime.now(UTC)
         if minion_id in self._minions:
-            self._minions[minion_id].last_heartbeat = datetime.now(timezone.utc)
+            self._minions[minion_id].last_heartbeat = datetime.now(UTC)
 
     async def update_state(self, minion_id: str, state: str) -> None:
         """Update minion state."""

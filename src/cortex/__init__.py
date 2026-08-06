@@ -8,8 +8,8 @@ and evolves through interaction.
 __version__ = "0.1.0"
 
 from cortex.config.models import Settings
-from cortex.logging import configure_logging, StructuredLogger
-from cortex.events import EventBus, BaseEvent, EventTypes
+from cortex.events import BaseEvent, EventBus, EventTypes
+from cortex.logging import StructuredLogger, configure_logging
 
 __all__ = [
     "__version__",

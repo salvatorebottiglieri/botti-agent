@@ -6,7 +6,7 @@ SessionRepository — they are pure policy layered on top of persistence.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from cortex.sessions.interfaces import SessionRepository
@@ -22,7 +22,10 @@ from cortex.sessions.models import (
 async def create_session(repo: SessionRepository) -> Session:
     """Create a new session and immediately mark it ACTIVE."""
     session = await repo.create()
-    return await repo.update_state(session.id, SessionState.ACTIVE)
+    updated = await repo.update_state(session.id, SessionState.ACTIVE)
+    if updated is None:
+        return session
+    return updated
 
 
 async def resume_session(repo: SessionRepository, session_id: UUID) -> Session | None:
@@ -67,7 +70,7 @@ async def end_session(repo: SessionRepository, session_id: UUID) -> Session | No
     return await repo.update_state(
         session_id,
         SessionState.ENDED,
-        ended_at=datetime.now(timezone.utc),
+        ended_at=datetime.now(UTC),
     )
 
 

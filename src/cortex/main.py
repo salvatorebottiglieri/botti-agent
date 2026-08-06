@@ -14,7 +14,9 @@ from typing import TYPE_CHECKING, Any
 
 from cortex.config.loader import get_settings
 from cortex.config.models import Settings
+from cortex.events.base import BaseEvent
 from cortex.logging.setup import configure_logging
+from cortex.services.tool_executor import ToolExecutorService
 from cortex.tools.interfaces import ToolExecutor
 
 if TYPE_CHECKING:
@@ -31,8 +33,8 @@ class CortexApp:
     Holds references to all services for testing and introspection.
     """
 
-    app: FastAPI = field(default=None)
-    settings: Settings = field(default=None)
+    app: FastAPI | None = field(default=None)
+    settings: Settings | None = field(default=None)
     db_pool: Any = field(default=None)
     event_bus: Any = field(default=None)
     session_repository: Any = field(default=None)
@@ -69,7 +71,7 @@ class CortexApp:
         logger.info("Cortex shutdown complete")
 
 
-def create_app(cortex_state: dict | None = None) -> FastAPI:
+def create_app(cortex_state: dict[str, Any] | None = None) -> FastAPI:
     """
     Create and configure the FastAPI application.
 
@@ -106,7 +108,6 @@ async def initialize_app() -> CortexApp:
     Returns:
         CortexApp with all components initialized.
     """
-    from cortex.config.loader import get_settings
 
     # 1. Load configuration
     settings = get_settings()
@@ -141,15 +142,15 @@ async def initialize_app() -> CortexApp:
     logger.info("Wiring services...")
 
     # 5a. Create session repository
-    from cortex.sessions.repository import PostgresSessionRepository
     from cortex.sessions.interfaces import SessionRepository
+    from cortex.sessions.repository import PostgresSessionRepository
 
     session_repo: SessionRepository = PostgresSessionRepository()
     cortex.session_repository = session_repo
 
     # 5b. Create memory repositories
-    from cortex.memory.repository import PostgresFactRepository, PostgresConceptRepository
-    from cortex.memory.interfaces import FactRepository, ConceptRepository, FactExtractor
+    from cortex.memory.interfaces import ConceptRepository, FactExtractor, FactRepository
+    from cortex.memory.repository import PostgresConceptRepository, PostgresFactRepository
 
     fact_repo: FactRepository = PostgresFactRepository()
     concept_repo: ConceptRepository = PostgresConceptRepository()
@@ -161,10 +162,9 @@ async def initialize_app() -> CortexApp:
     cortex.llm_client = llm_factory.create()
 
     # 5d. Create tool registry and executor
-    from cortex.tools.registry import InMemoryToolRegistry
-    from cortex.tools.interfaces import ToolRegistry, ToolExecutor
     from cortex.tools.executor import DefaultToolExecutor
-    from cortex.services.tool_executor import ToolExecutorService
+    from cortex.tools.interfaces import ToolRegistry
+    from cortex.tools.registry import InMemoryToolRegistry
 
     tool_registry: ToolRegistry = InMemoryToolRegistry()
     base_executor: ToolExecutor = DefaultToolExecutor(registry=tool_registry)
@@ -177,9 +177,9 @@ async def initialize_app() -> CortexApp:
 
     # 6. Wire agentic loop components
     from cortex.agentic.context_builder import ContextBuilder
-    from cortex.agentic.reasoner import Reasoner
     from cortex.agentic.executor import LoopExecutor
     from cortex.agentic.loop import AgentLoop
+    from cortex.agentic.reasoner import Reasoner
     from cortex.execution.module import ExecutionModule
 
     # Create placeholder memory service first (needed for context builder)
@@ -247,8 +247,8 @@ async def initialize_app() -> CortexApp:
     }
 
     # Create FastAPI app with wired dependencies
-    from cortex.api.main import create_api_app
     from cortex.api.dependencies import set_app_state
+    from cortex.api.main import create_api_app
     set_app_state(state)
     cortex.app = create_api_app()
 
@@ -268,7 +268,7 @@ async def initialize_app() -> CortexApp:
     return cortex
 
 
-def _wrap_tool_executor(service) -> ToolExecutor:
+def _wrap_tool_executor(service: ToolExecutorService) -> ToolExecutor:
     """Wrap ToolExecutorService for ToolExecutor interface."""
     from cortex.tools.interfaces import ToolCall, ToolExecutor, ToolResult
 
@@ -294,13 +294,13 @@ async def _subscribe_services(cortex: CortexApp) -> None:
 
     # Subscribe memory service to relevant events
     if cortex.memory_service:
-        async def handle_location(event):
+        async def handle_location(event: BaseEvent) -> None:
             await cortex.memory_service.handle_event(event)
 
-        async def handle_activity(event):
+        async def handle_activity(event: BaseEvent) -> None:
             await cortex.memory_service.handle_event(event)
 
-        async def handle_calendar(event):
+        async def handle_calendar(event: BaseEvent) -> None:
             await cortex.memory_service.handle_event(event)
 
         await cortex.event_bus.subscribe("location", handle_location)
@@ -312,7 +312,7 @@ async def _subscribe_services(cortex: CortexApp) -> None:
 
 async def _initialize_minion_service(cortex: CortexApp) -> None:
     """Initialize MinionService for MQTT-based minion communication."""
-    from cortex.minions.models import MinionConfig, MinionState
+    from cortex.minions.models import MinionConfig
     from cortex.minions.mqtt_client import MinionMQTTClient
     from cortex.minions.registry import InMemoryMinionRegistry
     from cortex.services.minion_service import MinionService
@@ -321,16 +321,18 @@ async def _initialize_minion_service(cortex: CortexApp) -> None:
 
     # Create minion config from settings
     # Note: In production, this would come from config or database
+    settings = cortex.settings
+    assert settings is not None, "Settings must be initialized before MinionService"
     minion_config = MinionConfig(
-        minion_id=f"cortex-{cortex.settings.version}",
+        minion_id=f"cortex-{settings.version}",
         minion_name="Cortex Server",
         device_type="server",
-        broker_url=cortex.settings.mqtt_broker_url,
-        username=cortex.settings.mqtt_username,
-        password=cortex.settings.mqtt_password.get_secret_value() if cortex.settings.mqtt_password else None,
+        broker_url=settings.mqtt_broker_url,
+        username=settings.mqtt_username,
+        password=settings.mqtt_password.get_secret_value() if settings.mqtt_password else None,
         topics=["minions/+/events"],  # Subscribe to all minion events
         qos=1,
-        keepalive=cortex.settings.mqtt_keepalive,
+        keepalive=settings.mqtt_keepalive,
     )
 
     # Create gateway and registry

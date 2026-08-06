@@ -1,12 +1,11 @@
 """PostgreSQL implementation of memory repositories."""
 
-from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from cortex.db.session import DbSession
-from cortex.memory.interfaces import FactRepository, ConceptRepository
-from cortex.memory.models import Fact, Concept, FactType
+from cortex.memory.interfaces import ConceptRepository, FactRepository
+from cortex.memory.models import Concept, Fact, FactType
 
 
 class PostgresFactRepository(FactRepository):
@@ -17,11 +16,12 @@ class PostgresFactRepository(FactRepository):
         async with DbSession() as db:
             row = await db.fetchrow(
                 """
-                INSERT INTO facts (type, mutability, symbolic_repr, natural_lang_repr, 
+                INSERT INTO facts (type, mutability, symbolic_repr, natural_lang_repr,
                                    payload, confidence, created_at)
                 VALUES ($1, $2, $3, $4, $5, $6, NOW())
                 RETURNING id, type, mutability, symbolic_repr, natural_lang_repr,
-                          payload, confidence, created_at, retracted, retracted_reason
+                          payload, confidence, created_at, retracted_at,
+                          last_accessed_at, access_count
                 """,
                 fact.type.value if hasattr(fact.type, 'value') else fact.type,
                 fact.mutability.value if hasattr(fact.mutability, 'value') else fact.mutability,
@@ -45,7 +45,7 @@ class PostgresFactRepository(FactRepository):
             row = await db.fetchrow(
                 """
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
-                       payload, confidence, created_at, retracted, retracted_reason,
+                       payload, confidence, created_at, retracted_at,
                        last_accessed_at, access_count
                 FROM facts WHERE id = $1
                 """,
@@ -60,10 +60,9 @@ class PostgresFactRepository(FactRepository):
         async with DbSession() as db:
             await db.execute(
                 """
-                UPDATE facts SET retracted = true, retracted_reason = $1
-                WHERE id = $2
+                UPDATE facts SET retracted_at = NOW()
+                WHERE id = $1
                 """,
-                reason,
                 fact_id,
             )
 
@@ -88,7 +87,7 @@ class PostgresFactRepository(FactRepository):
             UPDATE facts SET {', '.join(set_clauses)}
             WHERE id = ${i}
             RETURNING id, type, mutability, symbolic_repr, natural_lang_repr,
-                      payload, confidence, created_at, retracted, retracted_reason,
+                      payload, confidence, created_at, retracted_at,
                       last_accessed_at, access_count
         """
 
@@ -125,11 +124,11 @@ class PostgresFactRepository(FactRepository):
             rows = await db.fetch(
                 f"""
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
-                       payload, confidence, created_at, retracted, retracted_reason,
+                       payload, confidence, created_at, retracted_at,
                        last_accessed_at, access_count
                 FROM facts
                 WHERE (symbolic_repr ILIKE $1 OR natural_lang_repr ILIKE $1)
-                      AND retracted = false
+                      AND retracted_at IS NULL
                       {type_filter}
                 ORDER BY confidence DESC, created_at DESC
                 LIMIT $2
@@ -147,13 +146,13 @@ class PostgresFactRepository(FactRepository):
     ) -> list[Fact]:
         """Get facts by type."""
         type_val = fact_type.value if hasattr(fact_type, 'value') else fact_type
-        retracted_filter = "AND retracted = false" if active_only else ""
+        retracted_filter = "AND retracted_at IS NULL" if active_only else ""
 
         async with DbSession() as db:
             rows = await db.fetch(
                 f"""
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
-                       payload, confidence, created_at, retracted, retracted_reason,
+                       payload, confidence, created_at, retracted_at,
                        last_accessed_at, access_count
                 FROM facts
                 WHERE type = $1 {retracted_filter}
@@ -171,10 +170,10 @@ class PostgresFactRepository(FactRepository):
             rows = await db.fetch(
                 """
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
-                       payload, confidence, created_at, retracted, retracted_reason,
+                       payload, confidence, created_at, retracted_at,
                        last_accessed_at, access_count
                 FROM facts
-                WHERE retracted = false
+                WHERE retracted_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT $1
                 """,
@@ -187,7 +186,7 @@ class PostgresFactRepository(FactRepository):
         async with DbSession() as db:
             await db.execute(
                 """
-                UPDATE facts 
+                UPDATE facts
                 SET last_accessed_at = NOW(), access_count = access_count + 1
                 WHERE id = $1
                 """,
@@ -200,10 +199,10 @@ class PostgresFactRepository(FactRepository):
             row = await db.fetchrow(
                 """
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
-                       payload, confidence, created_at, retracted, retracted_reason,
+                       payload, confidence, created_at, retracted_at,
                        last_accessed_at, access_count
                 FROM facts
-                WHERE symbolic_repr = $1 AND retracted = false
+                WHERE symbolic_repr = $1 AND retracted_at IS NULL
                 """,
                 symbolic_repr,
             )
@@ -211,7 +210,7 @@ class PostgresFactRepository(FactRepository):
                 return None
             return self._row_to_fact(row)
 
-    def _row_to_fact(self, row) -> Fact:
+    def _row_to_fact(self, row: Any) -> Fact:
         """Convert a database row to a Fact model."""
         return Fact(
             id=row["id"],
@@ -222,8 +221,7 @@ class PostgresFactRepository(FactRepository):
             payload=row["payload"] or {},
             confidence=row["confidence"],
             created_at=row["created_at"],
-            retracted=row["retracted"],
-            retracted_reason=row["retracted_reason"],
+            retracted_at=row["retracted_at"],
             last_accessed_at=row["last_accessed_at"],
             access_count=row["access_count"] or 0,
         )
@@ -318,7 +316,7 @@ class PostgresConceptRepository(ConceptRepository):
                 str(fact_id),
             )
 
-    def _row_to_concept(self, row) -> Concept:
+    def _row_to_concept(self, row: Any) -> Concept:
         """Convert a database row to a Concept model."""
         return Concept(
             id=row["id"],

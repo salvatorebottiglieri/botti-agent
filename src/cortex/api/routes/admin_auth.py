@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -14,6 +15,9 @@ from cortex.api.auth import (
 )
 from cortex.api.dependencies import get_db_pool
 from cortex.api.schemas import TokenCreateRequest, TokenListItem, TokenResponse
+
+if TYPE_CHECKING:
+    import asyncpg
 
 router = APIRouter(prefix="/admin", tags=["admin", "auth"])
 
@@ -28,7 +32,7 @@ router = APIRouter(prefix="/admin", tags=["admin", "auth"])
 )
 async def init_first_token(
     request: TokenCreateRequest,
-    db_pool=Depends(get_db_pool),
+    db_pool: asyncpg.Pool = Depends(get_db_pool),
 ) -> TokenResponse:
     """
     Initialize the first API token.
@@ -64,7 +68,7 @@ async def init_first_token(
 async def create_new_token(
     request: TokenCreateRequest,
     key: str = Depends(get_api_key),
-    db_pool=Depends(get_db_pool),
+    db_pool: asyncpg.Pool = Depends(get_db_pool),
 ) -> TokenResponse:
     """Create a new API token."""
     raw, hashed, db_id = await create_token(request.name, db_pool)
@@ -83,7 +87,7 @@ async def create_new_token(
 )
 async def list_api_tokens(
     key: str = Depends(get_api_key),
-    db_pool=Depends(get_db_pool),
+    db_pool: asyncpg.Pool = Depends(get_db_pool),
 ) -> list[TokenListItem]:
     """List all API tokens."""
     tokens = await list_tokens(db_pool)

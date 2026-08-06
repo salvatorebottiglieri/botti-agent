@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 from uuid import UUID
 
-from .models import Fact, Concept, FactType
+from .models import Concept, Fact, FactType
 
 
 class FactRepository(ABC):

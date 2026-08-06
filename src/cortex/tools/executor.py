@@ -251,7 +251,7 @@ class DefaultToolExecutor(ToolExecutor):
 
     def _check_type(self, value: Any, expected_type: str) -> bool:
         """Check if value matches expected JSON Schema type."""
-        type_map = {
+        type_map: dict[str, type[Any] | tuple[type[Any], ...]] = {
             "string": str,
             "number": (int, float),
             "integer": int,

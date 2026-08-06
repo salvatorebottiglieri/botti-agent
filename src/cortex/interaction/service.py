@@ -43,7 +43,7 @@ class PersonalityService:
         if self._memory and hasattr(self._memory, 'get_personality_context'):
             try:
                 personality = await self._memory.get_personality_context(session_id)
-                if personality:
+                if isinstance(personality, PersonalityContext):
                     return personality
             except Exception as e:
                 logger.warning(f"Failed to get personality: {e}")
@@ -99,7 +99,7 @@ class PersonalityService:
             return
 
         try:
-            from cortex.memory.models import Fact, FactType, FactMutability
+            from cortex.memory.models import Fact, FactMutability, FactType
 
             updates = {}
             if formality is not None:

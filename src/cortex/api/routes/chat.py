@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
-from cortex.agentic.models import Mode as AgentMode
 from cortex.api.auth import get_api_key
 from cortex.api.dependencies import (
     get_execution_module,
     get_interaction_service,
 )
 from cortex.api.schemas import ChatRequest, ChatResponse, ErrorResponse
+
+if TYPE_CHECKING:
+    from cortex.execution.module import ExecutionModule
+    from cortex.interaction.service import InteractionService
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -34,8 +38,8 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 async def chat(
     request: ChatRequest,
     key: str = Depends(get_api_key),
-    interaction_service=Depends(get_interaction_service),
-    execution_module=Depends(get_execution_module),
+    interaction_service: InteractionService = Depends(get_interaction_service),
+    execution_module: ExecutionModule = Depends(get_execution_module),
 ) -> ChatResponse:
     """
     Non-streaming chat endpoint.
@@ -65,7 +69,6 @@ async def chat(
             session_id = session.id
 
         # Run chat
-        mode = AgentMode.GOAL if request.mode == "goal" else AgentMode.CHAT
         max_iterations = request.max_iterations or 20
 
         response = await execution_module.run_chat(
@@ -98,8 +101,8 @@ async def chat(
 async def chat_stream(
     request: ChatRequest,
     key: str = Depends(get_api_key),
-    interaction_service=Depends(get_interaction_service),
-    execution_module=Depends(get_execution_module),
+    interaction_service: InteractionService = Depends(get_interaction_service),
+    execution_module: ExecutionModule = Depends(get_execution_module),
 ) -> StreamingResponse:
     """
     Streaming chat endpoint using Server-Sent Events.
@@ -131,7 +134,6 @@ async def chat_stream(
             yield _sse_event("thinking", {"message": "Processing your request..."})
 
             # Run chat (simplified - full streaming would need loop modification)
-            mode = AgentMode.GOAL if request.mode == "goal" else AgentMode.CHAT
             max_iterations = request.max_iterations or 20
 
             response = await execution_module.run_chat(
@@ -167,6 +169,6 @@ async def chat_stream(
     )
 
 
-def _sse_event(event_type: str, data: dict) -> str:
+def _sse_event(event_type: str, data: dict[str, Any]) -> str:
     """Format data as an SSE event."""
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"

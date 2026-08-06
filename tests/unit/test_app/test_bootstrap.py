@@ -1,8 +1,8 @@
 """Tests for CortexApp bootstrap."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+
+import pytest
 
 
 class TestCortexAppBootstrap:
@@ -32,14 +32,15 @@ class TestCortexAppBootstrap:
     async def test_create_app_returns_fastapi_app(self, mock_settings):
         """create_app() should return a FastAPI application."""
         from fastapi.testclient import TestClient
+
         from cortex.main import create_app
-        
+
         # Mock dependencies
         with patch("cortex.main.get_settings", return_value=mock_settings):
             app = create_app()
-        
+
         assert app is not None
-        
+
         # Should be able to create a test client
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/")
@@ -50,8 +51,9 @@ class TestCortexAppBootstrap:
     async def test_app_has_health_endpoint(self, mock_settings):
         """App should have a health endpoint."""
         from fastapi.testclient import TestClient
+
         from cortex.main import create_app
-        
+
         # Create mock state so dependencies can resolve
         mock_db_pool = MagicMock()
         mock_event_bus = MagicMock()
@@ -60,10 +62,10 @@ class TestCortexAppBootstrap:
             "db_pool": mock_db_pool,
             "event_bus": mock_event_bus,
         }
-        
+
         with patch("cortex.main.get_settings", return_value=mock_settings):
             app = create_app(cortex_state=state)
-        
+
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/health")
         assert response.status_code in [200, 503]  # 503 if dependencies not initialized
@@ -72,7 +74,7 @@ class TestCortexAppBootstrap:
     async def test_cortex_app_dataclass_exists(self):
         """CortexApp dataclass should exist for holding components."""
         from cortex.main import CortexApp
-        
+
         # Should be able to create with empty components
         app = CortexApp()
         assert app is not None
@@ -80,8 +82,7 @@ class TestCortexAppBootstrap:
     @pytest.mark.asyncio
     async def test_services_are_wired(self, mock_settings):
         """Services should be wired through dependency injection."""
-        from cortex.api.dependencies import get_session_repository, get_execution_module
-        from cortex.main import create_app, CortexApp
+        from cortex.main import create_app
 
         # Create a minimal CortexApp with mock services
         mock_db_pool = MagicMock()
@@ -111,7 +112,7 @@ class TestCortexAppBootstrap:
         }
 
         with patch("cortex.main.get_settings", return_value=mock_settings):
-            app = create_app(cortex_state=state)
+            create_app(cortex_state=state)
 
         # Dependencies should resolve
         from cortex.api.dependencies import get_app_state
@@ -149,9 +150,9 @@ class TestStartupShutdown:
         """Startup should initialize all components in correct order."""
         # This test verifies that CortexApp exists and has expected fields
         from cortex.main import CortexApp
-        
+
         app = CortexApp()
-        
+
         # Verify the dataclass has the expected fields
         assert hasattr(app, 'db_pool')
         assert hasattr(app, 'event_bus')

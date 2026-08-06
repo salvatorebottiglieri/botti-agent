@@ -1,20 +1,19 @@
 """Tests for Reasoner."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from cortex.agentic.reasoner import Reasoner
+import pytest
+
 from cortex.agentic.models import (
+    AmbientContext,
     Context,
     Decision,
     DecisionType,
-    Mode,
     MemoryContext,
     PersonalityContext,
-    AmbientContext,
 )
-from cortex.llm.models import ChatMessage
+from cortex.agentic.reasoner import Reasoner
 
 
 class TestReasoner:
@@ -261,7 +260,7 @@ class TestReasonerEdgeCases:
 
         # Should return an error decision, not raise
         decision = await reasoner.reason(context)
-        
+
         # Error handling returns a respond decision with error message
         assert decision.decision_type == DecisionType.RESPOND
         assert "error" in decision.text.lower() or "try again" in decision.text.lower()

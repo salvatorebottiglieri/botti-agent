@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 
-class FactType(str, Enum):
+class FactType(StrEnum):
     """Types of facts stored in memory."""
 
     # Core facts
@@ -34,7 +34,7 @@ class FactType(str, Enum):
     CUSTOM = "custom"
 
 
-class FactMutability(str, Enum):
+class FactMutability(StrEnum):
     """How mutable a fact is."""
 
     STATIC = "static"  # Never changes (e.g., birth date)
@@ -43,7 +43,7 @@ class FactMutability(str, Enum):
     EPHEMERAL = "ephemeral"  # Very short-lived (e.g., active app)
 
 
-class ConfidenceLevel(str, Enum):
+class ConfidenceLevel(StrEnum):
     """Confidence in a fact's accuracy."""
 
     HIGH = "high"  # Direct observation or user confirmation
@@ -83,7 +83,7 @@ class Fact:
     last_accessed_at: datetime | None = None
 
     # Timestamps
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     retracted_at: datetime | None = None
 
     def is_active(self) -> bool:
@@ -121,7 +121,7 @@ class Fact:
             layer=data.get("layer", 0),
             access_count=data.get("access_count", 0),
             last_accessed_at=datetime.fromisoformat(data["last_accessed_at"]) if data.get("last_accessed_at") else None,
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(timezone.utc),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(UTC),
             retracted_at=datetime.fromisoformat(data["retracted_at"]) if data.get("retracted_at") else None,
         )
 
@@ -160,7 +160,7 @@ class Concept:
     validated: bool = False
 
     # Timestamps
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     retracted_at: datetime | None = None
 
     def is_active(self) -> bool:
@@ -196,6 +196,6 @@ class Concept:
             confidence=data.get("confidence", 0.5),
             source_facts=[uuid.UUID(f) for f in data.get("source_facts", [])],
             validated=data.get("validated", False),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(timezone.utc),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(UTC),
             retracted_at=datetime.fromisoformat(data["retracted_at"]) if data.get("retracted_at") else None,
         )

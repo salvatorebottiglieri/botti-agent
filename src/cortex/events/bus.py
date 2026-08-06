@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Literal
@@ -88,7 +88,9 @@ class EventBus:
             self._log.info("Event bus stopped")
 
     @asynccontextmanager
-    async def subscribed(self, event_type: str, handler: EventHandler):
+    async def subscribed(
+        self, event_type: str, handler: EventHandler
+    ) -> AsyncIterator[Subscription]:
         """
         Context manager for subscribing and automatically unsubscribing.
 
@@ -192,7 +194,7 @@ class EventBus:
         except Exception as e:
             self._log.error(f"Error in event handler for '{event.type}': {e}", exc_info=True)
 
-    async def get_subscription_count(self, event_type: str | "*" = "*") -> int:
+    async def get_subscription_count(self, event_type: str | Literal["*"] = "*") -> int:
         """Get the number of subscriptions for an event type."""
         async with self._subscription_lock:
             return len(self._state.subscriptions.get(event_type, []))

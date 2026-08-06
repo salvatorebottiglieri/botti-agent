@@ -1,10 +1,9 @@
 """File reading tool."""
 
-import os
 from pathlib import Path
 from typing import Any
 
-from cortex.tools.interfaces import Tool, ToolCall, ToolErrorSeverity, ToolResult
+from cortex.tools.interfaces import ToolErrorSeverity, ToolResult
 from cortex.tools.meta.base import BaseMetaTool, FileToolMixin
 
 
@@ -113,12 +112,12 @@ class FileReadTool(BaseMetaTool, FileToolMixin):
         try:
             if max_lines > 0:
                 # Read specific lines
-                with open(file_path, "r", encoding=encoding) as f:
+                with open(file_path, encoding=encoding) as f:
                     lines = f.readlines()
                     content = "".join(lines[offset : offset + max_lines])
             else:
                 # Read entire file
-                with open(file_path, "r", encoding=encoding) as f:
+                with open(file_path, encoding=encoding) as f:
                     content = f.read()
                     if offset > 0:
                         lines = content.split("\n")
@@ -140,7 +139,7 @@ class FileReadTool(BaseMetaTool, FileToolMixin):
             # Binary file
             try:
                 with open(file_path, "rb") as f:
-                    data = f.read(1000)  # Read first 1KB
+                    f.read(1000)  # Read first 1KB
                 return ToolResult(
                     tool_call_id="",
                     tool_name=self.name,

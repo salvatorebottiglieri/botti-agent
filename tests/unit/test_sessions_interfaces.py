@@ -1,11 +1,10 @@
 """Tests for session repository interface."""
 
-import pytest
 from abc import ABC
-from uuid import uuid4
+
+import pytest
 
 from cortex.sessions.interfaces import SessionRepository
-from cortex.sessions.models import Session, SessionState, Message, MessageRole
 
 
 class TestSessionRepositoryIsAbstract:
@@ -26,7 +25,7 @@ class TestSessionRepositoryIsAbstract:
             'get_messages',
             'list_active',
         ]
-        
+
         for method in methods:
             assert hasattr(SessionRepository, method)
             assert callable(getattr(SessionRepository, method))

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.params import Path
@@ -18,6 +18,11 @@ from cortex.api.schemas import (
     MinionTokenResponse,
 )
 
+if TYPE_CHECKING:
+    import asyncpg
+
+    from cortex.services.minion_service import MinionService
+
 router = APIRouter(prefix="/admin/minions", tags=["admin", "minions"])
 
 
@@ -28,14 +33,14 @@ router = APIRouter(prefix="/admin/minions", tags=["admin", "minions"])
 )
 async def list_minions(
     key: str = Depends(get_api_key),
-    db_pool=Depends(get_db_pool),
+    db_pool: asyncpg.Pool = Depends(get_db_pool),
 ) -> list[MinionResponse]:
     """List all registered minions."""
     try:
         async with db_pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, minion_id, minion_type, minion_version, 
+                SELECT id, minion_id, minion_type, minion_version,
                        registered_at, last_heartbeat_at, last_known_ip, metadata
                 FROM minions
                 ORDER BY registered_at DESC
@@ -71,14 +76,14 @@ async def list_minions(
 async def get_minion(
     minion_id: Annotated[str, Path(description="Minion ID (string)")],
     key: str = Depends(get_api_key),
-    db_pool=Depends(get_db_pool),
+    db_pool: asyncpg.Pool = Depends(get_db_pool),
 ) -> MinionResponse:
     """Get minion details."""
     try:
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT id, minion_id, minion_type, minion_version, 
+                SELECT id, minion_id, minion_type, minion_version,
                        registered_at, last_heartbeat_at, last_known_ip, metadata
                 FROM minions
                 WHERE minion_id = $1
@@ -122,8 +127,8 @@ async def create_minion_token(
     minion_id: Annotated[str, Path(description="Minion ID")],
     request: MinionTokenRequest,
     key: str = Depends(get_api_key),
-    db_pool=Depends(get_db_pool),
-):
+    db_pool: asyncpg.Pool = Depends(get_db_pool),
+) -> MinionTokenResponse:
     """
     Generate a new MQTT password for a minion.
 
@@ -140,7 +145,7 @@ async def create_minion_token(
 
         async with db_pool.acquire() as conn:
             # Store in api_keys
-            row = await conn.fetchrow(
+            await conn.fetchrow(
                 """
                 INSERT INTO api_keys (key_hash, name, created_at)
                 VALUES ($1, $2, $3)
@@ -177,13 +182,13 @@ async def create_minion_token(
 async def revoke_minion_token(
     minion_id: Annotated[str, Path(description="Minion ID")],
     key: str = Depends(get_api_key),
-    db_pool=Depends(get_db_pool),
-) -> dict:
+    db_pool: asyncpg.Pool = Depends(get_db_pool),
+) -> dict[str, Any]:
     """Revoke a minion's MQTT password."""
     try:
         async with db_pool.acquire() as conn:
             # Find and revoke the token
-            result = await conn.execute(
+            await conn.execute(
                 """
                 UPDATE api_keys
                 SET revoked_at = $1
@@ -216,8 +221,8 @@ async def push_minion_config(
     minion_id: Annotated[str, Path(description="Minion ID")],
     request: MinionConfigRequest,
     key: str = Depends(get_api_key),
-    minion_service=Depends(get_minion_service),
-):
+    minion_service: MinionService | None = Depends(get_minion_service),
+) -> dict[str, Any]:
     """Push configuration to a minion via MQTT."""
     if not minion_service:
         raise HTTPException(
@@ -252,7 +257,10 @@ def _get_mqtt_passwd_path() -> str | None:
         from cortex.config.loader import get_settings
 
         settings = get_settings()
-        return settings.mqtt.passwd_path
+        mqtt_settings = getattr(settings, "mqtt", None)
+        if mqtt_settings is None:
+            return None
+        return getattr(mqtt_settings, "passwd_path", None)
     except Exception:
         return None
 
@@ -273,7 +281,7 @@ async def _write_mqtt_passwd(path: str, username: str, password: str) -> None:
         lines = []
 
     # Remove existing entry for this user
-    lines = [l for l in lines if not l.startswith(f"{username}:")]
+    lines = [line for line in lines if not line.startswith(f"{username}:")]
 
     # Append new entry
     lines.append(f"{username}:{password}\n")
@@ -288,7 +296,7 @@ async def _remove_from_mqtt_passwd(path: str, username: str) -> None:
         with open(path) as f:
             lines = f.readlines()
 
-        lines = [l for l in lines if not l.startswith(f"{username}:")]
+        lines = [line for line in lines if not line.startswith(f"{username}:")]
 
         with open(path, "w") as f:
             f.writelines(lines)

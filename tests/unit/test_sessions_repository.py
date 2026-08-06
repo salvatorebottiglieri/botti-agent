@@ -1,12 +1,13 @@
 """Tests for PostgresSessionRepository using mocks."""
 
-import pytest
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
-from datetime import datetime, timezone
 
+import pytest
+
+from cortex.sessions.models import MessageRole, SessionState
 from cortex.sessions.repository import PostgresSessionRepository
-from cortex.sessions.models import Session, SessionState, Message, MessageRole
 
 
 class TestPostgresSessionRepository:
@@ -26,8 +27,8 @@ class TestPostgresSessionRepository:
     @pytest.fixture
     def repo_with_mock(self, mock_db_session):
         """Create a repository with mocked DB."""
-        with patch("cortex.sessions.repository.DbSession") as MockDbSession:
-            MockDbSession.return_value = mock_db_session
+        with patch("cortex.sessions.repository.DbSession") as mock_db_session_class:
+            mock_db_session_class.return_value = mock_db_session
             yield PostgresSessionRepository(), mock_db_session
 
     @pytest.mark.asyncio
@@ -35,7 +36,7 @@ class TestPostgresSessionRepository:
         """Test creating a new session."""
         repo, mock_db_session = repo_with_mock
         session_id = uuid4()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_db_session.fetchrow.return_value = {
             "id": session_id,
             "state": "created",
@@ -56,7 +57,7 @@ class TestPostgresSessionRepository:
         """Test getting an existing session."""
         repo, mock_db_session = repo_with_mock
         session_id = uuid4()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_db_session.fetchrow.return_value = {
             "id": session_id,
             "state": "active",
@@ -87,7 +88,7 @@ class TestPostgresSessionRepository:
         """Test updating session state."""
         repo, mock_db_session = repo_with_mock
         session_id = uuid4()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_db_session.fetchrow.return_value = {
             "id": session_id,
             "state": "ended",
@@ -109,7 +110,7 @@ class TestPostgresSessionRepository:
         repo, mock_db_session = repo_with_mock
         session_id = uuid4()
         message_id = uuid4()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_db_session.fetchrow.return_value = {
             "id": message_id,
             "session_id": session_id,
@@ -135,7 +136,7 @@ class TestPostgresSessionRepository:
         repo, mock_db_session = repo_with_mock
         session_id = uuid4()
         message_id = uuid4()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         tool_calls = [{"name": "shell", "arguments": {"command": "ls"}}]
         mock_db_session.fetchrow.return_value = {
             "id": message_id,
@@ -160,7 +161,7 @@ class TestPostgresSessionRepository:
         """Test getting messages for a session."""
         repo, mock_db_session = repo_with_mock
         session_id = uuid4()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_db_session.fetch.return_value = [
             {
                 "id": uuid4(),
@@ -192,7 +193,7 @@ class TestPostgresSessionRepository:
     async def test_list_active_sessions(self, repo_with_mock):
         """Test listing active sessions."""
         repo, mock_db_session = repo_with_mock
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_db_session.fetch.return_value = [
             {
                 "id": uuid4(),

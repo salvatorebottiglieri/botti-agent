@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
 from cortex.events import EventEmitter
-from cortex.tools.interfaces import Tool, ToolCall, ToolExecutor, ToolResult
+from cortex.tools.interfaces import ToolCall, ToolExecutor, ToolResult
 
 if TYPE_CHECKING:
     from cortex.events import EventBus
@@ -25,10 +25,10 @@ class CircuitState(Enum):
 class CircuitBreaker:
     """
     Circuit breaker pattern implementation.
-    
+
     Prevents cascading failures by failing fast when a service is unhealthy.
     """
-    
+
     def __init__(
         self,
         failure_threshold: int = 5,
@@ -38,33 +38,33 @@ class CircuitBreaker:
         self.failure_threshold = failure_threshold
         self.success_threshold = success_threshold
         self.open_timeout_seconds = open_timeout_seconds
-        
+
         self._state = CircuitState.CLOSED
         self._failure_count = 0
         self._success_count = 0
         self._opened_at: float | None = None
-    
+
     @property
     def state(self) -> CircuitState:
         return self._state
-    
+
     @state.setter
-    def state(self, value: CircuitState):
+    def state(self, value: CircuitState) -> None:
         self._state = value
-    
+
     @property
     def failure_count(self) -> int:
         return self._failure_count
-    
+
     @failure_count.setter
-    def failure_count(self, value: int):
+    def failure_count(self, value: int) -> None:
         self._failure_count = value
-    
+
     def can_execute(self) -> bool:
         """Check if execution is allowed."""
         if self._state == CircuitState.CLOSED:
             return True
-        
+
         if self._state == CircuitState.OPEN:
             # Check if timeout has passed
             if self._opened_at and (time.time() - self._opened_at) >= self.open_timeout_seconds:
@@ -72,14 +72,14 @@ class CircuitBreaker:
                 self._success_count = 0
                 return True
             return False
-        
+
         # HALF_OPEN always allows one attempt
         return True
-    
+
     def record_failure(self) -> None:
         """Record a failure."""
         self._failure_count += 1
-        
+
         if self._state == CircuitState.HALF_OPEN:
             # Failed in half-open, go back to open
             self._state = CircuitState.OPEN
@@ -87,11 +87,11 @@ class CircuitBreaker:
         elif self._failure_count >= self.failure_threshold:
             self._state = CircuitState.OPEN
             self._opened_at = time.time()
-    
+
     def record_success(self) -> None:
         """Record a success."""
         self._success_count += 1
-        
+
         if self._state == CircuitState.HALF_OPEN:
             if self._success_count >= self.success_threshold:
                 self._state = CircuitState.CLOSED
@@ -110,7 +110,7 @@ class ServiceExecutionMetrics:
     failed_calls: int = 0
     rejected_calls: int = 0
     circuit_open_rejections: int = 0
-    
+
     @property
     def success_rate(self) -> float:
         if self.total_calls == 0:
@@ -121,13 +121,13 @@ class ServiceExecutionMetrics:
 class ToolExecutorService:
     """
     Service layer for tool execution.
-    
+
     Wraps base executor with:
     - Circuit breaker for fault tolerance
     - Event emission for monitoring
     - Metrics collection
     """
-    
+
     def __init__(
         self,
         base_executor: ToolExecutor,
@@ -138,15 +138,15 @@ class ToolExecutorService:
         self._emitter = EventEmitter(event_bus, source_module="tool_executor_service")
         self._circuit_breaker = circuit_breaker or CircuitBreaker()
         self._metrics = ServiceExecutionMetrics()
-    
+
     @property
     def circuit_breaker(self) -> CircuitBreaker:
         return self._circuit_breaker
-    
+
     @property
     def metrics(self) -> ServiceExecutionMetrics:
         return self._metrics
-    
+
     async def execute(
         self,
         tool_call: ToolCall,
@@ -155,16 +155,16 @@ class ToolExecutorService:
     ) -> ToolResult:
         """
         Execute a tool call with circuit breaker and event emission.
-        
+
         Args:
             tool_call: The tool call to execute
             timeout: Optional timeout override
-            
+
         Returns:
             ToolResult with output or error
         """
         self._metrics.total_calls += 1
-        
+
         # Check circuit breaker
         if not self._circuit_breaker.can_execute():
             self._metrics.rejected_calls += 1
@@ -177,7 +177,7 @@ class ToolExecutorService:
                 error_severity=None,
                 execution_time_ms=0
             )
-        
+
         # Emit started event
         await self._emitter.emit("tool.started", {
             "tool_call_id": tool_call.id,
@@ -185,11 +185,11 @@ class ToolExecutorService:
             "arguments": tool_call.arguments,
             "timestamp": time.time()
         })
-        
+
         try:
             # Execute via base executor
             result = await self._base_executor.execute(tool_call, timeout=timeout)
-            
+
             # Update metrics based on result
             if result.success:
                 self._circuit_breaker.record_success()
@@ -197,7 +197,7 @@ class ToolExecutorService:
             else:
                 self._circuit_breaker.record_failure()
                 self._metrics.failed_calls += 1
-            
+
             # Emit result event
             await self._emitter.emit("tool.result", {
                 "tool_call_id": result.tool_call_id,
@@ -208,29 +208,29 @@ class ToolExecutorService:
                 "execution_time_ms": result.execution_time_ms,
                 "timestamp": time.time()
             })
-            
+
             return result
-            
+
         except Exception as e:
             self._circuit_breaker.record_failure()
             self._metrics.failed_calls += 1
-            
+
             error_result = ToolResult(
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
                 success=False,
                 error=str(e)
             )
-            
+
             await self._emitter.emit("tool.error", {
                 "tool_call_id": tool_call.id,
                 "tool_name": tool_call.name,
                 "error": str(e),
                 "timestamp": time.time()
             })
-            
+
             return error_result
-    
+
     async def execute_many(
         self,
         tool_calls: list[ToolCall],
@@ -240,12 +240,12 @@ class ToolExecutorService:
     ) -> list[ToolResult]:
         """
         Execute multiple tool calls.
-        
+
         Args:
             tool_calls: List of tool calls to execute
             timeout: Optional timeout per call
             parallel: If True, execute in parallel
-            
+
         Returns:
             List of results in same order as calls
         """
@@ -258,17 +258,17 @@ class ToolExecutorService:
                 result = await self.execute(call, timeout=timeout)
                 results.append(result)
             return results
-    
+
 class ServiceToolExecutor(ToolExecutor):
     """
     ToolExecutor interface implementation that delegates to ToolExecutorService.
-    
+
     Use this to wrap the service for dependency injection.
     """
-    
+
     def __init__(self, service: ToolExecutorService):
         self._service = service
-    
+
     async def execute(
         self,
         tool_call: ToolCall,
@@ -276,7 +276,7 @@ class ServiceToolExecutor(ToolExecutor):
         timeout: int | None = None
     ) -> ToolResult:
         return await self._service.execute(tool_call, timeout=timeout)
-    
+
     async def execute_many(
         self,
         tool_calls: list[ToolCall],

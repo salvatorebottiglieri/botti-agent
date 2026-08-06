@@ -9,10 +9,8 @@ from uuid import UUID, uuid4
 
 from cortex.agentic.models import (
     ChatResponse,
-    Decision,
     DecisionType,
     GoalResult,
-    GoalStatus,
     MaxIterationsError,
     Mode,
 )
@@ -21,8 +19,8 @@ from cortex.sessions.models import Message, MessageRole
 
 if TYPE_CHECKING:
     from cortex.agentic.context_builder import ContextBuilder
-    from cortex.agentic.reasoner import Reasoner
     from cortex.agentic.executor import LoopExecutor
+    from cortex.agentic.reasoner import Reasoner
     from cortex.events import EventBus
 
 logger = logging.getLogger(__name__)
@@ -141,7 +139,11 @@ class AgentLoop:
                             msg = Message(
                                 session_id=session_id,
                                 role=MessageRole.TOOL_RESULT,
-                                content=result.output if result.success else f"Error: {result.error}",
+                                content=(
+                                    result.output or ""
+                                    if result.success
+                                    else f"Error: {result.error}"
+                                ),
                             )
                             messages.append(msg)
 
@@ -242,7 +244,7 @@ class AgentLoop:
                 case DecisionType.EXECUTE_TOOLS:
                     # Execute and track
                     if decision.tool_calls:
-                        results = await self._executor.execute_tools(decision.tool_calls)
+                        await self._executor.execute_tools(decision.tool_calls)
 
                         # Track steps
                         for call in decision.tool_calls:
@@ -276,7 +278,9 @@ class AgentLoop:
 
         raise MaxIterationsError(max_iters)
 
-    async def _emit_goal_event(self, goal_id: UUID, status: str, data: dict) -> None:
+    async def _emit_goal_event(
+        self, goal_id: UUID, status: str, data: dict[str, Any]
+    ) -> None:
         """Emit a goal status event."""
         await self._emitter.emit(
             f"goal.{status}",

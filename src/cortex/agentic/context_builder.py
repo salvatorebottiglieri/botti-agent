@@ -8,14 +8,14 @@ from uuid import UUID
 
 from cortex.agentic.models import (
     Context,
-    Mode,
     GoalContext,
+    Mode,
 )
 from cortex.memory.models import FactType
 
 if TYPE_CHECKING:
-    from cortex.sessions.interfaces import SessionRepository
     from cortex.services.memory_service import MemoryService
+    from cortex.sessions.interfaces import SessionRepository
     from cortex.tools.interfaces import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ class ContextBuilder:
             session_id,
             limit=self.max_messages - 1,
         )
-        
+
         # 2. Add user message to conversation
         from cortex.sessions.models import Message, MessageRole
         user_msg = Message(
@@ -84,7 +84,7 @@ class ContextBuilder:
             content=user_message,
         )
         messages.append(user_msg)
-        
+
         # 3. Enforce the limit (should never exceed max_messages)
         messages = messages[-self.max_messages:]
 

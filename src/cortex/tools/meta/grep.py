@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from cortex.tools.interfaces import Tool, ToolCall, ToolErrorSeverity, ToolResult
+from cortex.tools.interfaces import ToolErrorSeverity, ToolResult
 from cortex.tools.meta.base import BaseMetaTool, FileToolMixin
 
 
@@ -129,7 +129,7 @@ class GrepTool(BaseMetaTool, FileToolMixin):
             )
 
         # Search
-        matches = []
+        matches: list[tuple[str, int, str]] = []
         files_searched = 0
 
         try:
@@ -159,10 +159,10 @@ class GrepTool(BaseMetaTool, FileToolMixin):
                 output = f"Found {len(matches)} matches in {files_searched} files:\n\n"
                 current_file = None
                 for match in matches:
-                    file_path, line_num, line_text = match
-                    if file_path != current_file:
-                        output += f"\n{file_path}:\n"
-                        current_file = file_path
+                    match_file, line_num, line_text = match
+                    if match_file != current_file:
+                        output += f"\n{match_file}:\n"
+                        current_file = match_file
                     output += f"  {line_num}: {line_text}\n"
             else:
                 output = f"No matches found for '{pattern}' in {path}"
@@ -189,13 +189,13 @@ class GrepTool(BaseMetaTool, FileToolMixin):
             )
 
     def _search_file(
-        self, file_path: Path, regex: re.Pattern, max_matches: int
+        self, file_path: Path, regex: re.Pattern[str], max_matches: int
     ) -> list[tuple[str, int, str]]:
         """Search a single file for regex matches."""
         matches = []
 
         try:
-            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
                 for line_num, line in enumerate(f, 1):
                     if regex.search(line):
                         matches.append((str(file_path), line_num, line.rstrip()))

@@ -1,9 +1,10 @@
 """Tests for the Event Bus."""
 
 import asyncio
+
 import pytest
 
-from cortex.events import EventBus, BaseEvent, EventTypes
+from cortex.events import BaseEvent, EventBus, EventTypes
 
 
 @pytest.fixture
@@ -22,12 +23,12 @@ class TestEventBus:
     async def test_start_stop(self):
         """Test event bus can be started and stopped."""
         bus = EventBus()
-        
+
         assert not bus.is_running
-        
+
         await bus.start()
         assert bus.is_running
-        
+
         await bus.stop()
         assert not bus.is_running
 

@@ -6,14 +6,14 @@ there is one type per concept across the codebase.
 """
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from cortex.tools.interfaces import ToolCall, ToolDefinition
 
 
-class Role(str, Enum):
+class Role(StrEnum):
     """Message role in a conversation."""
 
     SYSTEM = "system"

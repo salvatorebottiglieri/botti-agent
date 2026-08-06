@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan handler for startup/shutdown."""
     # Startup
     logger.info("Starting Cortex API...")
@@ -33,7 +35,7 @@ async def lifespan(app: FastAPI):
     from cortex.api.dependencies import get_app_state
 
     try:
-        state = get_app_state()
+        get_app_state()
         logger.info("App state loaded successfully")
     except RuntimeError:
         logger.warning("App state not initialized - running in standalone mode")
@@ -72,7 +74,7 @@ def create_api_app() -> FastAPI:
 
     # Global exception handler
     @app.exception_handler(Exception)
-    async def global_exception_handler(request: Request, exc: Exception):
+    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         logger.error(f"Unhandled exception: {exc}", exc_info=True)
         return JSONResponse(
             status_code=500,
@@ -94,7 +96,7 @@ def create_api_app() -> FastAPI:
 
     # Root endpoint
     @app.get("/", tags=["root"])
-    async def root():
+    async def root() -> dict[str, Any]:
         """Root endpoint - API info."""
         return {
             "name": "Cortex API",
@@ -110,7 +112,7 @@ def create_app() -> FastAPI:
     return create_api_app()
 
 
-def bootstrap_app(state: dict) -> FastAPI:
+def bootstrap_app(state: dict[str, Any]) -> FastAPI:
     """
     Bootstrap the app with full dependency injection.
 

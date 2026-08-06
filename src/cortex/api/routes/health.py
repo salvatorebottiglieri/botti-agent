@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from fastapi import APIRouter, Depends
 
 from cortex.api.dependencies import get_db_pool, get_llm_client, get_minion_service
 from cortex.api.schemas import HealthResponse, HealthStatus
+
+if TYPE_CHECKING:
+    import asyncpg
+
+    from cortex.llm.base import LLMClient
+    from cortex.services.minion_service import MinionService
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -20,9 +26,9 @@ router = APIRouter(prefix="/health", tags=["health"])
     description="Returns the health status of all system components.",
 )
 async def health_check(
-    db_pool=Depends(get_db_pool),
-    llm_client=Depends(get_llm_client),
-    minion_service=Depends(get_minion_service),
+    db_pool: asyncpg.Pool = Depends(get_db_pool),
+    llm_client: LLMClient | None = Depends(get_llm_client),
+    minion_service: MinionService | None = Depends(get_minion_service),
 ) -> HealthResponse:
     """
     Check health of all components.

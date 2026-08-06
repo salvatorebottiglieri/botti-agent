@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from .interfaces import MinionEventHandler
 from .models import MinionEvent, MinionEventBatch
@@ -67,6 +67,9 @@ class MinionEventProcessor(MinionEventHandler):
 
     async def _emit_to_bus(self, event: MinionEvent) -> None:
         """Emit event to the Cortex event bus."""
+        if self._event_bus is None:
+            return
+
         from cortex.events import BaseEvent
 
         # Map event types to bus event types

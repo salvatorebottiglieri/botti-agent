@@ -3,7 +3,7 @@
 import asyncio
 import sys
 
-from cortex.main import create_app, CortexApp, initialize_app
+from cortex.main import initialize_app
 
 
 async def run() -> None:
@@ -14,13 +14,15 @@ async def run() -> None:
         # Initialize the app
         cortex = await initialize_app()
         app = cortex.app
+        settings = cortex.settings
+        assert app is not None and settings is not None
 
         # Get host/port from settings
         import uvicorn
         config = uvicorn.Config(
             app,
-            host=cortex.settings.app_host,
-            port=cortex.settings.app_port,
+            host=settings.app_host,
+            port=settings.app_port,
             log_level="info",
         )
         server = uvicorn.Server(config)

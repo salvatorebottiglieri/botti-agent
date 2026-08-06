@@ -1,18 +1,17 @@
 """Tests for the Minions module."""
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime
 
 from cortex.minions.models import (
-    MinionInfo,
+    EventType,
+    MinionConfig,
     MinionEvent,
     MinionEventBatch,
-    MinionConfig,
-    MinionCapabilities,
+    MinionInfo,
     MinionState,
-    EventType,
     SensorType,
 )
-from cortex.minions.interfaces import MinionEventHandler, MinionRegistry, MinionGateway
 from cortex.minions.registry import InMemoryMinionRegistry
 
 
@@ -223,7 +222,7 @@ class TestInMemoryMinionRegistry:
         """Test heartbeat updates for registered minion."""
         # First register the minion
         await registry.register("phone-001", sample_info)
-        
+
         # Heartbeat should update last_heartbeat
         await registry.heartbeat("phone-001")
         info = await registry.get("phone-001")
@@ -395,8 +394,9 @@ class TestPostgresMinionRegistry:
         RED: When a minion is registered, it should persist to the minions table.
         """
         from unittest.mock import AsyncMock, MagicMock
-        from cortex.minions.registry import PostgresMinionRegistry
+
         from cortex.minions.models import MinionInfo, MinionState
+        from cortex.minions.registry import PostgresMinionRegistry
 
         # Create mock pool
         mock_pool = MagicMock()
@@ -429,6 +429,7 @@ class TestPostgresMinionRegistry:
         RED: Heartbeat should update last_heartbeat_at in the database.
         """
         from unittest.mock import AsyncMock, MagicMock
+
         from cortex.minions.registry import PostgresMinionRegistry
 
 
@@ -451,9 +452,8 @@ class TestPostgresMinionRegistry:
         RED: Getting a minion should return MinionInfo from the database.
         """
         from unittest.mock import AsyncMock, MagicMock
-        from datetime import datetime, timezone
+
         from cortex.minions.registry import PostgresMinionRegistry
-        from cortex.minions.models import MinionInfo, MinionState
 
         mock_pool = MagicMock()
         mock_conn = AsyncMock()
@@ -467,7 +467,7 @@ class TestPostgresMinionRegistry:
             "name": "My Phone",
             "device_type": "android",
             "state": "online",
-            "last_heartbeat_at": datetime.now(timezone.utc),
+            "last_heartbeat_at": datetime.now(UTC),
             "capabilities": {},
             "metadata": {},
         }.get(k)
@@ -495,9 +495,10 @@ class TestMinionServiceSequenceGap:
         """
         import logging
         from unittest.mock import AsyncMock, MagicMock
-        from cortex.services.minion_service import MinionService
-        from cortex.minions.models import MinionEvent, EventType, MinionConfig
+
         from cortex.events.bus import EventBus
+        from cortex.minions.models import EventType, MinionConfig, MinionEvent
+        from cortex.services.minion_service import MinionService
 
         bus = EventBus()
         await bus.start()
@@ -551,7 +552,7 @@ class TestMinionServiceSequenceGap:
                 await service.handle_event(event2)
 
             # Check that warning was logged about sequence gap
-            assert any("sequence" in record.message.lower() or "gap" in record.message.lower() 
+            assert any("sequence" in record.message.lower() or "gap" in record.message.lower()
                       for record in caplog.records), \
                 f"Should log warning for sequence gap. Got: {[r.message for r in caplog.records]}"
         finally:

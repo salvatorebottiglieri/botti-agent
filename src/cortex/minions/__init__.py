@@ -1,9 +1,9 @@
 """Minion module types and models."""
 from .models import (
-    MinionInfo,
-    MinionEventBatch,
-    MinionEvent,
     MinionConfig,
+    MinionEvent,
+    MinionEventBatch,
+    MinionInfo,
     SensorType,
 )
 

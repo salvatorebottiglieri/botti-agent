@@ -1,13 +1,14 @@
 """Session and Message data models."""
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class SessionState(str, Enum):
+class SessionState(StrEnum):
     """Session lifecycle states."""
     CREATED = "created"
     ACTIVE = "active"
@@ -15,7 +16,7 @@ class SessionState(str, Enum):
     ENDED = "ended"
 
 
-class MessageRole(str, Enum):
+class MessageRole(StrEnum):
     """Message sender roles."""
     SYSTEM = "system"
     USER = "user"
@@ -29,7 +30,7 @@ class Message(BaseModel):
     session_id: UUID
     role: MessageRole
     content: str
-    tool_calls: list[dict] | None = None  # Serialized tool calls
+    tool_calls: list[dict[str, Any]] | None = None  # Serialized tool calls
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     model_config = ConfigDict(use_enum_values=True)
@@ -42,7 +43,7 @@ class Session(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_activity_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     ended_at: datetime | None = None
-    metadata: dict = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     model_config = ConfigDict(use_enum_values=True)
 

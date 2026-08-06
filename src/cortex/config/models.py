@@ -11,7 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """
     Root settings container for Cortex.
-    
+
     All modules import Settings from here to ensure consistent configuration.
     Uses env vars with prefixes: DB_, LLM_, MQTT_, APP_, LOG_
     """

@@ -8,6 +8,7 @@ import time
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
+from cortex.agentic.loop import AgentLoop
 from cortex.agentic.models import (
     ChatResponse,
     Goal,
@@ -15,7 +16,6 @@ from cortex.agentic.models import (
     GoalStatus,
     MaxIterationsError,
 )
-from cortex.agentic.loop import AgentLoop
 from cortex.events import EventEmitter
 
 if TYPE_CHECKING:
@@ -259,7 +259,9 @@ class ExecutionModule:
         except Exception as e:
             logger.error(f"Background goal {goal.id} failed: {e}")
 
-    async def _emit_goal_event(self, goal_id: UUID, status: str, data: dict) -> None:
+    async def _emit_goal_event(
+        self, goal_id: UUID, status: str, data: dict[str, Any]
+    ) -> None:
         """Emit a goal status event."""
         await self._emitter.emit(
             f"goal.{status}",

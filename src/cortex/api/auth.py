@@ -5,16 +5,19 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyHeader
+
+if TYPE_CHECKING:
+    import asyncpg
 
 # Token header name
 TOKEN_HEADER = APIKeyHeader(name="Authorization", auto_error=False)
 
 # In-memory cache of valid token hashes (loaded at startup)
-_token_cache: dict[str, dict] = {}
+_token_cache: dict[str, dict[str, Any]] = {}
 _cache_initialized = False
 
 
@@ -98,7 +101,7 @@ async def get_api_key(
     )
 
 
-async def load_token_cache(get_db_pool):
+async def load_token_cache(db_pool: asyncpg.Pool) -> None:
     """
     Load valid tokens from database into memory cache.
 
@@ -110,7 +113,7 @@ async def load_token_cache(get_db_pool):
         return
 
     try:
-        db = await get_db_pool()
+        db = db_pool
         async with db.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT id, key_hash, name FROM api_keys WHERE revoked_at IS NULL"
@@ -128,14 +131,14 @@ async def load_token_cache(get_db_pool):
 
 async def create_token(
     name: str,
-    get_db_pool,
+    db_pool: asyncpg.Pool,
 ) -> tuple[str, str, str]:
     """
     Create a new API token and store in database.
 
     Args:
         name: Token name/description
-        get_db_pool: Function that returns the DB pool
+        db_pool: Database connection pool
 
     Returns:
         Tuple of (raw_token, hashed_token, db_id)
@@ -143,7 +146,7 @@ async def create_token(
     raw, hashed = generate_token()
 
     try:
-        db = await get_db_pool()
+        db = db_pool
         async with db.acquire() as conn:
             row = await conn.fetchrow(
                 """
@@ -172,25 +175,25 @@ async def create_token(
 
 async def revoke_token(
     token_hash: str,
-    get_db_pool,
+    db_pool: asyncpg.Pool,
 ) -> bool:
     """
     Revoke an API token.
 
     Args:
         token_hash: The hashed token to revoke
-        get_db_pool: Function that returns the DB pool
+        db_pool: Database connection pool
 
     Returns:
         True if revoked, False if not found
     """
     try:
-        db = await get_db_pool()
+        db = db_pool
         async with db.acquire() as conn:
             result = await conn.execute(
                 """
-                UPDATE api_keys 
-                SET revoked_at = $1 
+                UPDATE api_keys
+                SET revoked_at = $1
                 WHERE key_hash = $2 AND revoked_at IS NULL
                 """,
                 datetime.now(UTC),
@@ -206,27 +209,27 @@ async def revoke_token(
         return False
 
 
-async def check_token_exists(get_db_pool) -> bool:
+async def check_token_exists(db_pool: asyncpg.Pool) -> bool:
     """
     Check if any tokens exist in the database.
 
     Used to determine if /admin/token/init should be allowed.
     """
     try:
-        db = await get_db_pool()
+        db = db_pool
         async with db.acquire() as conn:
             row = await conn.fetchrow("SELECT COUNT(*) as cnt FROM api_keys")
-            return row["cnt"] > 0
+            return int(row["cnt"]) > 0
     except Exception:
         return False
 
 
-async def list_tokens(get_db_pool) -> list[dict]:
+async def list_tokens(db_pool: asyncpg.Pool) -> list[dict[str, Any]]:
     """
     List all API tokens (without secrets).
     """
     try:
-        db = await get_db_pool()
+        db = db_pool
         async with db.acquire() as conn:
             rows = await conn.fetch(
                 """

@@ -1,11 +1,11 @@
 """Tests for the CircuitBreaker state machine."""
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
 
 from cortex.llm.circuit_breaker import CircuitBreaker, CircuitOpenError, CircuitState
-import asyncio
 
 
 class TestCircuitState:

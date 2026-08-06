@@ -1,17 +1,18 @@
 """PostgreSQL implementation of SessionRepository."""
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from cortex.db.session import DbSession
 from cortex.sessions.interfaces import SessionRepository
-from cortex.sessions.models import Session, SessionState, Message, MessageRole
+from cortex.sessions.models import Message, MessageRole, Session, SessionState
 
 
 class PostgresSessionRepository(SessionRepository):
     """
     PostgreSQL implementation of session storage.
-    
+
     Uses the shared db session for connection pooling.
     """
 
@@ -84,7 +85,7 @@ class PostgresSessionRepository(SessionRepository):
         session_id: UUID,
         role: MessageRole,
         content: str,
-        tool_calls: list[dict] | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
     ) -> Message:
         """Add a message to a session."""
         async with DbSession() as db:
@@ -158,7 +159,7 @@ class PostgresSessionRepository(SessionRepository):
             )
             return [self._row_to_session(row) for row in rows]
 
-    def _row_to_session(self, row) -> Session:
+    def _row_to_session(self, row: Any) -> Session:
         """Convert a database row to a Session model."""
         return Session(
             id=row["id"],
@@ -169,7 +170,7 @@ class PostgresSessionRepository(SessionRepository):
             metadata=row["metadata"] or {},
         )
 
-    def _row_to_message(self, row) -> Message:
+    def _row_to_message(self, row: Any) -> Message:
         """Convert a database row to a Message model."""
         return Message(
             id=row["id"],

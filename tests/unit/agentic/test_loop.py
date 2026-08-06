@@ -1,19 +1,19 @@
 """Tests for AgentLoop."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
+
+import pytest
 
 from cortex.agentic.loop import AgentLoop
 from cortex.agentic.models import (
+    ChatResponse,
     Context,
     Decision,
-    DecisionType,
-    ChatResponse,
     MaxIterationsError,
-    Mode,
 )
 from cortex.sessions.models import Message, MessageRole
+from cortex.tools.interfaces import ToolCall
 
 
 class TestAgentLoop:
@@ -300,11 +300,7 @@ class TestAgentLoopEdgeCases:
             event_bus=MagicMock(),
         )
 
-        response = await loop.run_chat(uuid4(), "What's my name?")
+        await loop.run_chat(uuid4(), "What's my name?")
 
         # Context should include conversation history
         assert mock_context_builder.build.called
-
-
-# Import needed for tests
-from cortex.tools.interfaces import ToolCall

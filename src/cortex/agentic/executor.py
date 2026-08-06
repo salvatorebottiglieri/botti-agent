@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from cortex.events import EventEmitter
 from cortex.tools.interfaces import ToolCall, ToolResult
 
 if TYPE_CHECKING:
-    from cortex.tools.interfaces import ToolExecutor
     from cortex.events import EventBus
+    from cortex.tools.interfaces import ToolExecutor
 
 logger = logging.getLogger(__name__)
 

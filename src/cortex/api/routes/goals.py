@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -11,6 +11,9 @@ from fastapi.params import Path
 from cortex.api.auth import get_api_key
 from cortex.api.dependencies import get_execution_module
 from cortex.api.schemas import GoalCreateRequest, GoalResponse, GoalResultResponse, GoalStepResponse
+
+if TYPE_CHECKING:
+    from cortex.execution.module import ExecutionModule
 
 router = APIRouter(prefix="/goals", tags=["goals"])
 
@@ -24,7 +27,7 @@ router = APIRouter(prefix="/goals", tags=["goals"])
 async def create_goal(
     request: GoalCreateRequest,
     key: str = Depends(get_api_key),
-    execution_module=Depends(get_execution_module),
+    execution_module: ExecutionModule = Depends(get_execution_module),
 ) -> GoalResponse:
     """
     Create a new goal and start execution.
@@ -73,7 +76,7 @@ async def create_goal(
 )
 async def list_goals(
     key: str = Depends(get_api_key),
-    execution_module=Depends(get_execution_module),
+    execution_module: ExecutionModule = Depends(get_execution_module),
 ) -> list[GoalResponse]:
     """List active goals."""
     goals = await execution_module.list_active_goals()
@@ -109,7 +112,7 @@ async def list_goals(
 async def get_goal(
     goal_id: Annotated[UUID, Path(description="Goal ID")],
     key: str = Depends(get_api_key),
-    execution_module=Depends(get_execution_module),
+    execution_module: ExecutionModule = Depends(get_execution_module),
 ) -> GoalResponse | GoalResultResponse:
     """
     Get a goal by ID.
