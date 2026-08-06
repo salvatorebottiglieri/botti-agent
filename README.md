@@ -95,8 +95,10 @@ Every non-obvious call is written down with its rationale in
 | [0008](docs/adr/0008-embedding-semantic-search.md) | Embedding-based semantic fact search |
 | [0009](docs/adr/0009-circuit-breaker.md) | Circuit breaker for resilience |
 | [0010](docs/adr/0010-per-module-config.md) | Per-module configuration |
+| [0011](docs/adr/0011-public-get-or-create-session.md) | Public get_or_create_session on InteractionService |
+| [0012](docs/adr/0012-system-invariants.md) | System invariants — CircuitBreaker + SessionPolicy |
 
-(Full list, 0001–0011, in the folder.)
+(Full list, 0001–0012, in the folder.)
 
 ## Architecture at a glance
 
