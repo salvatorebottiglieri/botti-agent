@@ -70,8 +70,28 @@ async def get_api_key(
     if token_hash in _token_cache:
         return token_hash
 
-    # If not in cache, we need to check the database
-    # This will be wired up in the bootstrap phase
+    # Fall back to the database: the in-memory cache is loaded at startup,
+    # so tokens created later (e.g. via `cortex token:create`) would be
+    # rejected forever otherwise. Cache hits on success.
+    try:
+        from cortex.api.dependencies import get_db_pool
+
+        db = await get_db_pool()
+        async with db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id, key_hash, name FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL",
+                token_hash,
+            )
+            if row is not None:
+                _token_cache[row["key_hash"]] = {
+                    "id": str(row["id"]),
+                    "name": row["name"],
+                }
+                return token_hash
+    except Exception:
+        # DB unavailable: reject rather than crash the request
+        pass
+
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail={"error": "unauthorized", "detail": "Invalid API token"},

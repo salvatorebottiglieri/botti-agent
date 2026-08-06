@@ -32,7 +32,7 @@ async def list_sessions(
     return [
         SessionResponse(
             id=s.id,
-            state=s.state.value,
+            state=s.state,
             created_at=s.created_at,
             last_activity_at=s.last_activity_at,
             ended_at=s.ended_at,
@@ -55,7 +55,7 @@ async def create_session(
     session = await policy.create_session(session_repo)
     return SessionResponse(
         id=session.id,
-        state=session.state.value,
+        state=session.state,
         created_at=session.created_at,
         last_activity_at=session.last_activity_at,
         ended_at=session.ended_at,
@@ -86,7 +86,7 @@ async def get_session(
     return SessionWithMessages(
         session=SessionResponse(
             id=result.session.id,
-            state=result.session.state.value,
+            state=result.session.state,
             created_at=result.session.created_at,
             last_activity_at=result.session.last_activity_at,
             ended_at=result.session.ended_at,
@@ -95,7 +95,7 @@ async def get_session(
         messages=[
             MessageResponse(
                 id=m.id,
-                role=m.role.value,
+                role=m.role,
                 content=m.content,
                 tool_calls=m.tool_calls,
                 created_at=m.created_at,
@@ -145,7 +145,7 @@ async def create_message(
 
     return MessageResponse(
         id=msg.id,
-        role=msg.role.value,
+        role=msg.role,
         content=msg.content,
         tool_calls=msg.tool_calls,
         created_at=msg.created_at,
@@ -173,7 +173,7 @@ async def end_session(
 
     return SessionResponse(
         id=session.id,
-        state=session.state.value,
+        state=session.state,
         created_at=session.created_at,
         last_activity_at=session.last_activity_at,
         ended_at=session.ended_at,
@@ -202,7 +202,7 @@ async def resume_session(
 
     return SessionResponse(
         id=session.id,
-        state=session.state.value,
+        state=session.state,
         created_at=session.created_at,
         last_activity_at=session.last_activity_at,
         ended_at=session.ended_at,

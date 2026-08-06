@@ -44,22 +44,22 @@ class MinionMQTTClient(MinionGateway):
                 extra={"broker": self._config.broker_url},
             )
 
-            # Create client with optional auth
-            if self._config.username and self._config.password:
-                self._client = aiomqtt.Client(
-                    identifier=self._config.minion_id,
-                    username=self._config.username,
-                    password=self._config.password,
-                )
-            else:
-                self._client = aiomqtt.Client(
-                    identifier=self._config.minion_id,
-                )
+            # aiomqtt 2.x: hostname/port go to the constructor; the client
+            # connects on __aenter__.
+            host_port = self._config.broker_url.replace("mqtt://", "").split("/")[0]
+            host, _, port_str = host_port.partition(":")
+            port = int(port_str) if port_str else self._config.port
 
-            # Connect
-            host = self._config.broker_url.replace("mqtt://", "")
-            port = self._config.port
-            await self._client.connect(host, port, keepalive=self._config.keepalive)
+            self._client = aiomqtt.Client(
+                hostname=host,
+                port=port,
+                identifier=self._config.minion_id,
+                username=self._config.username or None,
+                password=self._config.password or None,
+                keepalive=self._config.keepalive,
+            )
+
+            await self._client.__aenter__()
 
             self._connected = True
             logger.info(
@@ -85,7 +85,7 @@ class MinionMQTTClient(MinionGateway):
 
         # Disconnect client
         if self._client:
-            await self._client.disconnect()
+            await self._client.__aexit__(None, None, None)
             self._client = None
 
         self._connected = False

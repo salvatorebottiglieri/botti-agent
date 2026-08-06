@@ -10,7 +10,6 @@ services:
       POSTGRES_DB: cortex
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d:ro
     ports:
       - "5432:5432"
     healthcheck:
