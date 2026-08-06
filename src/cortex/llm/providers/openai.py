@@ -27,10 +27,10 @@ class OpenAIClient(LLMClient):
     Supports GPT-4, GPT-4o, GPT-3.5-turbo and function calling.
     """
 
-    def __init__(self, api_key: str, model: str = "gpt-4o"):
+    def __init__(self, api_key: str, model: str = "gpt-4o", base_url: str | None = None):
         self._api_key = api_key
         self._model = model
-        self._client = AsyncOpenAI(api_key=api_key)
+        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "OpenAIClient":
@@ -38,6 +38,7 @@ class OpenAIClient(LLMClient):
         return cls(
             api_key=settings.llm_api_key.get_secret_value(),
             model=settings.llm_model,
+            base_url=settings.llm_base_url,
         )
 
     def get_provider_name(self) -> str:

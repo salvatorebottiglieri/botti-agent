@@ -114,6 +114,7 @@ class TestOpenAIClient:
         settings = MagicMock()
         settings.llm_api_key.get_secret_value.return_value = "test-key"
         settings.llm_model = "gpt-4o"
+        settings.llm_base_url = None
         return settings
 
     def test_from_settings(self, mock_settings):
@@ -175,6 +176,7 @@ class TestLLMClientFactory:
         settings.llm_provider = "openai"
         settings.llm_api_key.get_secret_value.return_value = "test-key"
         settings.llm_model = "gpt-4o"
+        settings.llm_base_url = None
         return settings
 
     def test_create_default_provider(self, mock_settings):
