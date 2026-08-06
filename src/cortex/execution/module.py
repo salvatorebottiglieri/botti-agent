@@ -266,8 +266,8 @@ class ExecutionModule:
             {"goal_id": str(goal_id), **data},
         )
 
-    def subscribe(self) -> None:
+    async def subscribe(self) -> None:
         """Subscribe to events."""
         if self._event_bus:
-            self._event_bus.subscribe("goal.created", self.handle_event)
-            self._event_bus.subscribe("recommendation.executed", self.handle_event)
+            await self._event_bus.subscribe("goal.created", self.handle_event)
+            await self._event_bus.subscribe("recommendation.executed", self.handle_event)

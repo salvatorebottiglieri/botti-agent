@@ -144,15 +144,15 @@ async def initialize_app() -> CortexApp:
     from cortex.sessions.repository import PostgresSessionRepository
     from cortex.sessions.interfaces import SessionRepository
 
-    session_repo: SessionRepository = PostgresSessionRepository(cortex.db_pool)
+    session_repo: SessionRepository = PostgresSessionRepository()
     cortex.session_repository = session_repo
 
     # 5b. Create memory repositories
     from cortex.memory.repository import PostgresFactRepository, PostgresConceptRepository
     from cortex.memory.interfaces import FactRepository, ConceptRepository, FactExtractor
 
-    fact_repo: FactRepository = PostgresFactRepository(cortex.db_pool)
-    concept_repo: ConceptRepository = PostgresConceptRepository(cortex.db_pool)
+    fact_repo: FactRepository = PostgresFactRepository()
+    concept_repo: ConceptRepository = PostgresConceptRepository()
     memory_extractor: FactExtractor | None = None
 
     # 5c. Create LLM client
@@ -290,7 +290,7 @@ async def _subscribe_services(cortex: CortexApp) -> None:
         return
 
     # Subscribe execution module
-    cortex.execution_module.subscribe()
+    await cortex.execution_module.subscribe()
 
     # Subscribe memory service to relevant events
     if cortex.memory_service:

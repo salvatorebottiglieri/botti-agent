@@ -1,5 +1,6 @@
 """Async PostgreSQL connection pool management."""
 
+import json
 import logging
 import re
 from collections.abc import AsyncGenerator
@@ -55,6 +56,22 @@ def _parse_db_url(url: str) -> dict:
     }
 
 
+async def _init_connection(conn: asyncpg.Connection) -> None:
+    """Set up per-connection codecs: return JSON/JSONB as Python objects."""
+    await conn.set_type_codec(
+        "jsonb",
+        encoder=json.dumps,
+        decoder=json.loads,
+        schema="pg_catalog",
+    )
+    await conn.set_type_codec(
+        "json",
+        encoder=json.dumps,
+        decoder=json.loads,
+        schema="pg_catalog",
+    )
+
+
 async def create_pool(settings: Settings) -> asyncpg.Pool:
     """
     Create a connection pool to PostgreSQL.
@@ -86,6 +103,7 @@ async def create_pool(settings: Settings) -> asyncpg.Pool:
         min_size=settings.db_pool_min_size,
         max_size=settings.db_pool_max_size,
         command_timeout=settings.db_pool_timeout,
+        init=_init_connection,
     )
 
     logger.info("Database pool created successfully")

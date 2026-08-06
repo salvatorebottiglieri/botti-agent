@@ -1,11 +1,10 @@
 -- 001_initial.sql
 -- Core schema: schema_migrations table
+-- The application migration runner (cortex.db.migrations.runner) creates
+-- this table and records applied versions; initdb must not seed it or the
+-- runner's bookkeeping collides (duplicate key / type mismatch).
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
-    applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    description TEXT
+    version VARCHAR(255) PRIMARY KEY,
+    applied_at TIMESTAMP DEFAULT NOW()
 );
-
--- Track applied migrations
-INSERT INTO schema_migrations (version, description) VALUES (1, 'Initial schema');

@@ -4,6 +4,8 @@ Configuration loader for Botticello.
 Loads settings from YAML files and environment variables.
 """
 
+import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -12,6 +14,8 @@ import yaml
 from pydantic import ValidationError
 
 from cortex.config.models import Settings
+
+_UNRESOLVED_ENV_REF = re.compile(r"\$\{?\w+\}?")
 
 
 def find_config_file() -> Path | None:
@@ -54,6 +58,32 @@ def _flatten_dict(d: dict[str, Any], parent_key: str = "", sep: str = "_") -> di
     return dict(items)
 
 
+def _resolve_env_refs(value: Any) -> Any:
+    """Expand ``${VAR}`` references in a YAML scalar.
+
+    Returns the expanded value, or ``None`` when a referenced variable is
+    unset so the caller can fall back to environment variables / defaults
+    instead of passing a literal placeholder to Settings.
+    """
+    if not isinstance(value, str):
+        return value
+
+    def _replace(match: re.Match[str]) -> str:
+        name = match.group(0).strip("${}")
+        if name not in os.environ:
+            raise _UnresolvedEnvRef(name)
+        return os.environ[name]
+
+    try:
+        return _UNRESOLVED_ENV_REF.sub(_replace, value)
+    except _UnresolvedEnvRef:
+        return None
+
+
+class _UnresolvedEnvRef(Exception):
+    """Raised internally when a ${VAR} reference is not set in the environment."""
+
+
 def load_settings(config_path: Path | None = None) -> Settings:
     """
     Load settings from YAML file and environment variables.
@@ -62,6 +92,10 @@ def load_settings(config_path: Path | None = None) -> Settings:
     1. Environment variables
     2. YAML config file
     3. Default values in Settings model
+
+    ``${VAR}`` references inside YAML scalars are resolved from the
+    environment; values whose references are unset are dropped so the
+    environment variable of the same name (or the field default) wins.
 
     Args:
         config_path: Optional path to config YAML file.
@@ -74,7 +108,11 @@ def load_settings(config_path: Path | None = None) -> Settings:
         ValidationError: If settings are invalid.
     """
     # Load YAML config
-    yaml_config = load_yaml_config(config_path)
+    raw_yaml_config = load_yaml_config(config_path)
+    yaml_config = {
+        k: {sk: _resolve_env_refs(sv) for sk, sv in sv.items()} if isinstance(sv, dict) else _resolve_env_refs(sv)
+        for k, sv in raw_yaml_config.items()
+    }
 
     # Convert YAML to Pydantic-compatible nested dict
     settings_data: dict[str, Any] = {
