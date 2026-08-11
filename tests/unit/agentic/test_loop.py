@@ -46,7 +46,7 @@ class TestAgentLoop:
     def mock_executor(self):
         """Create a mock executor."""
         executor = MagicMock()
-        executor.execute_tools = AsyncMock()
+        executor.execute_single = AsyncMock()
         return executor
 
     @pytest.fixture
@@ -106,24 +106,29 @@ class TestAgentLoop:
             Decision.respond("File contents are..."),
         ])
 
-        mock_executor.execute_tools = AsyncMock(return_value=[
-            ToolResult(tool_call_id="1", tool_name="file_read", success=True, output="content")
-        ])
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="1", tool_name="file_read", success=True, output="content",
+        ))
 
         response = await loop.run_chat(session_id, "Read the file")
 
-        assert mock_executor.execute_tools.called
+        assert mock_executor.execute_single.called
         assert response.iterations >= 1
 
     @pytest.mark.asyncio
-    async def test_run_chat_max_iterations(self, loop, mock_context_builder, mock_reasoner):
+    async def test_run_chat_max_iterations(self, loop, mock_context_builder, mock_reasoner, mock_executor):
         """Run chat should raise after max iterations."""
+        from cortex.tools.interfaces import ToolResult
+
         session_id = uuid4()
 
         mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
         mock_reasoner.reason = AsyncMock(return_value=Decision.execute_tools([
             ToolCall(id="1", name="shell", arguments={"cmd": "true"})
         ]))
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="1", tool_name="shell", success=True, output="ok",
+        ))
 
         with pytest.raises(MaxIterationsError):
             await loop.run_chat(session_id, "Loop test", max_iterations=5)
@@ -140,6 +145,164 @@ class TestAgentLoop:
         response = await loop.run_chat(session_id, "")
 
         assert response is not None
+
+    @pytest.mark.asyncio
+    async def test_run_chat_returns_complete_response(
+        self, loop, mock_context_builder, mock_reasoner
+    ) -> None:
+        """RESPOND path returns a complete ChatResponse with all fields."""
+        session_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.respond("Hello!"))
+
+        response = await loop.run_chat(session_id, "Hi")
+
+        assert isinstance(response, ChatResponse)
+        assert response.message == "Hello!"
+        assert response.iterations == 0
+        assert response.tools_used == []
+        assert response.session_id == session_id
+
+    @pytest.mark.asyncio
+    async def test_run_chat_ask_question_returns_complete_response(
+        self, loop, mock_context_builder, mock_reasoner
+    ) -> None:
+        """ASK_QUESTION path returns a complete ChatResponse with the question."""
+        session_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.ask_question(
+            "Did you mean file A or file B?"
+        ))
+
+        response = await loop.run_chat(session_id, "Open the file")
+
+        assert isinstance(response, ChatResponse)
+        assert response.message == "Did you mean file A or file B?"
+        assert response.iterations == 0
+        assert response.tools_used == []
+        assert response.session_id == session_id
+
+    @pytest.mark.asyncio
+    async def test_run_chat_propagates_tools_used(
+        self, loop, mock_context_builder, mock_reasoner, mock_executor
+    ) -> None:
+        """Tool round-trip propagates tools_used and iterations into the response."""
+        from cortex.tools.interfaces import ToolResult
+
+        session_id = uuid4()
+        call = ToolCall(id="call_1", name="search", arguments={"q": "x"})
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(side_effect=[
+            Decision.execute_tools([call], reasoning="searching"),
+            Decision.respond("Found it.", reasoning="synthesized"),
+        ])
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="call_1", tool_name="search", success=True, output="found",
+        ))
+
+        response = await loop.run_chat(session_id, "Find it")
+
+        assert response.message == "Found it."
+        assert response.tools_used == ["search"]
+        assert response.iterations >= 1
+        assert response.session_id == session_id
+
+    @pytest.mark.asyncio
+    async def test_run_chat_reraises_original_exception(
+        self, loop, mock_context_builder, mock_reasoner
+    ) -> None:
+        """A failing reasoner propagates the original exception, unwrapped."""
+        session_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(side_effect=ValueError("boom"))
+
+        with pytest.raises(ValueError, match="boom"):
+            await loop.run_chat(session_id, "Hi")
+
+    @pytest.mark.asyncio
+    async def test_run_chat_max_iterations_override_bound(
+        self, loop, mock_context_builder, mock_reasoner, mock_executor
+    ) -> None:
+        """max_iterations override bounds the loop at the override, not the default."""
+        from cortex.tools.interfaces import ToolResult
+
+        session_id = uuid4()
+        call = ToolCall(id="call_1", name="shell", arguments={"cmd": "true"})
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.execute_tools(
+            [call], reasoning="running",
+        ))
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="call_1", tool_name="shell", success=True, output="ok",
+        ))
+
+        with pytest.raises(MaxIterationsError) as exc_info:
+            await loop.run_chat(session_id, "Loop", max_iterations=2)
+
+        assert exc_info.value.max_iterations == 2
+
+    @pytest.mark.asyncio
+    async def test_run_chat_empty_tool_calls_fallback(
+        self, loop, mock_context_builder, mock_reasoner
+    ) -> None:
+        """EXECUTE_TOOLS with empty tool_calls returns the fallback text."""
+        session_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.execute_tools(
+            [], reasoning="no tools available",
+        ))
+
+        response = await loop.run_chat(session_id, "Do something")
+
+        assert response.message == "I couldn't determine what tools to use."
+        assert response.iterations == 0
+        assert response.tools_used == []
+        assert response.session_id == session_id
+
+    @pytest.mark.asyncio
+    async def test_run_chat_does_not_publish_loop_events(
+        self, loop, mock_context_builder, mock_reasoner, mock_event_bus
+    ) -> None:
+        """Loop events are caller-scoped: run_chat never publishes them on the bus."""
+        session_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.respond("Hello!"))
+
+        response = await loop.run_chat(session_id, "Hi")
+
+        assert response.message == "Hello!"
+        mock_event_bus.publish.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_run_chat_accumulates_multiple_deltas(self, loop, monkeypatch) -> None:
+        """The drainer concatenates TextDeltaEvent deltas, not ResponseDoneEvent.message."""
+        session_id = uuid4()
+
+        async def fake_stream_chat(*args, **kwargs):
+            yield TextDeltaEvent(session_id, delta="Hel")
+            yield TextDeltaEvent(session_id, delta="lo")
+            yield ResponseDoneEvent(
+                session_id,
+                message="Hello!",
+                tools_used=["tool_a"],
+                iterations=3,
+            )
+
+        monkeypatch.setattr(loop, "stream_chat", fake_stream_chat)
+
+        response = await loop.run_chat(session_id, "Hi")
+
+        assert response.message == "Hello"
+        assert response.tools_used == ["tool_a"]
+        assert response.iterations == 3
+        assert response.session_id == session_id
 
 
 class TestAgentLoopGoalMode:
@@ -597,9 +760,9 @@ class TestStreamChat:
         stream_events = [e async for e in loop.stream_chat(session_id, "Find it")]
         done_event = next(e for e in stream_events if isinstance(e, ResponseDoneEvent))
 
-        # run_chat with the same script
+        # run_chat with the same script (execute_single is exhausted by the stream half)
         mock_reasoner.reason = AsyncMock(side_effect=list(script))
-        mock_executor.execute_tools = AsyncMock(return_value=list(results))
+        mock_executor.execute_single = AsyncMock(side_effect=list(results))
         response = await loop.run_chat(session_id, "Find it")
 
         assert done_event.message == response.message

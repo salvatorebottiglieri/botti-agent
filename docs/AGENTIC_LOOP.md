@@ -516,55 +516,43 @@ class AgentLoop:
     async def run_chat(
         self,
         session_id: UUID,
-        user_message: str
+        user_message: str,
+        *,
+        max_iterations: int | None = None
     ) -> ChatResponse:
         """
         Run the agentic loop for chat mode.
-        
-        Loop: Context → Think → [Act → Observe] → Respond
+
+        Drain wrapper over stream_chat(): consumes the generator, accumulates
+        the response text from TextDeltaEvent deltas and the final metadata
+        from ResponseDoneEvent, and returns the resulting ChatResponse.
+        Progress events (thinking, tool start/result) and ErrorEvent are
+        ignored — the generator re-raises the original exception, so errors
+        (e.g. MaxIterationsError) propagate unchanged.
         """
-        messages = [Message(role=Role.USER, content=user_message)]
+        response_text = ""
+        tools_used: list[str] = []
         iterations = 0
-        max_iterations = 20
 
-        while iterations < max_iterations:
-            # Build context
-            context = await self.context_builder.build(
-                session_id=session_id,
-                user_message=user_message,
-                mode=Mode.CHAT
-            )
+        async for event in self.stream_chat(
+            session_id=session_id,
+            user_message=user_message,
+            max_iterations=max_iterations,
+        ):
+            match event:
+                case TextDeltaEvent(delta=delta):
+                    response_text += delta
+                case ResponseDoneEvent(tools_used=used, iterations=iters):
+                    tools_used, iterations = used, iters
+                case _:
+                    pass  # progress events + ErrorEvent; generator re-raises
 
-            # Think
-            decision = await self.reasoner.reason(context)
-
-            if isinstance(decision, Decision.Respond):
-                # Done! Return response
-                return ChatResponse(
-                    message=decision.text,
-                    iterations=iterations,
-                    tool_calls=[]
-                )
-
-            elif isinstance(decision, Decision.ExecuteTools):
-                # Act
-                results = await self.executor.execute(decision.tool_calls)
-
-                # Observe: add results to messages
-                messages.extend(self._tool_messages(decision.tool_calls, results))
-
-                iterations += 1
-
-            elif isinstance(decision, Decision.AskQuestion):
-                # Clarification needed
-                return ChatResponse(
-                    message=decision.question,
-                    iterations=iterations,
-                    tool_calls=[]
-                )
-
-        # Safety: max iterations
-        raise MaxIterationsError(max_iterations)
+        return ChatResponse(
+            message=response_text,
+            tools_used=tools_used,
+            iterations=iterations,
+            session_id=session_id,
+        )
 
     async def run_goal(
         self,
