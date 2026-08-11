@@ -31,6 +31,7 @@ class Message(BaseModel):
     role: MessageRole
     content: str
     tool_calls: list[dict[str, Any]] | None = None  # Serialized tool calls
+    tool_call_id: str | None = None  # For TOOL_RESULT messages: the call being answered
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     model_config = ConfigDict(use_enum_values=True)

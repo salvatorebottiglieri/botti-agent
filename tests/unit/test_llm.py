@@ -165,6 +165,33 @@ class TestOpenAIClient:
         assert tool_call.id == "call_abc123"
         assert tool_call.name == "read_file"
 
+    def test_to_openai_message_serializes_tool_call_contract(self):
+        """Tool messages carry tool_call_id; assistant tool_calls translate to
+        the OpenAI wire shape ONLY at the provider boundary."""
+        import json
+
+        client = OpenAIClient(api_key="test")
+
+        tool_msg = client._to_openai_message(ChatMessage(
+            role=Role.TOOL,
+            content="output",
+            tool_call_id="call_x",
+        ))
+        assert tool_msg["role"] == "tool"
+        assert tool_msg["tool_call_id"] == "call_x"
+
+        assistant_msg = client._to_openai_message(ChatMessage(
+            role=Role.ASSISTANT,
+            content="",
+            tool_calls=[ToolCall(id="call_x", name="shell", arguments={"command": "echo hi"})],
+        ))
+        assert assistant_msg["tool_calls"] == [{
+            "id": "call_x",
+            "type": "function",
+            "function": {"name": "shell", "arguments": json.dumps({"command": "echo hi"})},
+        }]
+        assert "content" not in assistant_msg  # falsy content omitted for tool-call turns
+
 
 class TestLLMClientFactory:
     """Test cases for LLM client factory."""

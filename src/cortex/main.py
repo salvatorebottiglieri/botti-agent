@@ -164,9 +164,11 @@ async def initialize_app() -> CortexApp:
     # 5d. Create tool registry and executor
     from cortex.tools.executor import DefaultToolExecutor
     from cortex.tools.interfaces import ToolRegistry
+    from cortex.tools.meta import register_meta_tools
     from cortex.tools.registry import InMemoryToolRegistry
 
     tool_registry: ToolRegistry = InMemoryToolRegistry()
+    register_meta_tools(tool_registry)
     base_executor: ToolExecutor = DefaultToolExecutor(registry=tool_registry)
     tool_executor_service = ToolExecutorService(
         base_executor=base_executor,
@@ -244,6 +246,7 @@ async def initialize_app() -> CortexApp:
         "memory_service": cortex.memory_service,
         "minion_service": None,  # Will be initialized separately
         "llm_client": cortex.llm_client,
+        "tool_registry": tool_registry,
     }
 
     # Create FastAPI app with wired dependencies

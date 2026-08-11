@@ -236,6 +236,49 @@ class TestReasoner:
         assert decision.tool_calls[0].arguments == {"path": "/x"}
 
 
+    @pytest.mark.asyncio
+    async def test_reason_preserves_tool_call_ids_in_prompt(self, reasoner, mock_llm_client):
+        """Tool messages carry tool_call_id and assistant tool_calls (as
+        ToolCall objects) into the LLM prompt — provider-agnostic, no wire shape."""
+        from cortex.sessions.models import Message, MessageRole
+
+        mock_llm_client.chat = AsyncMock(return_value=MagicMock(content="ok", tool_calls=[]))
+        session_id = uuid4()
+        context = Context(session_id=session_id, conversation=[
+            Message(
+                session_id=session_id,
+                role=MessageRole.ASSISTANT,
+                content="",
+                tool_calls=[{
+                    "id": "call_x",
+                    "name": "shell",
+                    "arguments": {"command": "echo hi"},
+                }],
+            ),
+            Message(
+                session_id=session_id,
+                role=MessageRole.TOOL_RESULT,
+                content="output",
+                tool_call_id="call_x",
+            ),
+        ])
+
+        await reasoner.reason(context)
+
+        call_args = mock_llm_client.chat.call_args
+        messages = call_args[0][0] if call_args[0] else call_args[1]["messages"]
+        tool_msg = next(m for m in messages if m.role.value == "tool")
+        assistant_msg = next(
+            m for m in messages if m.role.value == "assistant" and m.tool_calls
+        )
+
+        assert tool_msg.tool_call_id == "call_x"
+        assert len(assistant_msg.tool_calls) == 1
+        assert assistant_msg.tool_calls[0].id == "call_x"
+        assert assistant_msg.tool_calls[0].name == "shell"
+        assert assistant_msg.tool_calls[0].arguments == {"command": "echo hi"}
+
+
 class TestReasonerEdgeCases:
     """Edge case tests for Reasoner."""
 

@@ -632,6 +632,50 @@ class TestStreamChat:
         assert done.tools_used == ["tool_a", "tool_b"]
 
     @pytest.mark.asyncio
+    async def test_tool_round_conversation_carries_tool_call_contract(
+        self, loop, mock_context_builder, mock_reasoner, mock_executor
+    ) -> None:
+        """The conversation injected into context carries an assistant message
+        with the tool calls (internal shape) and a tool_result message with
+        the matching tool_call_id — provider-agnostic, no LLM wire shape."""
+        from cortex.tools.interfaces import ToolResult
+
+        session_id = uuid4()
+        call_a = ToolCall(id="call_a", name="tool_a", arguments={"x": 1})
+
+        ctx = Context(session_id=session_id)
+        mock_context_builder.build = AsyncMock(return_value=ctx)
+        mock_reasoner.reason = AsyncMock(side_effect=[
+            Decision.execute_tools([call_a], reasoning="need tools"),
+            Decision.respond("All done.", reasoning="finished"),
+        ])
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="call_a", tool_name="tool_a", success=True, output="out_a",
+        ))
+
+        events = [e async for e in loop.stream_chat(session_id, "Run tools")]
+
+        assert events[-1].event_type == "done"
+
+        # Assistant message records the tool calls in the internal shape
+        assistant_msgs = [
+            m for m in ctx.conversation
+            if m.role == MessageRole.ASSISTANT and m.tool_calls
+        ]
+        assert len(assistant_msgs) == 1
+        assert assistant_msgs[0].tool_calls == [{
+            "id": "call_a",
+            "name": "tool_a",
+            "arguments": {"x": 1},
+        }]
+
+        # Tool result message references the call it answers
+        tool_msgs = [m for m in ctx.conversation if m.role == MessageRole.TOOL_RESULT]
+        assert len(tool_msgs) == 1
+        assert tool_msgs[0].tool_call_id == "call_a"
+        assert "out_a" in tool_msgs[0].content
+
+    @pytest.mark.asyncio
     async def test_empty_tool_calls_yields_fallback_response(
         self, loop, mock_context_builder, mock_reasoner
     ) -> None:

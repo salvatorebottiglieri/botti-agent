@@ -165,4 +165,28 @@ class OpenAIClient(LLMClient):
         if message.tool_call_id:
             result["tool_call_id"] = message.tool_call_id
 
+        if message.tool_calls:
+            result["tool_calls"] = self.translate_tool_calls(message.tool_calls)
+
         return result
+
+    def translate_tool_calls(self, tool_calls: list[ToolCall]) -> list[dict[str, Any]]:
+        """
+        Translate internal ToolCall objects to the OpenAI wire shape.
+
+        The wire shape (type/function nesting, JSON-string arguments) is a
+        provider detail — it never travels above this module.
+        """
+        import json
+
+        return [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": json.dumps(call.arguments),
+                },
+            }
+            for call in tool_calls
+        ]
