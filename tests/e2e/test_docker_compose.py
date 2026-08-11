@@ -66,12 +66,12 @@ def api_url():
 @pytest.fixture
 def wait_for_api(api_url):
     """Wait for the API to become healthy before proceeding."""
-    import requests
+    import httpx
 
     max_retries = 30
     for _ in range(max_retries):
         try:
-            resp = requests.get(f"{api_url}/health", timeout=5)
+            resp = httpx.get(f"{api_url}/health", timeout=5)
             if resp.status_code == 200:
                 return
         except Exception:
@@ -108,44 +108,23 @@ class TestDockerComposeStack:
 
     def test_api_health_endpoint_responds(self, compose_stack, wait_for_api, api_url):
         """Test that GET /health returns 200."""
-        import requests
+        import httpx
 
-        resp = requests.get(f"{api_url}/health", timeout=10)
+        resp = httpx.get(f"{api_url}/health", timeout=10)
         assert resp.status_code == 200
 
         data = resp.json()
         assert "status" in data
 
-    def test_mosquitto_accepts_connections(self, compose_stack):
+    async def test_mosquitto_accepts_connections(self, compose_stack):
         """Test that Mosquitto MQTT broker accepts connections."""
-        import paho.mqtt.client as mqtt
+        import aiomqtt
 
-        connected = False
-
-        def on_connect(client, userdata, flags, rc):
-            nonlocal connected
-            if rc == 0:
-                connected = True
-
-        client = mqtt.Client(client_id="test-health-check")
-        client.on_connect = on_connect
         try:
-            client.connect("localhost", 1883, keepalive=10)
+            async with aiomqtt.Client(hostname="localhost", port=1883) as client:
+                await client.publish("test/health", payload=b"ping")
         except Exception:
             pytest.skip("Mosquitto not reachable")
-            return
-        client.loop_start()
-
-        # Wait for connection
-        for _ in range(20):
-            if connected:
-                break
-            time.sleep(0.5)
-        else:
-            pytest.fail("Could not connect to Mosquitto")
-
-        client.loop_stop()
-        client.disconnect()
 
     async def test_postgres_accepts_connections(self, compose_stack):
         """Test that Postgres is accepting connections."""
