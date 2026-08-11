@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -19,6 +20,7 @@ from cortex.agentic.models import (
 from cortex.events import EventEmitter
 
 if TYPE_CHECKING:
+    from cortex.agentic.events import LoopEvent
     from cortex.events import EventBus
 
 logger = logging.getLogger(__name__)
@@ -89,6 +91,37 @@ class ExecutionModule:
                 message="I ran out of iterations. Please try a simpler request.",
                 iterations=max_iterations or 20,
             )
+
+    async def stream_chat(
+        self,
+        session_id: UUID,
+        user_message: str,
+        *,
+        max_iterations: int | None = None,
+    ) -> AsyncGenerator[LoopEvent, None]:
+        """
+        Stream chat progress events as a transparent passthrough.
+
+        Delegates to ``self._agent_loop.stream_chat(...)`` unchanged and
+        yields events as-is — including the yield-then-reraise error
+        contract: ``MaxIterationsError`` (and any other exception) is NOT
+        swallowed, unlike ``run_chat()``'s fallback.
+
+        Args:
+            session_id: Current session
+            user_message: User's message
+            max_iterations: Optional iteration limit
+
+        Yields:
+            LoopEvent progress signals (thinking, tool_start, tool_done,
+            text, done, error).
+        """
+        async for event in self._agent_loop.stream_chat(
+            session_id=session_id,
+            user_message=user_message,
+            max_iterations=max_iterations,
+        ):
+            yield event
 
     async def create_goal(
         self,

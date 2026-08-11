@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
+from cortex.agentic.events import (
+    ErrorEvent,
+    ResponseDoneEvent,
+    TextDeltaEvent,
+    ThinkingEvent,
+    ToolResultEvent,
+    ToolStartEvent,
+)
 from cortex.api.auth import get_api_key
 from cortex.api.dependencies import (
     get_execution_module,
@@ -20,6 +28,8 @@ from cortex.api.schemas import ChatRequest, ChatResponse, ErrorResponse
 if TYPE_CHECKING:
     from cortex.execution.module import ExecutionModule
     from cortex.interaction.service import InteractionService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -107,6 +117,13 @@ async def chat_stream(
     """
     Streaming chat endpoint using Server-Sent Events.
 
+    Session resolution happens before the stream starts: a provided
+    session_id that does not exist is an HTTP 404 (same as the
+    non-streaming endpoint); an absent session_id creates a session
+    through the same policy. The stream itself only iterates
+    ``execution_module.stream_chat()`` and maps each LoopEvent to an
+    SSE frame (one vocabulary — the event_type IS the wire name).
+
     Events emitted:
     - thinking: Agent is thinking
     - text: Text delta
@@ -115,48 +132,75 @@ async def chat_stream(
     - done: Response complete
     - error: Error occurred
     """
+    # Get or create session (before the stream, same policy as non-streaming)
+    if request.session_id:
+        session = await interaction_service.get_session(request.session_id)
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": "not_found", "detail": "Session not found"},
+            )
+        session_id = request.session_id
+    else:
+        session = await interaction_service._get_or_create_session(None)
+        session_id = session.id
+
+    max_iterations = request.max_iterations or 20
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        session_id: UUID | None = request.session_id
-
         try:
-            # Get or create session
-            if session_id:
-                session = await interaction_service.get_session(session_id)
-                if not session:
-                    yield _sse_event("error", {"message": "Session not found"})
-                    return
-            else:
-                session = await interaction_service._get_or_create_session(None)
-                session_id = session.id
-
-            # Send initial thinking event
-            yield _sse_event("thinking", {"message": "Processing your request..."})
-
-            # Run chat (simplified - full streaming would need loop modification)
-            max_iterations = request.max_iterations or 20
-
-            response = await execution_module.run_chat(
+            async for event in execution_module.stream_chat(
                 session_id=session_id,
                 user_message=request.message,
                 max_iterations=max_iterations,
-            )
-
-            # Stream the response text
-            yield _sse_event("text", {"delta": response.message})
-    # Stream the response text
-            yield _sse_event(
-                "done",
-                {
-                    "final_message": response.message,
-                    "tool_calls": response.tools_used or [],
-                    "iterations": response.iterations,
-                    "duration_ms": 0,  # TODO: track duration
-                },
-            )
-
-        except Exception as e:
-            yield _sse_event("error", {"message": str(e)})
+            ):
+                match event:
+                    case ThinkingEvent():
+                        yield _sse_event("thinking", {"message": event.message})
+                    case TextDeltaEvent():
+                        yield _sse_event("text", {"delta": event.delta})
+                    case ToolStartEvent():
+                        yield _sse_event(
+                            "tool_start",
+                            {
+                                "tool_name": event.tool_name,
+                                "tool_call_id": event.tool_call_id,
+                            },
+                        )
+                    case ToolResultEvent():
+                        yield _sse_event(
+                            "tool_done",
+                            {
+                                "tool_name": event.tool_name,
+                                "tool_call_id": event.tool_call_id,
+                                "success": event.success,
+                                "output": event.output,
+                                "error": event.error,
+                                "execution_time_ms": event.execution_time_ms,
+                            },
+                        )
+                    case ResponseDoneEvent():
+                        yield _sse_event(
+                            "done",
+                            {
+                                "final_message": event.message,
+                                "tool_calls": event.tools_used,
+                                "iterations": event.iterations,
+                            },
+                        )
+                    case ErrorEvent():
+                        # Terminal frame; the loop's reraise stays silent for
+                        # expected conditions (e.g. max_iterations).
+                        yield _sse_event("error", {"error": event.error, "code": event.code})
+                        return
+                    case _:
+                        # Never silently drop progress from an unknown event.
+                        logger.warning(f"Unhandled loop event: {type(event).__name__}")
+        except Exception as exc:
+            # Unexpected adapter errors (bugs, serialization) — logged, not silent.
+            logger.exception("Unexpected error streaming chat events")
+            yield _sse_event("error", {"error": str(exc), "code": None})
+            raise
 
     return StreamingResponse(
         event_generator(),
