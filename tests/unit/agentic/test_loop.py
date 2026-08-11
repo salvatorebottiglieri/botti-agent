@@ -5,6 +5,15 @@ from uuid import uuid4
 
 import pytest
 
+from cortex.agentic.events import (
+    ErrorEvent,
+    LoopEvent,
+    ResponseDoneEvent,
+    TextDeltaEvent,
+    ThinkingEvent,
+    ToolResultEvent,
+    ToolStartEvent,
+)
 from cortex.agentic.loop import AgentLoop
 from cortex.agentic.models import (
     ChatResponse,
@@ -304,3 +313,298 @@ class TestAgentLoopEdgeCases:
 
         # Context should include conversation history
         assert mock_context_builder.build.called
+
+
+class TestStreamChat:
+    """Tests for AgentLoop.stream_chat async generator."""
+
+    @pytest.fixture
+    def mock_context_builder(self):
+        """Create a mock context builder."""
+        builder = MagicMock()
+        builder.build = AsyncMock()
+        return builder
+
+    @pytest.fixture
+    def mock_reasoner(self):
+        """Create a mock reasoner."""
+        reasoner = MagicMock()
+        reasoner.reason = AsyncMock()
+        return reasoner
+
+    @pytest.fixture
+    def mock_executor(self):
+        """Create a mock executor."""
+        executor = MagicMock()
+        executor.execute_tools = AsyncMock()
+        executor.execute_single = AsyncMock()
+        return executor
+
+    @pytest.fixture
+    def mock_event_bus(self):
+        """Create a mock event bus."""
+        bus = MagicMock()
+        bus.publish = AsyncMock()
+        return bus
+
+    @pytest.fixture
+    def loop(self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus):
+        """Create an AgentLoop."""
+        return AgentLoop(
+            context_builder=mock_context_builder,
+            reasoner=mock_reasoner,
+            executor=mock_executor,
+            event_bus=mock_event_bus,
+        )
+
+    @pytest.mark.asyncio
+    async def test_respond_event_sequence(
+        self, loop, mock_context_builder, mock_reasoner
+    ) -> None:
+        """RESPOND yields thinking -> text -> done with correct payloads."""
+        session_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.respond(
+            "Hello!", reasoning="decided to greet",
+        ))
+
+        events = [e async for e in loop.stream_chat(session_id, "Hi")]
+
+        assert [e.event_type for e in events] == ["thinking", "text", "done"]
+        assert isinstance(events[0], ThinkingEvent)
+        assert events[0].message == "decided to greet"
+        assert isinstance(events[1], TextDeltaEvent)
+        assert events[1].delta == "Hello!"
+        assert isinstance(events[2], ResponseDoneEvent)
+        assert events[2].message == "Hello!"
+        assert events[2].iterations == 0
+        assert events[2].tools_used == []
+        assert all(e.session_id == session_id for e in events)
+
+    @pytest.mark.asyncio
+    async def test_ask_question_event_sequence(
+        self, loop, mock_context_builder, mock_reasoner
+    ) -> None:
+        """ASK_QUESTION yields thinking -> text -> done with the question."""
+        session_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.ask_question(
+            "Did you mean file A or file B?", reasoning="need clarification",
+        ))
+
+        events = [e async for e in loop.stream_chat(session_id, "Open the file")]
+
+        assert [e.event_type for e in events] == ["thinking", "text", "done"]
+        assert isinstance(events[1], TextDeltaEvent)
+        assert events[1].delta == "Did you mean file A or file B?"
+        assert isinstance(events[2], ResponseDoneEvent)
+        assert events[2].message == "Did you mean file A or file B?"
+        assert events[2].iterations == 0
+        assert events[2].tools_used == []
+
+    @pytest.mark.asyncio
+    async def test_tool_round_interleaves_start_result(
+        self, loop, mock_context_builder, mock_reasoner, mock_executor
+    ) -> None:
+        """ToolStartEvent precedes ToolResultEvent per call, interleaved."""
+        from cortex.tools.interfaces import ToolResult
+
+        session_id = uuid4()
+        call_a = ToolCall(id="call_a", name="tool_a", arguments={"x": 1})
+        call_b = ToolCall(id="call_b", name="tool_b", arguments={"y": 2})
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(side_effect=[
+            Decision.execute_tools([call_a, call_b], reasoning="need tools"),
+            Decision.respond("All done.", reasoning="finished"),
+        ])
+        mock_executor.execute_single = AsyncMock(side_effect=[
+            ToolResult(tool_call_id="call_a", tool_name="tool_a", success=True, output="out_a"),
+            ToolResult(tool_call_id="call_b", tool_name="tool_b", success=True, output="out_b"),
+        ])
+
+        events = [e async for e in loop.stream_chat(session_id, "Run tools")]
+
+        assert [e.event_type for e in events] == [
+            "thinking", "tool_start", "tool_done",
+            "tool_start", "tool_done",
+            "thinking", "text", "done",
+        ]
+
+        # Interleave: each call's start precedes its own result
+        start_a = next(
+            i for i, e in enumerate(events)
+            if isinstance(e, ToolStartEvent) and e.tool_call_id == "call_a"
+        )
+        result_a = next(
+            i for i, e in enumerate(events)
+            if isinstance(e, ToolResultEvent) and e.tool_call_id == "call_a"
+        )
+        start_b = next(
+            i for i, e in enumerate(events)
+            if isinstance(e, ToolStartEvent) and e.tool_call_id == "call_b"
+        )
+        result_b = next(
+            i for i, e in enumerate(events)
+            if isinstance(e, ToolResultEvent) and e.tool_call_id == "call_b"
+        )
+        assert start_a < result_a < start_b < result_b
+
+        # Tool result payloads match their calls
+        result_a_event = events[result_a]
+        assert isinstance(result_a_event, ToolResultEvent)
+        assert result_a_event.tool_name == "tool_a"
+        assert result_a_event.success is True
+        assert result_a_event.output == "out_a"
+
+        # One thinking per iteration
+        assert sum(isinstance(e, ThinkingEvent) for e in events) == 2
+
+        # Final done carries iterations and tools used
+        done = events[-1]
+        assert isinstance(done, ResponseDoneEvent)
+        assert done.iterations == 1
+        assert done.tools_used == ["tool_a", "tool_b"]
+
+    @pytest.mark.asyncio
+    async def test_empty_tool_calls_yields_fallback_response(
+        self, loop, mock_context_builder, mock_reasoner
+    ) -> None:
+        """Empty EXECUTE_TOOLS yields fallback text + done, iterations unchanged."""
+        session_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.execute_tools(
+            [], reasoning="no tools available",
+        ))
+
+        events = [e async for e in loop.stream_chat(session_id, "Do something")]
+
+        assert [e.event_type for e in events] == ["thinking", "text", "done"]
+        assert isinstance(events[1], TextDeltaEvent)
+        assert events[1].delta == "I couldn't determine what tools to use."
+        assert isinstance(events[2], ResponseDoneEvent)
+        assert events[2].message == "I couldn't determine what tools to use."
+        assert events[2].iterations == 0
+        assert events[2].tools_used == []
+
+    @pytest.mark.asyncio
+    async def test_max_iterations_yields_error_then_raises(
+        self, loop, mock_context_builder, mock_reasoner, mock_executor
+    ) -> None:
+        """Exceeding max iterations yields ErrorEvent(code=max_iterations), then raises."""
+        from cortex.tools.interfaces import ToolResult
+
+        session_id = uuid4()
+        call = ToolCall(id="call_1", name="shell", arguments={"cmd": "true"})
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.execute_tools(
+            [call], reasoning="running",
+        ))
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="call_1", tool_name="shell", success=True, output="ok",
+        ))
+
+        events: list[LoopEvent] = []
+        with pytest.raises(MaxIterationsError):
+            async for event in loop.stream_chat(session_id, "Loop", max_iterations=2):
+                events.append(event)
+
+        error_events = [
+            e for e in events if isinstance(e, ErrorEvent) and e.code == "max_iterations"
+        ]
+        assert error_events
+        assert error_events[0].session_id == session_id
+        assert isinstance(events[-1], ErrorEvent)
+
+    @pytest.mark.asyncio
+    async def test_exception_yields_error_then_reraises(
+        self, loop, mock_context_builder, mock_reasoner
+    ) -> None:
+        """A generic exception yields ErrorEvent(code=None), then re-raises."""
+        session_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(side_effect=ValueError("boom"))
+
+        events: list[LoopEvent] = []
+        with pytest.raises(ValueError, match="boom"):
+            async for event in loop.stream_chat(session_id, "Hi"):
+                events.append(event)
+
+        assert any(
+            isinstance(e, ErrorEvent) and e.code is None and e.error == "boom"
+            for e in events
+        )
+
+    @pytest.mark.asyncio
+    async def test_tool_failure_yields_result_not_error(
+        self, loop, mock_context_builder, mock_reasoner, mock_executor
+    ) -> None:
+        """A failed tool yields ToolResultEvent(success=False); loop continues."""
+        from cortex.tools.interfaces import ToolResult
+
+        session_id = uuid4()
+        call = ToolCall(id="call_1", name="shell", arguments={"cmd": "false"})
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(side_effect=[
+            Decision.execute_tools([call], reasoning="running"),
+            Decision.respond("Recovered.", reasoning="continued"),
+        ])
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="call_1", tool_name="shell", success=False, error="nope",
+        ))
+
+        events = [e async for e in loop.stream_chat(session_id, "Try it")]
+
+        assert not any(isinstance(e, ErrorEvent) for e in events)
+        result_event = next(e for e in events if isinstance(e, ToolResultEvent))
+        assert result_event.success is False
+        assert result_event.error == "nope"
+        # The loop continued: a second thinking step followed the failure
+        assert sum(isinstance(e, ThinkingEvent) for e in events) == 2
+        assert isinstance(events[-1], ResponseDoneEvent)
+        assert events[-1].message == "Recovered."
+
+    @pytest.mark.asyncio
+    async def test_stream_parity_with_run_chat(
+        self, loop, mock_context_builder, mock_reasoner, mock_executor
+    ) -> None:
+        """stream_chat and run_chat agree on message, iterations, tools_used."""
+        from cortex.tools.interfaces import ToolResult
+
+        session_id = uuid4()
+        call_a = ToolCall(id="call_a", name="search", arguments={"q": "x"})
+        call_b = ToolCall(id="call_b", name="read", arguments={"path": "/y"})
+        results = [
+            ToolResult(tool_call_id="call_a", tool_name="search", success=True, output="found"),
+            ToolResult(tool_call_id="call_b", tool_name="read", success=True, output="content"),
+        ]
+        script = [
+            Decision.execute_tools([call_a, call_b], reasoning="search then read"),
+            Decision.respond("Here is the answer.", reasoning="synthesized"),
+        ]
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+
+        # Drain stream_chat
+        mock_reasoner.reason = AsyncMock(side_effect=list(script))
+        mock_executor.execute_single = AsyncMock(side_effect=list(results))
+        stream_events = [e async for e in loop.stream_chat(session_id, "Find it")]
+        done_event = next(e for e in stream_events if isinstance(e, ResponseDoneEvent))
+
+        # run_chat with the same script
+        mock_reasoner.reason = AsyncMock(side_effect=list(script))
+        mock_executor.execute_tools = AsyncMock(return_value=list(results))
+        response = await loop.run_chat(session_id, "Find it")
+
+        assert done_event.message == response.message
+        assert done_event.iterations == response.iterations
+        assert done_event.tools_used == response.tools_used
+        assert done_event.message == "Here is the answer."
+        assert done_event.iterations == 1
+        assert done_event.tools_used == ["search", "read"]

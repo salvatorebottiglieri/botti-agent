@@ -4,9 +4,19 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
+from cortex.agentic.events import (
+    ErrorEvent,
+    LoopEvent,
+    ResponseDoneEvent,
+    TextDeltaEvent,
+    ThinkingEvent,
+    ToolResultEvent,
+    ToolStartEvent,
+)
 from cortex.agentic.models import (
     ChatResponse,
     DecisionType,
@@ -159,6 +169,145 @@ class AgentLoop:
 
         # Exceeded max iterations
         raise MaxIterationsError(max_iters)
+
+    async def stream_chat(
+        self,
+        session_id: UUID,
+        user_message: str,
+        *,
+        max_iterations: int | None = None,
+    ) -> AsyncGenerator[LoopEvent, None]:
+        """
+        Run loop for chat mode, streaming progress events.
+
+        Yields:
+            LoopEvent progress signals as the loop runs: a ThinkingEvent per
+            iteration, ToolStartEvent/ToolResultEvent per tool call, a
+            TextDeltaEvent with the response text, then ResponseDoneEvent.
+
+        Errors:
+            On any failure an ErrorEvent is yielded first — code
+            "max_iterations" for MaxIterationsError, else None — and then the
+            original exception propagates out of the generator.
+
+        Raises:
+            MaxIterationsError: If loop exceeds max iterations
+        """
+        max_iters = max_iterations or self._max_chat_iterations
+        iterations = 0
+        tools_used: list[str] = []
+        messages: list[Message] = []
+
+        # Add user message
+        messages.append(Message(
+            session_id=session_id,
+            role=MessageRole.USER,
+            content=user_message,
+        ))
+
+        try:
+            while iterations < max_iters:
+                # 1. Context - build reasoning context
+                context = await self._context_builder.build(
+                    session_id=session_id,
+                    user_message=user_message,
+                    mode=Mode.CHAT,
+                )
+
+                # Inject current messages into context
+                context.conversation = messages
+
+                # 2. Think - reason about what to do
+                decision = await self._reasoner.reason(context)
+
+                # Emit the reasoning step for this iteration
+                yield ThinkingEvent(session_id, message=decision.reasoning)
+
+                # Handle decision
+                match decision.decision_type:
+                    case DecisionType.RESPOND:
+                        # Done! Stream the response
+                        text = decision.text or "I'm not sure how to respond."
+                        yield TextDeltaEvent(session_id, delta=text)
+                        yield ResponseDoneEvent(
+                            session_id,
+                            message=text,
+                            tools_used=tools_used,
+                            iterations=iterations,
+                        )
+                        return
+
+                    case DecisionType.ASK_QUESTION:
+                        # Return the question
+                        text = decision.text or "Could you clarify?"
+                        yield TextDeltaEvent(session_id, delta=text)
+                        yield ResponseDoneEvent(
+                            session_id,
+                            message=text,
+                            tools_used=tools_used,
+                            iterations=iterations,
+                        )
+                        return
+
+                    case DecisionType.EXECUTE_TOOLS:
+                        # 3. Act - execute tools
+                        if decision.tool_calls:
+                            for call in decision.tool_calls:
+                                # Track tools used
+                                tools_used.append(call.name)
+
+                                yield ToolStartEvent(
+                                    session_id,
+                                    tool_name=call.name,
+                                    tool_call_id=call.id,
+                                )
+
+                                result = await self._executor.execute_single(call)
+
+                                yield ToolResultEvent(
+                                    session_id,
+                                    tool_name=result.tool_name,
+                                    tool_call_id=result.tool_call_id,
+                                    success=result.success,
+                                    output=result.output,
+                                    error=result.error,
+                                    execution_time_ms=result.execution_time_ms,
+                                )
+
+                                # 4. Observe - add tool result to conversation
+                                msg = Message(
+                                    session_id=session_id,
+                                    role=MessageRole.TOOL_RESULT,
+                                    content=(
+                                        result.output or ""
+                                        if result.success
+                                        else f"Error: {result.error}"
+                                    ),
+                                )
+                                messages.append(msg)
+
+                            iterations += 1
+                        else:
+                            # No tools to execute, respond
+                            fallback = "I couldn't determine what tools to use."
+                            yield TextDeltaEvent(session_id, delta=fallback)
+                            yield ResponseDoneEvent(
+                                session_id,
+                                message=fallback,
+                                tools_used=tools_used,
+                                iterations=iterations,
+                            )
+                            return
+
+            # Exceeded max iterations
+            raise MaxIterationsError(max_iters)
+        except Exception as exc:
+            yield ErrorEvent(
+                session_id,
+                error=str(exc),
+                code="max_iterations" if isinstance(exc, MaxIterationsError) else None,
+            )
+            raise exc
 
     async def run_goal(
         self,
