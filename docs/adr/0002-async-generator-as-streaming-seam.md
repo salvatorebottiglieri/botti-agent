@@ -33,3 +33,11 @@ The obsolete `loop.*` members in `EventTypes` (loop.started, loop.thought, loop.
 - `EXECUTE_TOOLS` with an empty `tool_calls` list responds with the fallback text ("I couldn't determine what tools to use.") as a normal `TextDeltaEvent` + `ResponseDoneEvent` — parity with `run_chat`, iterations not incremented.
 - `TextDeltaEvent` is one event per RESPOND/ASK_QUESTION carrying the full response text. "Delta" means a unit of response text — chunk size is never guaranteed; multiple deltas per response only materialize if the reasoner streams tokens.
 - `run_chat()` is untouched by #15; its drainer rewrite is #16.
+
+## Consequences (refined during #17)
+
+- `ExecutionModule` exposes a transparent `stream_chat()` passthrough: it delegates to `AgentLoop.stream_chat()` unchanged — no `MaxIterationsError` swallowing (unlike `run_chat()`'s fallback). The yield-then-reraise contract must reach the consumer intact; the SSE adapter is the consumer that decides what to do with the reraise.
+- SSE wire format is an explicit minimal mapping, not `to_dict()`: `thinking{message}`, `text{delta}`, `tool_start{tool_name,tool_call_id}`, `tool_done{tool_name,tool_call_id,success,output,error,execution_time_ms}`, `done{final_message,tool_calls,iterations}`, `error{error,code}`. `done` renames `message`→`final_message` and `tools_used`→`tool_calls`; `session_id` and `duration_ms` are not on the wire — a per-request SSE connection needs no session attribution, and nothing measures duration.
+- Session resolution happens before the stream starts: a missing session is an HTTP 404, never an in-stream `error` frame. The stream itself only iterates `stream_chat()`.
+- Error policy: on `ErrorEvent` the adapter yields the `error` frame and returns — the loop's reraise stays silent, so expected conditions like `max_iterations` produce no server traceback. Unexpected exceptions in the adapter yield an `error{code:null}` frame and then re-raise, so bugs are logged.
+- Consequence of the above: streaming and non-streaming diverge on max-iterations — the stream emits `error{code:"max_iterations"}` and ends, while non-streaming `run_chat()` returns the friendly fallback message.

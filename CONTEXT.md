@@ -43,6 +43,10 @@ _Avoid_: Done event, completion event, final event
 The consumer that takes the loop's streaming progress and reduces it to a single final response, discarding intermediate signals (thinking, tool activity). Uses the stream when progress matters; uses the drain when only the result matters. Loop errors surface unchanged — the drain never swallows or rewraps them.
 _Avoid_: Convenience wrapper, non-streaming call, response collector
 
+**SSE adapter**:
+The consumer that serializes LoopEvents to SSE frames for the streaming chat endpoint (`/chat/stream`). The wire name of each frame IS the event's `event_type` — one vocabulary, no mapping table — and frames are explicit and minimal: the `done` frame renames `message`→`final_message` and `tools_used`→`tool_calls`. A loop error ends the stream with an `error` frame carrying the error text and code; session lookup happens before the stream starts, so a missing session is an HTTP 404, not an in-stream error.
+_Avoid_: Stream adapter, SSE endpoint, chat stream
+
 **System Event**:
 An event published on the Cortex event bus for any module to consume (e.g. goal.created, concept.rejected). Distinct from LoopEvent: system events are system-wide domain information; LoopEvents are per-caller progress.
 _Avoid_: Domain event, bus event
