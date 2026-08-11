@@ -147,19 +147,19 @@ class TestDockerComposeStack:
         client.loop_stop()
         client.disconnect()
 
-    def test_postgres_accepts_connections(self, compose_stack):
+    async def test_postgres_accepts_connections(self, compose_stack):
         """Test that Postgres is accepting connections."""
-        import psycopg2
+        import asyncpg
 
         try:
-            conn = psycopg2.connect(
+            conn = await asyncpg.connect(
                 host="localhost",
                 port=5432,
                 user="cortex",
                 password="cortex",
                 database="cortex",
-                connect_timeout=10,
+                timeout=10,
             )
-            conn.close()
+            await conn.close()
         except Exception:
             pytest.skip("Postgres not reachable")
