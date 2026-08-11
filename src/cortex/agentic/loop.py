@@ -78,6 +78,13 @@ class AgentLoop:
         """
         Run loop for chat mode.
 
+        Drain wrapper over stream_chat(): consumes the generator, accumulates
+        the response text from TextDeltaEvent deltas and the final metadata
+        from ResponseDoneEvent, and returns the resulting ChatResponse.
+        Progress events (thinking, tool start/result) and ErrorEvent are
+        ignored — the generator re-raises the original exception, so errors
+        propagate unchanged.
+
         Args:
             session_id: Current session
             user_message: The user's message
@@ -89,86 +96,28 @@ class AgentLoop:
         Raises:
             MaxIterationsError: If loop exceeds max iterations
         """
-        max_iters = max_iterations or self._max_chat_iterations
-        iterations = 0
+        response_text = ""
         tools_used: list[str] = []
-        messages: list[Message] = []
-
-        # Add user message
-        messages.append(Message(
+        iterations = 0
+        async for event in self.stream_chat(
             session_id=session_id,
-            role=MessageRole.USER,
-            content=user_message,
-        ))
-
-        while iterations < max_iters:
-            # 1. Context - build reasoning context
-            context = await self._context_builder.build(
-                session_id=session_id,
-                user_message=user_message,
-                mode=Mode.CHAT,
-            )
-
-            # Inject current messages into context
-            context.conversation = messages
-
-            # 2. Think - reason about what to do
-            decision = await self._reasoner.reason(context)
-
-            # Handle decision
-            match decision.decision_type:
-                case DecisionType.RESPOND:
-                    # Done! Return the response
-                    return ChatResponse(
-                        message=decision.text or "I'm not sure how to respond.",
-                        iterations=iterations,
-                        tools_used=tools_used,
-                        session_id=session_id,
-                    )
-
-                case DecisionType.ASK_QUESTION:
-                    # Return the question
-                    return ChatResponse(
-                        message=decision.text or "Could you clarify?",
-                        iterations=iterations,
-                        tools_used=tools_used,
-                        session_id=session_id,
-                    )
-
-                case DecisionType.EXECUTE_TOOLS:
-                    # 3. Act - execute tools
-                    if decision.tool_calls:
-                        results = await self._executor.execute_tools(decision.tool_calls)
-
-                        # Track tools used
-                        for call in decision.tool_calls:
-                            tools_used.append(call.name)
-
-                        # 4. Observe - add tool results to conversation
-                        for call, result in zip(decision.tool_calls, results):
-                            msg = Message(
-                                session_id=session_id,
-                                role=MessageRole.TOOL_RESULT,
-                                content=(
-                                    result.output or ""
-                                    if result.success
-                                    else f"Error: {result.error}"
-                                ),
-                            )
-                            messages.append(msg)
-
-                        iterations += 1
-                    else:
-                        # No tools to execute, respond
-                        return ChatResponse(
-                            message="I couldn't determine what tools to use.",
-                            iterations=iterations,
-                            tools_used=tools_used,
-                            session_id=session_id,
-                        )
-
-        # Exceeded max iterations
-        raise MaxIterationsError(max_iters)
+            user_message=user_message,
+            max_iterations=max_iterations,
+        ):
+            match event:
+                case TextDeltaEvent(delta=delta):
+                    response_text += delta
+                case ResponseDoneEvent(tools_used=used, iterations=iters):
+                    tools_used, iterations = used, iters
+                # Ignore progress events; stream_chat re-raises the original exception
+                case _:
+                    pass
+        return ChatResponse(
+            message=response_text,
+            tools_used=tools_used,
+            iterations=iterations,
+            session_id=session_id,
+        )
 
     async def stream_chat(
         self,
