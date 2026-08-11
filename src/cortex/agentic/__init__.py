@@ -4,6 +4,15 @@ Provides the core agentic loop: Think → Act → Observe → Respond.
 """
 
 from cortex.agentic.context_builder import ContextBuilder
+from cortex.agentic.events import (
+    ErrorEvent,
+    LoopEvent,
+    ResponseDoneEvent,
+    TextDeltaEvent,
+    ThinkingEvent,
+    ToolResultEvent,
+    ToolStartEvent,
+)
 from cortex.agentic.executor import LoopExecutor
 from cortex.agentic.loop import AgentLoop
 from cortex.agentic.models import (
@@ -41,6 +50,14 @@ __all__ = [
     "GoalStep",
     "GoalResult",
     "MaxIterationsError",
+    # Streaming
+    "ErrorEvent",
+    "LoopEvent",
+    "ResponseDoneEvent",
+    "TextDeltaEvent",
+    "ThinkingEvent",
+    "ToolResultEvent",
+    "ToolStartEvent",
     # Core
     "ContextBuilder",
     "Reasoner",

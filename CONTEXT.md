@@ -24,3 +24,13 @@ Enum: CLOSED, OPEN, HALF_OPEN. Represents the current state of a circuit breaker
 **LLMFactory**:
 Creates LLMClient instances. Each consumer module (Execution, Memory, Learning) gets its own CircuitBreakerLLMClient with an independent CircuitBreaker, so failures in one module don't affect others.
 _Avoid_: Factory, provider factory
+
+## Agentic Loop
+
+**LoopEvent**:
+A progress signal the AgentLoop emits for its caller (SSE, CLI) as it runs: thinking, text deltas, tool start/result, done, error. Caller-scoped — never published on the event bus.
+_Avoid_: Stream event, loop bus event
+
+**System Event**:
+An event published on the Cortex event bus for any module to consume (e.g. goal.created, concept.rejected). Distinct from LoopEvent: system events are system-wide domain information; LoopEvents are per-caller progress.
+_Avoid_: Domain event, bus event

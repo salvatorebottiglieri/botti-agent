@@ -1021,13 +1021,7 @@ The Agentic Loop is the heart of Cortex. It implements the Think → Act → Obs
 
 **Event Emissions:**
 
-| Event | When |
-|-------|-------|
-| `loop.started` | Loop begins |
-| `loop.thought` | LLM makes decision |
-| `loop.tools_executed` | Tools completed |
-| `loop.completed` | Loop ends successfully |
-| `loop.error` | Error occurred |
+Loop progress is not published to the event bus. It is exposed to the caller via the `LoopEvent` streaming seam (ADR-0002): `stream_chat()` yields `LoopEvent` instances (see `src/cortex/agentic/events.py`) whose wire names are `thinking`, `text`, `tool_start`, `tool_done`, `done`, `error`.
 
 **Dynamic spawning:**
 - Can spawn temporary worker processes for complex tasks

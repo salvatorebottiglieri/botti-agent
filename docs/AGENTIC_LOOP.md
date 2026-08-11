@@ -792,58 +792,33 @@ class AgentLoop:
 
 ## Event Emissions
 
-The loop emits events for observability and learning:
+Loop progress is exposed to the loop's caller via `stream_chat()`, which yields
+`LoopEvent` instances (defined in `src/cortex/agentic/events.py`, per ADR-0002).
+These are caller-scoped progress signals — they are **not** published to the
+event bus. Each event's `event_type` is the wire name directly, one vocabulary
+with no mapping table: `thinking`, `text`, `tool_start`, `tool_done`, `done`,
+`error`.
 
 ```python
-# On loop start
-event_bus.publish(Event(
-    type="loop.started",
-    payload={
-        "session_id": session_id,
-        "mode": "chat" | "goal",
-        "user_message": "...",  # Truncated
-    }
-))
-
-# After each LLM call
-event_bus.publish(Event(
-    type="loop.thought",
-    payload={
-        "decision": "respond" | "execute_tools" | "ask_question",
-        "tool_calls": [...],  # If applicable
-        "reasoning": "...",  # If available from LLM
-    }
-))
-
-# After tool execution
-event_bus.publish(Event(
-    type="loop.tools_executed",
-    payload={
-        "tools": [...],
-        "results": [...],
-    }
-))
-
-# On loop completion
-event_bus.publish(Event(
-    type="loop.completed",
-    payload={
-        "iterations": 3,
-        "tools_used": [...],
-        "final_message": "...",
-    }
-))
-
-# On error
-event_bus.publish(Event(
-    type="loop.error",
-    payload={
-        "error_type": "...",
-        "error_message": "...",
-        "recovered": True | False,
-    }
-))
+async for event in stream_chat(session_id=session_id, message=message):
+    # event is a LoopEvent; event.event_type is the SSE wire name
+    match event.event_type:
+        case "thinking":    # ThinkingEvent — a reasoning step
+            ...
+        case "text":        # TextDeltaEvent — a delta of the final response
+            ...
+        case "tool_start":  # ToolStartEvent — a tool call is about to execute
+            ...
+        case "tool_done":   # ToolResultEvent — a tool call finished
+            ...
+        case "done":        # ResponseDoneEvent — the response is complete
+            ...
+        case "error":       # ErrorEvent — the loop failed
+            ...
 ```
+
+Callers that only need the final result use the non-streaming wrapper
+`run_chat()`, which drains the generator into a `ChatResponse`.
 
 ---
 

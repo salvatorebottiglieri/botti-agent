@@ -38,12 +38,5 @@ class EventTypes(StrEnum):
     MODULE_SPAWN = "module.spawn"
     MODULE_TERMINATE = "module.terminate"
 
-    # ─── Agentic Loop ─────────────────────────────────────────
-    LOOP_STARTED = "loop.started"
-    LOOP_THOUGHT = "loop.thought"
-    LOOP_TOOLS_EXECUTED = "loop.tools_executed"
-    LOOP_COMPLETED = "loop.completed"
-    LOOP_ERROR = "loop.error"
-
     # ─── Wildcard ─────────────────────────────────────────────
     ALL = "*"
