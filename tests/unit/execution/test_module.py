@@ -2,11 +2,18 @@
 
 from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
-from cortex.agentic.models import ChatResponse, GoalResult, GoalStatus
+from cortex.agentic.events import (
+    ErrorEvent,
+    ResponseDoneEvent,
+    TextDeltaEvent,
+    ThinkingEvent,
+    ToolStartEvent,
+)
+from cortex.agentic.models import ChatResponse, GoalResult, GoalStatus, MaxIterationsError
 from cortex.execution.module import ExecutionModule
 
 
@@ -146,8 +153,6 @@ class TestExecutionModule:
 
     @pytest.mark.asyncio
     async def test_run_goal_max_iterations(self, mock_event_bus):
-        from cortex.agentic.models import MaxIterationsError
-
         mock_loop = MagicMock()
         mock_loop.run_goal = AsyncMock(side_effect=MaxIterationsError(10))
 
@@ -243,3 +248,77 @@ class TestExecutionModuleEdgeCases:
 
         # Should not raise
         await module.handle_event(mock_event)
+
+
+class TestExecutionModuleStreamChat:
+    """ExecutionModule.stream_chat transparent passthrough (user story 7)."""
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_passes_events_through_unchanged(self):
+        """Events pass through in order, unchanged, with arguments delegated."""
+        session_id = uuid4()
+        scripted = [
+            ThinkingEvent(session_id=session_id, message="reasoning"),
+            ToolStartEvent(session_id=session_id, tool_name="web_search", tool_call_id="call_1"),
+            TextDeltaEvent(session_id=session_id, delta="hi"),
+            ResponseDoneEvent(
+                session_id=session_id,
+                message="hi",
+                tools_used=["web_search"],
+                iterations=1,
+            ),
+        ]
+
+        class FakeLoop:
+            calls: list[tuple[UUID, str, int | None]] = []
+
+            async def stream_chat(
+                self,
+                session_id: UUID,
+                user_message: str,
+                *,
+                max_iterations: int | None = None,
+            ):
+                FakeLoop.calls.append((session_id, user_message, max_iterations))
+                for event in scripted:
+                    yield event
+
+        module = ExecutionModule(agent_loop=FakeLoop())
+
+        seen = [event async for event in module.stream_chat(session_id, "hello")]
+
+        assert seen == scripted
+        assert FakeLoop.calls == [(session_id, "hello", None)]
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_reraises_max_iterations_after_error_event(self):
+        """The yield-then-reraise contract survives the passthrough: an
+        ErrorEvent is yielded, then MaxIterationsError propagates (unlike
+        run_chat's fallback)."""
+        session_id = uuid4()
+
+        class FakeLoop:
+            async def stream_chat(
+                self,
+                session_id: UUID,
+                user_message: str,
+                *,
+                max_iterations: int | None = None,
+            ):
+                yield ErrorEvent(
+                    session_id=session_id,
+                    error="Max iterations exceeded",
+                    code="max_iterations",
+                )
+                raise MaxIterationsError(max_iterations or 20)
+
+        module = ExecutionModule(agent_loop=FakeLoop())
+
+        seen: list[ErrorEvent] = []
+        with pytest.raises(MaxIterationsError):
+            async for event in module.stream_chat(session_id, "hello", max_iterations=3):
+                seen.append(event)
+
+        assert len(seen) == 1
+        assert isinstance(seen[0], ErrorEvent)
+        assert seen[0].code == "max_iterations"

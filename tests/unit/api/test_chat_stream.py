@@ -139,12 +139,43 @@ class TestChatStreamSSE:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
         assert response.headers["cache-control"] == "no-cache"
+        assert response.headers["connection"] == "keep-alive"
+        assert response.headers["x-accel-buffering"] == "no"
         assert parse_sse(response.text) == [
             ("thinking", {"message": "Let me reason."}),
             ("text", {"delta": "Hello there!"}),
             ("done", {"final_message": "Hello there!", "tool_calls": [], "iterations": 1}),
         ]
         assert fake_exec.calls == [(session_id, "hi", 20)]
+
+    def test_multiple_text_deltas_yield_one_frame_each_in_order(self):
+        """Two TextDeltaEvents produce two text frames in order — text
+        streams as it accumulates, not just at the end."""
+        session_id = uuid4()
+        fake_exec = FakeExecutionModule([
+            TextDeltaEvent(session_id=session_id, delta="Hello "),
+            TextDeltaEvent(session_id=session_id, delta="world!"),
+            ResponseDoneEvent(
+                session_id=session_id,
+                message="Hello world!",
+                tools_used=[],
+                iterations=1,
+            ),
+        ])
+        fake_interaction = FakeInteractionService(existing_session=Session(id=session_id))
+        client = build_client(fake_exec, fake_interaction)
+
+        response = client.post(
+            "/chat/stream",
+            json={"message": "hi", "session_id": str(session_id)},
+            headers=AUTH_HEADERS,
+        )
+
+        assert parse_sse(response.text) == [
+            ("text", {"delta": "Hello "}),
+            ("text", {"delta": "world!"}),
+            ("done", {"final_message": "Hello world!", "tool_calls": [], "iterations": 1}),
+        ]
 
     def test_tool_round_interleaves_start_done_pairs(self):
         """ToolStartEvent/ToolResultEvent interleave as paired frames carrying
@@ -340,6 +371,33 @@ class TestChatStreamSSE:
             ("error", {"error": "Max iterations exceeded", "code": "max_iterations"}),
         ]
 
+    def test_error_event_passes_null_code_through(self):
+        """An ErrorEvent with code None must put null on the wire — the
+        documented contract is 'max_iterations' for MaxIterationsError, null
+        otherwise, and the arm passes event.code through unchanged."""
+        session_id = uuid4()
+        fake_exec = FakeExecutionModule([
+            ErrorEvent(
+                session_id=session_id,
+                error="Tool exhausted retries",
+                code=None,
+            ),
+            TextDeltaEvent(session_id=session_id, delta="must not stream"),
+        ])
+        fake_interaction = FakeInteractionService(existing_session=Session(id=session_id))
+        client = build_client(fake_exec, fake_interaction)
+
+        response = client.post(
+            "/chat/stream",
+            json={"message": "hi", "session_id": str(session_id)},
+            headers=AUTH_HEADERS,
+        )
+
+        assert response.status_code == 200
+        assert parse_sse(response.text) == [
+            ("error", {"error": "Tool exhausted retries", "code": None}),
+        ]
+
     def test_unexpected_exception_yields_error_null_frame_and_reraises(self):
         """An exception escaping stream_chat without an ErrorEvent yields an
         error{code: null} frame, then the exception re-raises (surfaces out
@@ -381,91 +439,12 @@ class TestChatStreamSSE:
         ]
 
         # Through the full HTTP path the exception surfaces out of the
-        # stream (never swallowed into a silent end).
+        # stream (never swallowed into a silent end). It raises at the
+        # stream entry, before httpx constructs a Response, so no body is
+        # iterated.
         surfacing_client = build_client(fake_exec, fake_interaction, raise_server_exceptions=True)
         with pytest.raises(RuntimeError, match="boom"):
             with surfacing_client.stream(
                 "POST", "/chat/stream", json=payload, headers=AUTH_HEADERS
-            ) as response:
-                assert response.status_code == 200
-                for _ in response.iter_bytes():
-                    pass
-
-
-class TestExecutionModuleStreamChat:
-    """ExecutionModule.stream_chat transparent passthrough (user story 7)."""
-
-    @pytest.mark.asyncio
-    async def test_stream_chat_passes_events_through_unchanged(self):
-        """Events pass through in order, unchanged, with arguments delegated."""
-        from cortex.execution.module import ExecutionModule
-
-        session_id = uuid4()
-        scripted = [
-            ThinkingEvent(session_id=session_id, message="reasoning"),
-            ToolStartEvent(session_id=session_id, tool_name="web_search", tool_call_id="call_1"),
-            TextDeltaEvent(session_id=session_id, delta="hi"),
-            ResponseDoneEvent(
-                session_id=session_id,
-                message="hi",
-                tools_used=["web_search"],
-                iterations=1,
-            ),
-        ]
-
-        class FakeLoop:
-            calls: list[tuple[UUID, str, int | None]] = []
-
-            async def stream_chat(
-                self,
-                session_id: UUID,
-                user_message: str,
-                *,
-                max_iterations: int | None = None,
             ):
-                FakeLoop.calls.append((session_id, user_message, max_iterations))
-                for event in scripted:
-                    yield event
-
-        module = ExecutionModule(agent_loop=FakeLoop())
-
-        seen = [event async for event in module.stream_chat(session_id, "hello")]
-
-        assert seen == scripted
-        assert FakeLoop.calls == [(session_id, "hello", None)]
-
-    @pytest.mark.asyncio
-    async def test_stream_chat_reraises_max_iterations_after_error_event(self):
-        """The yield-then-reraise contract survives the passthrough: an
-        ErrorEvent is yielded, then MaxIterationsError propagates (unlike
-        run_chat's fallback)."""
-        from cortex.agentic.models import MaxIterationsError
-        from cortex.execution.module import ExecutionModule
-
-        session_id = uuid4()
-
-        class FakeLoop:
-            async def stream_chat(
-                self,
-                session_id: UUID,
-                user_message: str,
-                *,
-                max_iterations: int | None = None,
-            ):
-                yield ErrorEvent(
-                    session_id=session_id,
-                    error="Max iterations exceeded",
-                    code="max_iterations",
-                )
-                raise MaxIterationsError(max_iterations or 20)
-
-        module = ExecutionModule(agent_loop=FakeLoop())
-
-        seen: list[Any] = []
-        with pytest.raises(MaxIterationsError):
-            async for event in module.stream_chat(session_id, "hello", max_iterations=3):
-                seen.append(event)
-
-        assert len(seen) == 1
-        assert isinstance(seen[0], ErrorEvent)
-        assert seen[0].code == "max_iterations"
+                pass
