@@ -1393,7 +1393,7 @@ class Session(BaseModel):
 
 ## Streaming
 
-> Design complete. Protocol: SSE-only.
+> Shipped in #17. Protocol: SSE-only. Endpoint: `POST /chat/stream`.
 
 ### Decision: SSE-Only
 
@@ -1411,280 +1411,184 @@ class Session(BaseModel):
 ### Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────┐
 │                       STREAMING FLOW                             │
 │                                                                  │
-│  Client                     API Gateway                    Loop │
-│  ──────                     ───────────                    ──── │
-│    │                            │                              │  │
-│    │  POST /chat/stream         │                              │  │
-│    │  { message, session_id }  │                              │  │
-│    │────────────────────────────►│                              │  │
-│    │                            │                              │  │
-│    │                            │  start_stream()              │  │
-│    │                            │─────────────────────────────►│  │
-│    │                            │                              │  │
-│    │  ◄─ SSE: thinking ────────│  emit(StreamEvent.THINKING) │  │
-│    │  ◄─ SSE: text ────────────│  emit(StreamEvent.TEXT)     │  │
-│    │  ◄─ SSE: tool_start ──────│  emit(StreamEvent.TOOL)     │  │
-│    │  ◄─ SSE: tool_done ───────│  emit(StreamEvent.TOOL)    │  │
-│    │  ◄─ SSE: text ────────────│  emit(StreamEvent.TEXT)     │  │
-│    │  ◄─ SSE: done ────────────│  emit(StreamEvent.DONE)     │  │
-│    │                            │                              │  │
-│    │  (connection closes)       │                              │  │
-│    ◄─────────────────────────────│                              │  │
+│  Client                     API (chat_stream)               Loop │
+│  ──────                     ─────────────────               ──── │
+│    │                            │                              │ │
+│    │ POST /chat/stream          │                              │ │
+│    │ { message, session_id }    │                              │ │
+│    │───────────────────────────►│                              │ │
+│    │                            │ resolve session              │ │
+│    │                            │ (missing → HTTP 404,         │ │
+│    │                            │  absent → create)            │ │
+│    │                            │                              │ │
+│    │                            │ async for stream_chat()      │ │
+│    │                            │─────────────────────────────►│ │
+│    │                            │◄─ LoopEvent ───────────────  │ │
+│    │                            │match event → SSE frame       │ │
+│    │                            │(event_type IS the wire name) │ │
+│    │◄─ SSE: thinking ────────   │                              │ │
+│    │◄─ SSE: text ────────────   │                              │ │
+│    │◄─ SSE: tool_start ──────   │                              │ │
+│    │◄─ SSE: tool_done ───────   │                              │ │
+│    │◄─ SSE: done ────────────   │                              │ │
+│    │◄─ SSE: error ───────────   │ (on ErrorEvent / exception)  │ │
+│    │                            │                              │ │
+│    │ (connection closes)        │                              │ │
+│    ◄─────────────────────────── │                              │ │
 │                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ### API Endpoint
 
-```python
-@router.post("/chat/stream")
-async def chat_stream(
-    request: ChatStreamRequest,
-    response: StreamingResponse
-):
-    """
-    Stream chat response via SSE.
-    
-    Returns:
-        text/event-stream
-        
-    Events:
-        - thinking: Agent is processing
-        - text: Text chunk
-        - tool_start: Tool execution started
-        - tool_done: Tool execution complete
-        - done: Stream finished
-        - error: Stream error (with retry hint)
-    """
-    loop = request.state.agent_loop
-    session_id = request.state.session_id
-    
-    await loop.run_stream(
-        session_id=session_id,
-        message=request.message,
-        stream_manager=StreamManager(response)
-    )
+`chat_stream` (route `POST /stream` on the `/chat` router) consumes the same
+`ChatRequest` as the non-streaming endpoint and returns a `StreamingResponse`
+that iterates `execution_module.stream_chat(...)` — a transparent passthrough
+to `AgentLoop.stream_chat()` (no `MaxIterationsError` swallowing, unlike
+`run_chat()`'s fallback). Session resolution happens before the stream starts,
+then each `LoopEvent` is matched to an SSE frame:
 
-class ChatStreamRequest(BaseModel):
-    session_id: UUID | None = None
-    message: str
-    mode: Literal["chat", "goal"] = "chat"
+```python
+@router.post("/stream")          # router prefix "/chat" → POST /chat/stream
+async def chat_stream(
+    request: ChatRequest,
+    key: str = Depends(get_api_key),
+    interaction_service: InteractionService = Depends(get_interaction_service),
+    execution_module: ExecutionModule = Depends(get_execution_module),
+) -> StreamingResponse:
+    # Session resolution before the stream (see below)...
+    # max_iterations = request.max_iterations or 20
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            async for event in execution_module.stream_chat(
+                session_id=session_id,
+                user_message=request.message,
+                max_iterations=max_iterations,
+            ):
+                match event:
+                    case ThinkingEvent():
+                        yield _sse_event("thinking", {"message": event.message})
+                    case TextDeltaEvent():
+                        yield _sse_event("text", {"delta": event.delta})
+                    case ToolStartEvent():
+                        yield _sse_event("tool_start", {
+                            "tool_name": event.tool_name,
+                            "tool_call_id": event.tool_call_id,
+                        })
+                    case ToolResultEvent():
+                        yield _sse_event("tool_done", {
+                            "tool_name": event.tool_name,
+                            "tool_call_id": event.tool_call_id,
+                            "success": event.success,
+                            "output": event.output,
+                            "error": event.error,
+                            "execution_time_ms": event.execution_time_ms,
+                        })
+                    case ResponseDoneEvent():
+                        yield _sse_event("done", {
+                            "final_message": event.message,
+                            "tool_calls": event.tools_used,
+                            "iterations": event.iterations,
+                        })
+                    case ErrorEvent():
+                        yield _sse_event("error", {"error": event.error, "code": event.code})
+                        return
+                    case _:
+                        logger.warning(f"Unhandled loop event: {type(event).__name__}")
+        except Exception as exc:
+            logger.exception("Unexpected error streaming chat events")
+            yield _sse_event("error", {"error": str(exc), "code": None})
+            raise
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
 ```
+
+`_sse_event(event_type, data)` formats each frame as
+`event: {event_type}\ndata: {json.dumps(data)}\n\n`.
 
 ---
 
-### Stream Events
+### Wire Protocol (SSE events)
 
-```python
-class StreamEvent(BaseModel):
-    """Base for all SSE events."""
-    event: str                       # SSE event type name
-    data: str                       # JSON-serialized payload
+One vocabulary: a `LoopEvent`'s `event_type` IS the SSE wire name — the mapping
+is an explicit minimal field mapping, not `to_dict()`. `session_id` and
+`duration_ms` are never on the wire — a per-request SSE connection needs no
+session attribution, and nothing measures duration.
 
-class StreamEventType(str, Enum):
-    THINKING = "thinking"
-    TEXT = "text"
-    TOOL_START = "tool_start"
-    TOOL_DONE = "tool_done"
-    TOOL_ERROR = "tool_error"
-    DONE = "done"
-    ERROR = "error"
-
-class ThinkingPayload(BaseModel):
-    """Agent is processing."""
-    message: str                    # "Planning steps..."
-
-class TextDeltaPayload(BaseModel):
-    """Text chunk."""
-    delta: str                      # New text
-
-class ToolStartPayload(BaseModel):
-    """Tool execution started."""
-    tool_name: str
-    arguments: dict                 # Sanitized (no secrets)
-
-class ToolDonePayload(BaseModel):
-    """Tool execution complete."""
-    tool_name: str
-    success: bool
-    result: str | None              # Summary or error
-
-class DonePayload(BaseModel):
-    """Stream complete."""
-    final_message: str              # Full assembled text
-    tool_calls: list[str]           # Tools used
-    iterations: int
-    duration_ms: int
-```
-
-### SSE Format
+| SSE event | Payload | Source event |
+|-----------|---------|--------------|
+| `thinking` | `{message}` | `ThinkingEvent` |
+| `text` | `{delta}` | `TextDeltaEvent` |
+| `tool_start` | `{tool_name, tool_call_id}` | `ToolStartEvent` |
+| `tool_done` | `{tool_name, tool_call_id, success, output, error, execution_time_ms}` | `ToolResultEvent` |
+| `done` | `{final_message, tool_calls, iterations}` | `ResponseDoneEvent` (renames `message`→`final_message`, `tools_used`→`tool_calls`) |
+| `error` | `{error, code}` | `ErrorEvent` (`code` is `"max_iterations"` or `null`) |
 
 ```
 event: thinking
 data: {"message": "Let me check your calendar..."}
 
 event: text
-data: {"delta": "You have a meeting"}
-
-event: text
-data: {"delta": " at 2pm with"}
-
-event: text
-data: {"delta": " John."}
+data: {"delta": "You have a meeting at 2pm with John."}
 
 event: tool_start
-data: {"tool_name": "shell", "arguments": {"command": "git status"}}
+data: {"tool_name": "shell", "tool_call_id": "call_01"}
 
 event: tool_done
-data: {"tool_name": "shell", "success": true, "result": "On branch main"}
-
-event: text
-data: {"delta": " Your repo is on branch main."}
+data: {"tool_name": "shell", "tool_call_id": "call_01", "success": true, "output": "On branch main", "error": null, "execution_time_ms": 234}
 
 event: done
-data: {"final_message": "You have a meeting at 2pm with John. Your repo is on branch main.", "tool_calls": ["shell"], "iterations": 2, "duration_ms": 2341}
+data: {"final_message": "You have a meeting at 2pm with John.", "tool_calls": ["shell"], "iterations": 2}
+
+event: error
+data: {"error": "Max iterations reached", "code": "max_iterations"}
 ```
 
-### StreamManager
+---
 
-```python
-class StreamManager:
-    """
-    Manages SSE streaming to clients.
-    
-    Responsibilities:
-    - Serialize events to SSE format
-    - Handle client disconnect
-    - Buffer for slow clients (drop oldest if full)
-    """
-    
-    def __init__(
-        self,
-        response: StreamingResponse,
-        buffer_size: int = 10
-    ):
-        self._response = response
-        self._buffer: asyncio.Queue[StreamEvent] = asyncio.Queue(maxsize=buffer_size)
-        self._closed = False
-    
-    async def emit(self, event: StreamEvent) -> None:
-        """
-        Emit an event to the stream.
-        
-        Non-blocking: if buffer full, drops oldest event.
-        This prevents slow clients from blocking the agent.
-        """
-        if self._closed:
-            return
-            
-        try:
-            self._buffer.put_nowait(event)
-        except asyncio.QueueFull:
-            # Drop oldest, add newest
-            try:
-                self._buffer.get_nowait()
-                self._buffer.put_nowait(event)
-            except:
-                pass
-    
-    async def flush(self) -> None:
-        """Flush buffered events to client."""
-        while not self._buffer.empty():
-            event = await self._buffer.get()
-            await self._send_event(event)
-    
-    async def _send_event(self, event: StreamEvent) -> None:
-        """Send single event as SSE."""
-        await self._response.stream(
-            f"event: {event.event}\n"
-            f"data: {event.data}\n\n"
-        )
-    
-    async def close(self) -> None:
-        """Close the stream."""
-        self._closed = True
-        await self._response.alice()
-```
+### Session Resolution
 
-### Integration with Agentic Loop
+Session resolution happens before the stream starts, under the same policy as
+the non-streaming endpoint:
 
-```python
-class StreamingAgentLoop:
-    """
-    Streaming version of the Agentic Loop.
-    
-    Replaces run_chat() with run_stream() that emits events
-    to a StreamManager instead of collecting a final response.
-    """
-    
-    async def run_stream(
-        self,
-        session_id: UUID,
-        message: str,
-        stream: StreamManager
-    ) -> None:
-        """
-        Run chat with streaming output.
-        
-        Args:
-            session_id: Conversation session
-            message: User input
-            stream: StreamManager to emit events to
-        """
-        # Emit thinking
-        await stream.emit(StreamEvent(
-            event="thinking",
-            data=json.dumps({"message": "Thinking..."})
-        ))
-        
-        # Build context
-        context = await self.context_builder.build(session_id, message)
-        
-        # Run loop with streaming
-        async for chunk in self.reasoner.reason_stream(context):
-            await stream.emit(StreamEvent(
-                event="text",
-                data=json.dumps({"delta": chunk})
-            ))
-        
-        # Run tools if needed (non-streaming for v1)
-        if tool_calls := self.last_decision.tool_calls:
-            for call in tool_calls:
-                await stream.emit(StreamEvent(
-                    event="tool_start",
-                    data=json.dumps({
-                        "tool_name": call.name,
-                        "arguments": sanitize_args(call.arguments)
-                    })
-                ))
-                
-                result = await self.executor.execute(call)
-                
-                await stream.emit(StreamEvent(
-                    event="tool_done",
-                    data=json.dumps({
-                        "tool_name": call.name,
-                        "success": result.success,
-                        "result": summarize_result(result)
-                    })
-                ))
-        
-        # Emit done
-        await stream.emit(StreamEvent(
-            event="done",
-            data=json.dumps({
-                "final_message": self.full_response,
-                "tool_calls": [c.name for c in tool_calls],
-                "iterations": self.iterations,
-                "duration_ms": self.duration_ms
-            })
-        ))
-```
+- A provided `session_id` that does not exist → HTTP 404 (never an in-stream
+  `error` frame).
+- An absent `session_id` → a new session is created.
+
+The stream itself only iterates `execution_module.stream_chat()`; no session
+work happens inside the generator.
+
+---
+
+### Error Policy
+
+- **Expected `ErrorEvent`:** the adapter yields the `error` frame and returns.
+  The loop's yield-then-reraise contract stays silent on the server, so
+  expected conditions like `max_iterations` produce no traceback.
+- **Unexpected exceptions** in the adapter (bugs, serialization): yield an
+  `error{code: null}` frame, log, then re-raise — never silent.
+- **Unknown event types:** logged and skipped from the wire — dropped, but not
+  silent.
+
+Consequence: streaming and non-streaming diverge on max-iterations — the stream
+emits `error{code: "max_iterations"}` and ends, while non-streaming
+`run_chat()` returns the friendly fallback message.
+
+---
 
 ### v1 Scope
 
@@ -1692,9 +1596,8 @@ class StreamingAgentLoop:
 ✅ Chat text streaming (SSE text event)
 ✅ Thinking indicator (SSE thinking event)
 ✅ Tool start/done events (SSE tool_start, tool_done)
-✅ Done event with stats
-✅ Non-blocking buffering (slow client protection)
-✅ Graceful disconnect handling
+✅ Done event with final message, tool calls, iterations
+✅ Error frames (error{error, code}) for expected and unexpected failures
 
 ❌ Tool output streaming (tail -f style)
 ❌ Tool progress updates (steps/percentage)
@@ -1702,6 +1605,8 @@ class StreamingAgentLoop:
 ❌ Stream reconnection/resume
 ❌ E2E encryption (not needed for local deployment)
 ```
+
+---
 
 ### Client Example
 
@@ -1721,7 +1626,7 @@ function parseSSELines(chunk) {
     const lines = chunk.split('\n');
     const events = [];
     let current = {};
-    
+
     for (const line of lines) {
         if (line === '') {
             if (current.event && current.data) {
@@ -1740,11 +1645,11 @@ function parseSSELines(chunk) {
 while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    
+
     const chunk = decoder.decode(value);
     parseSSELines(chunk).forEach(({ event, data }) => {
         const payload = JSON.parse(data);
-        
+
         switch (event) {
             case 'thinking':
                 showThinking(payload.message);
@@ -1756,24 +1661,29 @@ while (true) {
                 showToolExecuting(payload.tool_name);
                 break;
             case 'tool_done':
-                showToolResult(payload.tool_name, payload.result);
+                showToolResult(payload.tool_name, payload.output, payload.error);
                 break;
             case 'done':
-                showStats(payload.iterations, payload.duration_ms);
+                showStats(payload.iterations);
+                break;
+            case 'error':
+                showError(payload.error, payload.code);
                 break;
         }
     });
 }
 ```
 
+---
+
 ### Settled Questions
 
 - **Protocol:** SSE-only (no WebSocket)
-- **Tool output:** Not streamed (final summary only)
+- **Tool output:** Not streamed (final summary in `tool_done.output`)
 - **Tool progress:** Simple start/done events (no steps)
 - **Client → Server:** Not needed for v1
 - **Reconnection:** Not supported (new stream per request)
-- **Backpressure:** Buffer with drop-oldest policy (prevents slow clients blocking agent)
+- **Backpressure:** No explicit buffering — `StreamingResponse` streams frames as the generator produces them; `X-Accel-Buffering: no` disables proxy buffering (nginx)
 
 ---
 
