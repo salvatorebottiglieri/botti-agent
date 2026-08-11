@@ -35,6 +35,14 @@ _Avoid_: Stream event, loop bus event
 A unit of the loop's response text delivered to the caller. One event per response today (carrying the full text); multiple deltas per response are possible only if the reasoner ever streams tokens. Consumers append deltas and must never assume chunk size.
 _Avoid_: Token event, streaming chunk
 
+**ResponseDoneEvent**:
+The loop's final-response signal, emitted once per response after the last TextDeltaEvent. Carries the full response text, the tool names used, and the iteration count — the metadata a non-streaming consumer needs for its final result.
+_Avoid_: Done event, completion event, final event
+
+**Drain wrapper**:
+The consumer that takes the loop's streaming progress and reduces it to a single final response, discarding intermediate signals (thinking, tool activity). Uses the stream when progress matters; uses the drain when only the result matters. Loop errors surface unchanged — the drain never swallows or rewraps them.
+_Avoid_: Convenience wrapper, non-streaming call, response collector
+
 **System Event**:
 An event published on the Cortex event bus for any module to consume (e.g. goal.created, concept.rejected). Distinct from LoopEvent: system events are system-wide domain information; LoopEvents are per-caller progress.
 _Avoid_: Domain event, bus event
