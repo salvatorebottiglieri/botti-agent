@@ -29,6 +29,7 @@ class ChatMessage(BaseModel):
     content: str | None = None
     name: str | None = None
     tool_call_id: str | None = None
+    tool_calls: list[ToolCall] | None = None  # Assistant tool-call turns (internal type)
 
     model_config = {
         "extra": "allow",

@@ -201,6 +201,25 @@ class AgentLoop:
                     case DecisionType.EXECUTE_TOOLS:
                         # 3. Act - execute tools
                         if decision.tool_calls:
+                            # Record the assistant's tool-call decision in the
+                            # conversation (internal shape — the LLM provider
+                            # translates to its own wire format). Providers
+                            # require an assistant message with the tool calls
+                            # to precede the tool messages that answer them.
+                            messages.append(Message(
+                                session_id=session_id,
+                                role=MessageRole.ASSISTANT,
+                                content="",
+                                tool_calls=[
+                                    {
+                                        "id": call.id,
+                                        "name": call.name,
+                                        "arguments": call.arguments,
+                                    }
+                                    for call in decision.tool_calls
+                                ],
+                            ))
+
                             for call in decision.tool_calls:
                                 # Track tools used
                                 tools_used.append(call.name)
@@ -232,6 +251,7 @@ class AgentLoop:
                                         if result.success
                                         else f"Error: {result.error}"
                                     ),
+                                    tool_call_id=call.id,
                                 )
                                 messages.append(msg)
 

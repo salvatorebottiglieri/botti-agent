@@ -11,6 +11,7 @@ from cortex.agentic.models import (
 )
 from cortex.llm.models import ChatMessage, Role
 from cortex.sessions.models import MessageRole
+from cortex.tools.interfaces import ToolCall
 
 if TYPE_CHECKING:
     from cortex.llm.base import LLMClient
@@ -141,6 +142,12 @@ class Reasoner:
             messages.append(ChatMessage(
                 role=_MESSAGE_ROLE_TO_LLM_ROLE[msg.role],
                 content=msg.content,
+                tool_call_id=msg.tool_call_id,
+                tool_calls=(
+                    [ToolCall(**tc) for tc in msg.tool_calls]
+                    if msg.tool_calls
+                    else None
+                ),
             ))
 
         return messages
