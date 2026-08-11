@@ -194,7 +194,8 @@ async def chat_stream(
                         yield _sse_event("error", {"error": event.error, "code": event.code})
                         return
                     case _:
-                        # Never silently drop progress from an unknown event.
+                        # Unknown event types are logged and skipped from the
+                        # wire — dropped, but not silent.
                         logger.warning(f"Unhandled loop event: {type(event).__name__}")
         except Exception as exc:
             # Unexpected adapter errors (bugs, serialization) — logged, not silent.
