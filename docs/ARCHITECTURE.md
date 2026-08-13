@@ -116,7 +116,7 @@ Event {
 | `goal.status` | Execution | Interaction, Learning | Goal progress update |
 | `goal.completed` | Execution | Interaction, Learning | Task finished |
 | `goal.failed` | Execution | Interaction, Learning | Task failed |
-| `goal.resumed` | Execution | Interaction, Learning | Task recovered after crash |
+| `goal.resumed` (not emitted) | Execution | Interaction, Learning | Task recovery at startup — direct call per ADR-0004, not a bus event |
 | **Orchestration** | | | |
 | `module.spawn` | Execution | (orchestration) | Spawn sub-process/worker |
 | `module.terminate` | Execution | (orchestration) | Clean up sub-process |
@@ -1070,7 +1070,7 @@ Loop progress is not published to the event bus. It is exposed to the caller via
 
 Modules request LLM access via `LLMResourceManager`. Higher priority waits less. On 429, exponential backoff.
 
-**On crash recovery:** Execution Module reads in-flight goals from DB, emits `goal.resumed` for each.
+**On crash recovery:** Execution Module reads in-flight goals from DB on startup and resumes them with a direct `resume_in_flight()` call — no `goal.resumed` event (ADR-0004).
 
 **Module lifecycle:** Each module exposes `/health` endpoint. Orchestrator polls for health checks.
 
@@ -1721,7 +1721,7 @@ while (true) {
 - **LLM ownership:** Execution Module (Agentic Loop), Memory, Learning each have their own LLM client
 - **LLM resource management:** Priority queue — Execution > Memory > Learning
 - **Tool correlation:** `correlation_id` in tool.request/result payloads
-- **Goal lifecycle:** goal.created → goal.status → goal.completed / goal.failed / goal.resumed
+- **Goal lifecycle:** goal.created → goal.status → goal.completed / goal.failed (resume is a direct startup call per ADR-0004, not an event)
 - **Module lifecycle:** Health checks via `/health` endpoint, orchestrator polls
 - **Tool extensibility:** Registry-based — register tools in DB, no core code changes
 - **Dynamic spawning:** Yes — Execution Module can spawn workers for complex tasks
@@ -1805,7 +1805,6 @@ Content-based boost: events containing urgency keywords ("urgent", "error", "fai
 | `goal.status` | `goal_id: UUID`, `status: str`, `progress_percent: int` |
 | `goal.completed` | `goal_id: UUID`, `result: dict`, `duration_seconds: int` |
 | `goal.failed` | `goal_id: UUID`, `error: str`, `failed_at: datetime` |
-| `goal.resumed` | `goal_id: UUID`, `resumed_at: datetime` |
 | **Learning events** | | |
 | `recommendation.generated` | `recommendation_id: UUID`, `type: str`, `content: str`, `confidence: float`, `related_facts: list[UUID]` |
 
@@ -2044,7 +2043,6 @@ Publications:
 ├── goal.status                      # progress updates
 ├── goal.completed                   # task finished
 ├── goal.failed                      # task failed
-├── goal.resumed                     # task recovered after crash
 └── module.spawn                     # spawn a worker process
 ```
 
@@ -2055,7 +2053,7 @@ WorkerSpawner            # dynamically spawns worker processes
 ProgressTracker          # emits goal.status updates
 ```
 
-**Crash recovery:** On startup, reads in-flight goals from DB, emits `goal.resumed` for each.
+**Crash recovery:** On startup, reads in-flight goals from DB and resumes them via a direct `resume_in_flight()` call — no `goal.resumed` event (ADR-0004).
 
 ---
 
@@ -2068,7 +2066,7 @@ ProgressTracker          # emits goal.status updates
 | Personality | `user.feedback`, `preference.learned`, `conversation.ended` | (writes via `MemoryService`) | `PersonalityService` |
 | Learning | `user.message`, `conversation.message`, `goal.*`, `recommendation.executed` | `pattern.detected`, `preference.learned`, `recommendation.generated` | `PatternAnalyzer`, `PreferenceEngine`, `Recommender` |
 | Tool Ecosystem | `tool.request` | `tool.result` | `ToolRegistry`, `ToolExecutor` |
-| Execution | `goal.created`, `recommendation.executed` | `goal.status`, `goal.completed`, `goal.failed`, `goal.resumed`, `module.spawn` | `GoalOrchestrator`, `WorkerSpawner` |
+| Execution | `goal.created`, `recommendation.executed` | `goal.status`, `goal.completed`, `goal.failed`, `module.spawn` | `GoalOrchestrator`, `WorkerSpawner` |
 
 ---
 

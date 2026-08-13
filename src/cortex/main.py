@@ -148,7 +148,13 @@ async def initialize_app() -> CortexApp:
     session_repo: SessionRepository = PostgresSessionRepository()
     cortex.session_repository = session_repo
 
-    # 5b. Create memory repositories
+    # 5b. Create goal repository
+    from cortex.goals.interfaces import GoalRepository
+    from cortex.goals.repository import PostgresGoalRepository
+
+    goal_repo: GoalRepository = PostgresGoalRepository()
+
+    # 5c. Create memory repositories
     from cortex.memory.interfaces import ConceptRepository, FactExtractor, FactRepository
     from cortex.memory.repository import PostgresConceptRepository, PostgresFactRepository
 
@@ -156,12 +162,12 @@ async def initialize_app() -> CortexApp:
     concept_repo: ConceptRepository = PostgresConceptRepository()
     memory_extractor: FactExtractor | None = None
 
-    # 5c. Create LLM client
+    # 5d. Create LLM client
     from cortex.llm.factory import LLMClientFactory
     llm_factory = LLMClientFactory(settings)
     cortex.llm_client = llm_factory.create()
 
-    # 5d. Create tool registry and executor
+    # 5e. Create tool registry and executor
     from cortex.tools.executor import DefaultToolExecutor
     from cortex.tools.interfaces import ToolRegistry
     from cortex.tools.meta import register_meta_tools
@@ -222,13 +228,18 @@ async def initialize_app() -> CortexApp:
     cortex.execution_module = ExecutionModule(
         agent_loop=agent_loop,
         event_bus=cortex.event_bus,
+        goal_repository=goal_repo,
     )
 
-    # 5e. Create personality service
+    # Resume goals left running at a previous shutdown. Startup concern —
+    # direct call, not routed through the event bus.
+    await cortex.execution_module.resume_in_flight()
+
+    # 5f. Create personality service
     from cortex.interaction.service import PersonalityService
     cortex.personality_service = PersonalityService(memory_service=cortex.memory_service)
 
-    # 5f. Create interaction service
+    # 5g. Create interaction service
     from cortex.interaction.service import InteractionService
     cortex.interaction_service = InteractionService(
         execution_module=cortex.execution_module,

@@ -18,6 +18,7 @@ from cortex.agentic.models import (
     MaxIterationsError,
 )
 from cortex.events import EventEmitter
+from cortex.goals.interfaces import GoalRepository
 
 if TYPE_CHECKING:
     from cortex.agentic.events import LoopEvent
@@ -26,16 +27,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_ACTIVE_STATUSES = {GoalStatus.PENDING, GoalStatus.RUNNING, GoalStatus.PAUSED}
-
-
 class ExecutionModule:
     """
     Execution Module wraps the AgentLoop.
 
-    Goals live in process memory (`self._goals`). They are not durable across
-    restarts; a real persistence adapter is a future feature, not a stubbed
-    facade pretending to be one.
+    Goals are persisted through a `GoalRepository` (Postgres-backed in
+    production, in-memory by default) so goal state survives restarts;
+    goals left `running` at shutdown are resumed on startup by
+    `resume_in_flight()`.
 
     Handles:
     - Chat mode execution
@@ -56,12 +55,22 @@ class ExecutionModule:
         self,
         agent_loop: AgentLoop,
         event_bus: EventBus | None = None,
+        goal_repository: GoalRepository | None = None,
     ):
+        # Imported lazily so importers of execution.module do not pull in
+        # the in-memory implementation (and its asyncpg dependency chain)
+        # when a Postgres-backed repository is injected instead.
+        from cortex.goals.repository import InMemoryGoalRepository
+
         self._agent_loop = agent_loop
         self._event_bus = event_bus
         self._emitter = EventEmitter(event_bus, source_module="execution_module")
-        self._goals: dict[UUID, Goal] = {}
+        self._goal_repository = goal_repository or InMemoryGoalRepository()
         self._goal_results: dict[UUID, GoalResult] = {}
+        # Strong references to background goal tasks so they are never
+        # garbage-collected before running (the dropped-task anti-pattern);
+        # each task removes itself once it finishes.
+        self._goal_tasks: set[asyncio.Task[None]] = set()
 
     async def run_chat(
         self,
@@ -149,19 +158,19 @@ class ExecutionModule:
             status=GoalStatus.PENDING,
             created_at=time.time(),
         )
-        self._goals[goal.id] = goal
+        await self._goal_repository.create(goal)
 
         # Start the goal in the background. No "goal.created" event is
         # emitted here: this module subscribes to it, so emitting would
         # start the goal twice (once synchronously via handle_event while
         # the POST is still in flight, once via the task below).
-        asyncio.create_task(self._run_goal_async(goal))
+        self._spawn_goal_task(goal)
 
         return goal
 
     async def get_goal(self, goal_id: UUID) -> Goal | None:
         """Get a goal by ID."""
-        return self._goals.get(goal_id)
+        return await self._goal_repository.get(goal_id)
 
     async def get_goal_result(self, goal_id: UUID) -> GoalResult | None:
         """Get the terminal result of a finished goal, if any."""
@@ -169,7 +178,22 @@ class ExecutionModule:
 
     async def list_active_goals(self) -> list[Goal]:
         """List active goals (pending, running, or paused)."""
-        return [g for g in self._goals.values() if g.status in _ACTIVE_STATUSES]
+        return await self._goal_repository.list_active()
+
+    async def resume_in_flight(self) -> None:
+        """
+        Resume goals left running at shutdown.
+
+        Goals with status RUNNING are marked PENDING (started_at reset),
+        persisted, and re-scheduled for execution. Direct startup call —
+        not routed through the event bus.
+        """
+        goals = await self._goal_repository.get_in_flight()
+        for goal in goals:
+            goal.status = GoalStatus.PENDING
+            goal.started_at = None
+            await self._goal_repository.update(goal)
+            self._spawn_goal_task(goal)
 
     async def run_goal(
         self,
@@ -193,7 +217,7 @@ class ExecutionModule:
         Returns:
             GoalResult
         """
-        goal = self._goals.get(goal_id)
+        goal = await self._goal_repository.get(goal_id)
         if goal is None:
             goal = Goal(
                 id=goal_id,
@@ -201,7 +225,7 @@ class ExecutionModule:
                 status=GoalStatus.PENDING,
                 created_at=time.time(),
             )
-            self._goals[goal_id] = goal
+            await self._goal_repository.create(goal)
 
         # Guard against concurrent starts (e.g. an external goal.created
         # event racing the background task): a goal already running is
@@ -216,6 +240,7 @@ class ExecutionModule:
 
         goal.status = GoalStatus.RUNNING
         goal.started_at = time.time()
+        await self._goal_repository.update(goal)
 
         await self._emit_goal_event(goal_id, "started", {
             "description": description,
@@ -231,6 +256,7 @@ class ExecutionModule:
 
             goal.status = GoalStatus.COMPLETED
             goal.completed_at = time.time()
+            await self._goal_repository.update(goal)
 
             await self._emit_goal_event(goal_id, "completed", {
                 "message": result.message,
@@ -248,6 +274,7 @@ class ExecutionModule:
             goal.status = GoalStatus.FAILED
             goal.error = "Max iterations exceeded"
             goal.completed_at = time.time()
+            await self._goal_repository.update(goal)
 
             await self._emit_goal_event(goal_id, "failed", {
                 "error": goal.error,
@@ -268,6 +295,7 @@ class ExecutionModule:
             goal.status = GoalStatus.FAILED
             goal.error = str(e)
             goal.completed_at = time.time()
+            await self._goal_repository.update(goal)
 
             await self._emit_goal_event(goal_id, "failed", {
                 "error": goal.error,
@@ -308,6 +336,18 @@ class ExecutionModule:
         elif event_type == "recommendation.executed":
             # Log recommendation execution
             logger.info(f"Recommendation executed: {payload}")
+
+    def _spawn_goal_task(self, goal: Goal) -> asyncio.Task[None]:
+        """Start a goal's background task, keeping a strong reference to it.
+
+        Without the reference the task could be garbage-collected before it
+        runs, leaving the goal stuck PENDING forever. The done-callback
+        discards the reference once the task finishes.
+        """
+        task = asyncio.create_task(self._run_goal_async(goal))
+        self._goal_tasks.add(task)
+        task.add_done_callback(self._goal_tasks.discard)
+        return task
 
     async def _run_goal_async(self, goal: Goal) -> None:
         """Background task to run a goal."""

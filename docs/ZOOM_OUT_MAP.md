@@ -237,7 +237,7 @@ laptop-minion/ (separate package, own pyproject.toml)
 | 🔄 **MemoryContext bundle** | `agentic/models.py`, `services/memory_service.py` | Single `get_memory_context()` call returns facts+personality+ambient+degraded flags |
 | 🔄 **SessionService removed** | `sessions/service.py` deleted | `SessionRepository` + `policy` used everywhere instead |
 | 🔄 **session_service → session_repository** | `main.py`, `context_builder.py`, `interaction/service.py` | All wiring now uses repository directly |
-| 🔄 **GoalStore removed** | `execution/module.py` | Goals live in process memory (`self._goals` dict), not durable across restarts |
+| 🆕 **GoalRepository** | `goals/repository.py`, `execution/module.py`, `main.py` | Goals persisted via GoalRepository (Postgres); in-flight goals resumed on startup (`resume_in_flight`) |
 | 🔄 **Full CircuitBreaker** | `services/tool_executor.py` | Previously stub; now full implementation with CLOSED/OPEN/HALF_OPEN states |
 
 ---
@@ -329,7 +329,7 @@ src/cortex/
 │
 ├── execution/               # Wave 5 — Execution Module
 │   ├── __init__.py
-│   └── module.py            # Wraps AgentLoop, manages goals in memory
+│   └── module.py            # Wraps AgentLoop; goals persisted via GoalRepository
 │
 ├── interaction/             # Wave 5 — Interaction Module
 │   ├── __init__.py
@@ -421,5 +421,6 @@ src/cortex/
 | `src/cortex/services/memory_service.py` | **🔄 Updated** — get_memory_context() bundle; internalized old public methods |
 | `src/cortex/services/tool_executor.py` | **🔄 Updated** — full CircuitBreaker; EventEmitter; ServiceToolExecutor adapter |
 | `src/cortex/interaction/service.py` | **🔄 Updated** — SessionRepository + policy instead of SessionService |
-| `src/cortex/execution/module.py` | **🔄 Updated** — goals in memory; no GoalStore |
+| `src/cortex/goals/{interfaces,repository}.py` | **🆕 Added** — GoalRepository (ABC) + Postgres/InMemory implementations |
+| `src/cortex/execution/module.py` | **🔄 Updated** — GoalRepository persistence; resume_in_flight startup resume |
 | `tests/unit/sessions/test_policy.py` | **🆕 Added** — 7 tests for policy functions |
