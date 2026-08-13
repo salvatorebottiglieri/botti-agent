@@ -130,11 +130,13 @@ async def get_goal(
 
     # If completed or failed, return the result
     if goal.status.value in ("completed", "failed"):
+        result = await execution_module.get_goal_result(goal_id)
         return GoalResultResponse(
             goal_id=goal.id,
             success=goal.status.value == "completed",
-            message=goal.description,
-            error=goal.error,
+            message=result.message if result else goal.description,
+            iterations=result.iterations if result else 0,
+            error=result.error if result else goal.error,
         )
 
     return GoalResponse(

@@ -61,6 +61,7 @@ class ExecutionModule:
         self._event_bus = event_bus
         self._emitter = EventEmitter(event_bus, source_module="execution_module")
         self._goals: dict[UUID, Goal] = {}
+        self._goal_results: dict[UUID, GoalResult] = {}
 
     async def run_chat(
         self,
@@ -162,6 +163,10 @@ class ExecutionModule:
         """Get a goal by ID."""
         return self._goals.get(goal_id)
 
+    async def get_goal_result(self, goal_id: UUID) -> GoalResult | None:
+        """Get the terminal result of a finished goal, if any."""
+        return self._goal_results.get(goal_id)
+
     async def list_active_goals(self) -> list[Goal]:
         """List active goals (pending, running, or paused)."""
         return [g for g in self._goals.values() if g.status in _ACTIVE_STATUSES]
@@ -233,6 +238,10 @@ class ExecutionModule:
                 "timestamp": goal.completed_at,
             })
 
+            # Keep the terminal result so GET /goals/{id} can report the
+            # actual message/iterations, not just the goal metadata.
+            self._goal_results[goal_id] = result
+
             return result
 
         except MaxIterationsError:
@@ -245,12 +254,15 @@ class ExecutionModule:
                 "timestamp": goal.completed_at,
             })
 
-            return GoalResult(
+            result = GoalResult(
                 goal_id=goal_id,
                 success=False,
                 message="Goal exceeded maximum iterations",
                 error="MaxIterationsError",
             )
+            self._goal_results[goal_id] = result
+
+            return result
 
         except Exception as e:
             goal.status = GoalStatus.FAILED
@@ -262,12 +274,15 @@ class ExecutionModule:
                 "timestamp": goal.completed_at,
             })
 
-            return GoalResult(
+            result = GoalResult(
                 goal_id=goal_id,
                 success=False,
                 message="Goal failed",
                 error=str(e),
             )
+            self._goal_results[goal_id] = result
+
+            return result
 
     async def handle_event(self, event: Any) -> None:
         """
