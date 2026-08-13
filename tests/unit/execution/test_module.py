@@ -249,6 +249,55 @@ class TestExecutionModuleEdgeCases:
         # Should not raise
         await module.handle_event(mock_event)
 
+    @pytest.mark.asyncio
+    async def test_create_goal_does_not_emit_goal_created(self, mock_event_bus):
+        """create_goal must not publish goal.created: this module subscribes
+        to that type, so emitting would start the goal twice."""
+        mock_loop = MagicMock()
+        mock_loop.run_goal = AsyncMock(return_value=GoalResult(
+            goal_id=uuid4(),
+            success=True,
+            message="Done",
+        ))
+        module = ExecutionModule(
+            agent_loop=mock_loop,
+            event_bus=mock_event_bus,
+        )
+
+        await module.create_goal(description="Test goal")
+
+        published_types = [
+            call.args[0].type if hasattr(call.args[0], "type") else None
+            for call in mock_event_bus.publish.call_args_list
+        ]
+        assert "goal.created" not in published_types
+
+    @pytest.mark.asyncio
+    async def test_run_goal_guard_skips_running_goal(self, mock_event_bus):
+        """run_goal on an already-RUNNING goal returns without re-running:
+        the background task owns the execution."""
+        mock_loop = MagicMock()
+        mock_loop.run_goal = AsyncMock(return_value=GoalResult(
+            goal_id=uuid4(),
+            success=True,
+            message="Done",
+        ))
+
+        module = ExecutionModule(
+            agent_loop=mock_loop,
+            event_bus=mock_event_bus,
+        )
+
+        goal = await module.create_goal(description="Task")
+        goal.status = GoalStatus.RUNNING  # simulate a task already in flight
+
+        result = await module.run_goal(goal.id, "Task")
+
+        assert result.success is False
+        assert result.error == "AlreadyRunning"
+        # The loop must not have been asked to run a second time.
+        mock_loop.run_goal.assert_not_called()
+
 
 class TestExecutionModuleStreamChat:
     """ExecutionModule.stream_chat transparent passthrough (user story 7)."""

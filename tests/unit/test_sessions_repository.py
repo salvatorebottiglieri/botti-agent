@@ -117,6 +117,7 @@ class TestPostgresSessionRepository:
             "role": "user",
             "content": "Hello!",
             "tool_calls": None,
+            "tool_call_id": None,
             "created_at": now,
         }
 
@@ -144,6 +145,7 @@ class TestPostgresSessionRepository:
             "role": "assistant",
             "content": "Running command...",
             "tool_calls": tool_calls,
+            "tool_call_id": None,
             "created_at": now,
         }
 
@@ -155,6 +157,33 @@ class TestPostgresSessionRepository:
         )
 
         assert result.tool_calls == tool_calls
+
+    @pytest.mark.asyncio
+    async def test_add_message_with_tool_call_id(self, repo_with_mock):
+        """Tool results persist their tool_call_id so the assistant
+        tool_call -> tool_result link survives a reload."""
+        repo, mock_db_session = repo_with_mock
+        session_id = uuid4()
+        message_id = uuid4()
+        now = datetime.now(UTC)
+        mock_db_session.fetchrow.return_value = {
+            "id": message_id,
+            "session_id": session_id,
+            "role": "tool_result",
+            "content": "output",
+            "tool_calls": None,
+            "tool_call_id": "call_123",
+            "created_at": now,
+        }
+
+        result = await repo.add_message(
+            session_id=session_id,
+            role=MessageRole.TOOL_RESULT,
+            content="output",
+            tool_call_id="call_123",
+        )
+
+        assert result.tool_call_id == "call_123"
 
     @pytest.mark.asyncio
     async def test_get_messages(self, repo_with_mock):
@@ -169,6 +198,7 @@ class TestPostgresSessionRepository:
                 "role": "user",
                 "content": "Hello!",
                 "tool_calls": None,
+                "tool_call_id": None,
                 "created_at": now,
             },
             {
@@ -177,6 +207,7 @@ class TestPostgresSessionRepository:
                 "role": "assistant",
                 "content": "Hi there!",
                 "tool_calls": None,
+                "tool_call_id": None,
                 "created_at": now,
             },
         ]

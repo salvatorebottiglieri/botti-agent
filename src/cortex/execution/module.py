@@ -150,12 +150,10 @@ class ExecutionModule:
         )
         self._goals[goal.id] = goal
 
-        await self._emit_goal_event(goal.id, "created", {
-            "description": description,
-            "priority": priority,
-            "timestamp": goal.created_at,
-        })
-
+        # Start the goal in the background. No "goal.created" event is
+        # emitted here: this module subscribes to it, so emitting would
+        # start the goal twice (once synchronously via handle_event while
+        # the POST is still in flight, once via the task below).
         asyncio.create_task(self._run_goal_async(goal))
 
         return goal
@@ -199,6 +197,17 @@ class ExecutionModule:
                 created_at=time.time(),
             )
             self._goals[goal_id] = goal
+
+        # Guard against concurrent starts (e.g. an external goal.created
+        # event racing the background task): a goal already running is
+        # never started twice.
+        if goal.status == GoalStatus.RUNNING:
+            return GoalResult(
+                goal_id=goal_id,
+                success=False,
+                message="Goal already running",
+                error="AlreadyRunning",
+            )
 
         goal.status = GoalStatus.RUNNING
         goal.started_at = time.time()
