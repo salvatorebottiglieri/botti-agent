@@ -25,13 +25,14 @@ from cortex.agentic.models import (
     Mode,
 )
 from cortex.events import EventEmitter
-from cortex.sessions.models import Message, MessageRole
+from cortex.sessions.models import Message, MessageRole, SessionState
 
 if TYPE_CHECKING:
     from cortex.agentic.context_builder import ContextBuilder
     from cortex.agentic.executor import LoopExecutor
     from cortex.agentic.reasoner import Reasoner
     from cortex.events import EventBus
+    from cortex.sessions.interfaces import SessionRepository
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class AgentLoop:
         reasoner: Reasoner,
         executor: LoopExecutor,
         event_bus: EventBus | None = None,
+        session_repository: SessionRepository | None = None,
         max_chat_iterations: int = 20,
         max_goal_iterations: int = 100,
     ):
@@ -65,6 +67,7 @@ class AgentLoop:
         self._reasoner = reasoner
         self._executor = executor
         self._emitter = EventEmitter(event_bus, source_module="agent_loop")
+        self._session_repository = session_repository
         self._max_chat_iterations = max_chat_iterations
         self._max_goal_iterations = max_goal_iterations
 
@@ -307,6 +310,13 @@ class AgentLoop:
         steps_completed: list[str] = []
         session_id = uuid4()  # Create session for goal
 
+        # Persist a real session when a repository is wired, so tool
+        # results feed back into context across iterations (mirrors chat).
+        if self._session_repository is not None:
+            session = await self._session_repository.create()
+            await self._session_repository.update_state(session.id, SessionState.ACTIVE)
+            session_id = session.id
+
         # Emit start event
         await self._emit_goal_event(goal_id, "started", {
             "description": description,
@@ -362,7 +372,39 @@ class AgentLoop:
                 case DecisionType.EXECUTE_TOOLS:
                     # Execute and track
                     if decision.tool_calls:
-                        await self._executor.execute_tools(decision.tool_calls)
+                        # Persist the assistant's tool-call decision before the
+                        # tool messages that answer them (same shape as chat).
+                        if self._session_repository is not None:
+                            await self._session_repository.add_message(
+                                session_id,
+                                MessageRole.ASSISTANT,
+                                "",
+                                tool_calls=[
+                                    {
+                                        "id": call.id,
+                                        "name": call.name,
+                                        "arguments": call.arguments,
+                                    }
+                                    for call in decision.tool_calls
+                                ],
+                            )
+
+                        results = await self._executor.execute_tools(decision.tool_calls)
+
+                        # Persist tool results, linked to their calls, so the
+                        # next context build sees them.
+                        if self._session_repository is not None:
+                            for call, result in zip(decision.tool_calls, results):
+                                await self._session_repository.add_message(
+                                    session_id,
+                                    MessageRole.TOOL_RESULT,
+                                    (
+                                        result.output or ""
+                                        if result.success
+                                        else f"Error: {result.error}"
+                                    ),
+                                    tool_call_id=call.id,
+                                )
 
                         # Track steps
                         for call in decision.tool_calls:

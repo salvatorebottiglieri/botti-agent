@@ -61,6 +61,7 @@ class ExecutionModule:
         self._event_bus = event_bus
         self._emitter = EventEmitter(event_bus, source_module="execution_module")
         self._goals: dict[UUID, Goal] = {}
+        self._goal_results: dict[UUID, GoalResult] = {}
 
     async def run_chat(
         self,
@@ -150,12 +151,10 @@ class ExecutionModule:
         )
         self._goals[goal.id] = goal
 
-        await self._emit_goal_event(goal.id, "created", {
-            "description": description,
-            "priority": priority,
-            "timestamp": goal.created_at,
-        })
-
+        # Start the goal in the background. No "goal.created" event is
+        # emitted here: this module subscribes to it, so emitting would
+        # start the goal twice (once synchronously via handle_event while
+        # the POST is still in flight, once via the task below).
         asyncio.create_task(self._run_goal_async(goal))
 
         return goal
@@ -163,6 +162,10 @@ class ExecutionModule:
     async def get_goal(self, goal_id: UUID) -> Goal | None:
         """Get a goal by ID."""
         return self._goals.get(goal_id)
+
+    async def get_goal_result(self, goal_id: UUID) -> GoalResult | None:
+        """Get the terminal result of a finished goal, if any."""
+        return self._goal_results.get(goal_id)
 
     async def list_active_goals(self) -> list[Goal]:
         """List active goals (pending, running, or paused)."""
@@ -200,6 +203,17 @@ class ExecutionModule:
             )
             self._goals[goal_id] = goal
 
+        # Guard against concurrent starts (e.g. an external goal.created
+        # event racing the background task): a goal already running is
+        # never started twice.
+        if goal.status == GoalStatus.RUNNING:
+            return GoalResult(
+                goal_id=goal_id,
+                success=False,
+                message="Goal already running",
+                error="AlreadyRunning",
+            )
+
         goal.status = GoalStatus.RUNNING
         goal.started_at = time.time()
 
@@ -224,6 +238,10 @@ class ExecutionModule:
                 "timestamp": goal.completed_at,
             })
 
+            # Keep the terminal result so GET /goals/{id} can report the
+            # actual message/iterations, not just the goal metadata.
+            self._goal_results[goal_id] = result
+
             return result
 
         except MaxIterationsError:
@@ -236,12 +254,15 @@ class ExecutionModule:
                 "timestamp": goal.completed_at,
             })
 
-            return GoalResult(
+            result = GoalResult(
                 goal_id=goal_id,
                 success=False,
                 message="Goal exceeded maximum iterations",
                 error="MaxIterationsError",
             )
+            self._goal_results[goal_id] = result
+
+            return result
 
         except Exception as e:
             goal.status = GoalStatus.FAILED
@@ -253,12 +274,15 @@ class ExecutionModule:
                 "timestamp": goal.completed_at,
             })
 
-            return GoalResult(
+            result = GoalResult(
                 goal_id=goal_id,
                 success=False,
                 message="Goal failed",
                 error=str(e),
             )
+            self._goal_results[goal_id] = result
+
+            return result
 
     async def handle_event(self, event: Any) -> None:
         """

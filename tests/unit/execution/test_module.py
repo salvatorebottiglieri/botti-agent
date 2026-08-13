@@ -134,6 +134,65 @@ class TestExecutionModule:
         assert fetched.completed_at is not None
 
     @pytest.mark.asyncio
+    async def test_run_goal_keeps_terminal_result(self, mock_event_bus):
+        """run_goal stores the terminal GoalResult so the API can report the
+        actual message and iterations, not just goal metadata."""
+        mock_loop = MagicMock()
+        mock_loop.run_goal = AsyncMock(return_value=GoalResult(
+            goal_id=uuid4(),
+            success=True,
+            message="Found 3 TODOs",
+            iterations=4,
+            steps_completed=["grep", "file_read"],
+        ))
+
+        module = ExecutionModule(
+            agent_loop=mock_loop,
+            event_bus=mock_event_bus,
+        )
+
+        goal = await module.create_goal(description="Find TODOs")
+        await module.run_goal(goal.id, "Find TODOs")
+
+        result = await module.get_goal_result(goal.id)
+
+        assert result is not None
+        assert result.success is True
+        assert result.message == "Found 3 TODOs"
+        assert result.iterations == 4
+        assert result.steps_completed == ["grep", "file_read"]
+
+    @pytest.mark.asyncio
+    async def test_run_goal_keeps_failed_result(self, mock_event_bus):
+        """A failed goal also keeps its result (with the error)."""
+        mock_loop = MagicMock()
+        mock_loop.run_goal = AsyncMock(side_effect=RuntimeError("boom"))
+
+        module = ExecutionModule(
+            agent_loop=mock_loop,
+            event_bus=mock_event_bus,
+        )
+
+        goal = await module.create_goal(description="Doomed")
+        await module.run_goal(goal.id, "Doomed")
+
+        result = await module.get_goal_result(goal.id)
+
+        assert result is not None
+        assert result.success is False
+        assert result.error == "boom"
+
+    @pytest.mark.asyncio
+    async def test_get_goal_result_none_for_unknown(self, mock_event_bus):
+        """get_goal_result returns None for a goal that never ran."""
+        module = ExecutionModule(
+            agent_loop=MagicMock(),
+            event_bus=mock_event_bus,
+        )
+
+        assert await module.get_goal_result(uuid4()) is None
+
+    @pytest.mark.asyncio
     async def test_run_goal_marks_failed_on_exception(self, mock_event_bus):
         mock_loop = MagicMock()
         mock_loop.run_goal = AsyncMock(side_effect=RuntimeError("boom"))
@@ -248,6 +307,55 @@ class TestExecutionModuleEdgeCases:
 
         # Should not raise
         await module.handle_event(mock_event)
+
+    @pytest.mark.asyncio
+    async def test_create_goal_does_not_emit_goal_created(self, mock_event_bus):
+        """create_goal must not publish goal.created: this module subscribes
+        to that type, so emitting would start the goal twice."""
+        mock_loop = MagicMock()
+        mock_loop.run_goal = AsyncMock(return_value=GoalResult(
+            goal_id=uuid4(),
+            success=True,
+            message="Done",
+        ))
+        module = ExecutionModule(
+            agent_loop=mock_loop,
+            event_bus=mock_event_bus,
+        )
+
+        await module.create_goal(description="Test goal")
+
+        published_types = [
+            call.args[0].type if hasattr(call.args[0], "type") else None
+            for call in mock_event_bus.publish.call_args_list
+        ]
+        assert "goal.created" not in published_types
+
+    @pytest.mark.asyncio
+    async def test_run_goal_guard_skips_running_goal(self, mock_event_bus):
+        """run_goal on an already-RUNNING goal returns without re-running:
+        the background task owns the execution."""
+        mock_loop = MagicMock()
+        mock_loop.run_goal = AsyncMock(return_value=GoalResult(
+            goal_id=uuid4(),
+            success=True,
+            message="Done",
+        ))
+
+        module = ExecutionModule(
+            agent_loop=mock_loop,
+            event_bus=mock_event_bus,
+        )
+
+        goal = await module.create_goal(description="Task")
+        goal.status = GoalStatus.RUNNING  # simulate a task already in flight
+
+        result = await module.run_goal(goal.id, "Task")
+
+        assert result.success is False
+        assert result.error == "AlreadyRunning"
+        # The loop must not have been asked to run a second time.
+        mock_loop.run_goal.assert_not_called()
 
 
 class TestExecutionModuleStreamChat:

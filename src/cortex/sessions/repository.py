@@ -86,19 +86,21 @@ class PostgresSessionRepository(SessionRepository):
         role: MessageRole,
         content: str,
         tool_calls: list[dict[str, Any]] | None = None,
+        tool_call_id: str | None = None,
     ) -> Message:
         """Add a message to a session."""
         async with DbSession() as db:
             row = await db.fetchrow(
                 """
-                INSERT INTO messages (session_id, role, content, tool_calls)
-                VALUES ($1, $2, $3, $4)
-                RETURNING id, session_id, role, content, tool_calls, created_at
+                INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id, session_id, role, content, tool_calls, tool_call_id, created_at
                 """,
                 session_id,
                 role.value,
                 content,
                 tool_calls,
+                tool_call_id,
             )
             # Also update session activity
             await db.execute(
@@ -119,7 +121,7 @@ class PostgresSessionRepository(SessionRepository):
             if before:
                 rows = await db.fetch(
                     """
-                    SELECT id, session_id, role, content, tool_calls, created_at
+                    SELECT id, session_id, role, content, tool_calls, tool_call_id, created_at
                     FROM messages
                     WHERE session_id = $1 AND created_at < $2
                     ORDER BY created_at DESC
@@ -132,7 +134,7 @@ class PostgresSessionRepository(SessionRepository):
             else:
                 rows = await db.fetch(
                     """
-                    SELECT id, session_id, role, content, tool_calls, created_at
+                    SELECT id, session_id, role, content, tool_calls, tool_call_id, created_at
                     FROM messages
                     WHERE session_id = $1
                     ORDER BY created_at DESC
@@ -178,5 +180,6 @@ class PostgresSessionRepository(SessionRepository):
             role=row["role"],
             content=row["content"],
             tool_calls=row["tool_calls"],
+            tool_call_id=row["tool_call_id"],
             created_at=row["created_at"],
         )

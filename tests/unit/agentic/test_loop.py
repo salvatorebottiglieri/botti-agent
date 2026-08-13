@@ -22,7 +22,7 @@ from cortex.agentic.models import (
     MaxIterationsError,
 )
 from cortex.sessions.models import Message, MessageRole
-from cortex.tools.interfaces import ToolCall
+from cortex.tools.interfaces import ToolCall, ToolResult
 
 
 class TestAgentLoop:
@@ -368,6 +368,97 @@ class TestAgentLoopGoalMode:
 
         # Should emit goal status events
         assert mock_event_bus.publish.called
+
+    @pytest.mark.asyncio
+    async def test_run_goal_persists_tool_results_when_repository_wired(
+        self, mock_context_builder, mock_executor, mock_event_bus
+    ):
+        """With a session repository wired, run_goal creates a real session
+        and persists assistant tool-calls plus tool results (linked by
+        tool_call_id) so the next context build sees them."""
+        goal_id = uuid4()
+        session_id = uuid4()
+        call_id = "call_abc123"
+
+        repo = MagicMock()
+        repo.create = AsyncMock(return_value=MagicMock(id=session_id))
+        repo.update_state = AsyncMock(return_value=MagicMock(id=session_id))
+        repo.add_message = AsyncMock(return_value=MagicMock())
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_executor.execute_tools = AsyncMock(return_value=[
+            ToolResult(
+                tool_call_id=call_id,
+                tool_name="shell",
+                success=True,
+                output="hello from tool",
+            )
+        ])
+
+        reasoner = MagicMock()
+        reasoner.reason = AsyncMock(side_effect=[
+            Decision.execute_tools(
+                tool_calls=[ToolCall(id=call_id, name="shell", arguments={"command": "echo hi"})],
+                reasoning="need output",
+            ),
+            Decision.respond("done", reasoning="have output"),
+        ])
+
+        loop = AgentLoop(
+            context_builder=mock_context_builder,
+            reasoner=reasoner,
+            executor=mock_executor,
+            event_bus=mock_event_bus,
+            session_repository=repo,
+        )
+
+        result = await loop.run_goal(goal_id, "Run a command")
+
+        assert result.success is True
+        repo.create.assert_awaited_once()
+        repo.update_state.assert_awaited_once()
+        # assistant tool-call message
+        assistant_call = repo.add_message.await_args_list[0]
+        assert assistant_call.args[1] == MessageRole.ASSISTANT
+        assert assistant_call.kwargs["tool_calls"] == [
+            {"id": call_id, "name": "shell", "arguments": {"command": "echo hi"}}
+        ]
+        # tool result message, linked by id
+        result_call = repo.add_message.await_args_list[1]
+        assert result_call.args[1] == MessageRole.TOOL_RESULT
+        assert result_call.kwargs["tool_call_id"] == call_id
+        assert result_call.args[2] == "hello from tool"
+
+    @pytest.mark.asyncio
+    async def test_run_goal_without_repository_keeps_legacy_behavior(
+        self, mock_context_builder, mock_executor, mock_event_bus
+    ):
+        """Without a repository wired, run_goal still completes and never
+        touches persistence (backward-compatible path)."""
+        goal_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=uuid4()))
+        mock_executor.execute_tools = AsyncMock(return_value=[])
+
+        reasoner = MagicMock()
+        reasoner.reason = AsyncMock(side_effect=[
+            Decision.execute_tools(
+                tool_calls=[ToolCall(id="call_1", name="shell", arguments={})],
+                reasoning="need output",
+            ),
+            Decision.respond("done", reasoning="have output"),
+        ])
+
+        loop = AgentLoop(
+            context_builder=mock_context_builder,
+            reasoner=reasoner,
+            executor=mock_executor,
+            event_bus=mock_event_bus,
+        )
+
+        result = await loop.run_goal(goal_id, "Run a command")
+
+        assert result.success is True
 
 
 class TestAgentLoopEdgeCases:

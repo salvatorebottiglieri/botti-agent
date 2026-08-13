@@ -215,6 +215,7 @@ async def initialize_app() -> CortexApp:
         reasoner=reasoner,
         executor=loop_executor,
         event_bus=cortex.event_bus,
+        session_repository=cortex.session_repository,
     )
 
     # Create execution module

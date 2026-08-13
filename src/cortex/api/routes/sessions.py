@@ -12,7 +12,7 @@ from cortex.api.auth import get_api_key
 from cortex.api.dependencies import get_session_repository
 from cortex.api.schemas import MessageCreate, MessageResponse, SessionResponse, SessionWithMessages
 from cortex.sessions import policy
-from cortex.sessions.models import MessageRole
+from cortex.sessions.models import MessageRole, SessionState
 
 if TYPE_CHECKING:
     from cortex.sessions.interfaces import SessionRepository
@@ -120,12 +120,17 @@ async def create_message(
     session_repo: SessionRepository = Depends(get_session_repository),
 ) -> MessageResponse:
     """Add a message to a session."""
-    # Verify session exists
+    # Verify session exists and is writable (ENDED is terminal — SP1)
     session = await session_repo.get(session_id)
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": "not_found", "detail": "Session not found"},
+        )
+    if session.state == SessionState.ENDED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "session_ended", "detail": "Session is ended"},
         )
 
     # Add message based on role
