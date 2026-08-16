@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     import asyncpg
 
     from cortex.execution.module import ExecutionModule
-    from cortex.interaction.service import InteractionService, PersonalityService
+    from cortex.interaction.service import InteractionService
     from cortex.llm.base import LLMClient
     from cortex.services.memory_service import MemoryService
     from cortex.services.minion_service import MinionService
@@ -55,12 +55,6 @@ async def get_interaction_service() -> InteractionService:
     return cast("InteractionService", state["interaction_service"])
 
 
-async def get_personality_service() -> PersonalityService:
-    """Get the personality service."""
-    state = get_app_state()
-    return cast("PersonalityService", state["personality_service"])
-
-
 async def get_minion_service() -> MinionService | None:
     """Get the minion service."""
     state = get_app_state()
@@ -89,7 +83,6 @@ async def get_llm_client() -> LLMClient | None:
 SessionRepositoryDep = Depends(get_session_repository)
 ExecutionModuleDep = Depends(get_execution_module)
 InteractionServiceDep = Depends(get_interaction_service)
-PersonalityServiceDep = Depends(get_personality_service)
 MinionServiceDep = Depends(get_minion_service)
 MemoryServiceDep = Depends(get_memory_service)
 DbPoolDep = Depends(get_db_pool)
