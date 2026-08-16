@@ -123,6 +123,11 @@ class TestInteractionService:
         await service.get_session(session_id)
         mock_session_repository.get.assert_called_with(session_id)
 
+    def test_session_get_or_create_is_public(self, service):
+        """get_or_create_session is exposed as a public callable."""
+        assert callable(service.get_or_create_session)
+        assert not service.get_or_create_session.__name__.startswith("_")
+
     @pytest.mark.asyncio
     async def test_get_or_create_returns_existing_session_when_found(
         self, service, mock_session_repository
@@ -131,7 +136,7 @@ class TestInteractionService:
         existing = MagicMock(id=session_id)
         mock_session_repository.get = AsyncMock(return_value=existing)
 
-        result = await service._get_or_create_session(session_id)
+        result = await service.get_or_create_session(session_id)
 
         assert result is existing
         mock_session_repository.create.assert_not_called()
@@ -145,7 +150,7 @@ class TestInteractionService:
         mock_session_repository.create = AsyncMock(return_value=new_session)
         mock_session_repository.update_state = AsyncMock(return_value=active_session)
 
-        result = await service._get_or_create_session(None)
+        result = await service.get_or_create_session(None)
 
         assert result is active_session
         mock_session_repository.create.assert_called_once()

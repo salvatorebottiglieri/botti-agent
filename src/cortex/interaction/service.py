@@ -146,6 +146,6 @@ class InteractionService:
         """Get a session by ID."""
         return await self._session_repository.get(session_id)
 
-    async def _get_or_create_session(self, session_id: UUID | None) -> Session:
+    async def get_or_create_session(self, session_id: UUID | None) -> Session:
         """Get existing session or create a new ACTIVE one."""
         return await policy.get_or_create_session(self._session_repository, session_id)
