@@ -1,4 +1,5 @@
-"""Learning module: echo state network core types."""
+"""Learning module: echo state network core types and specialized readouts."""
+from .readouts import AnomalyReadout, PatternReadout, SalienceReadout
 from .reservoir import (
     EchoStateNetwork,
     Readout,
@@ -6,7 +7,10 @@ from .reservoir import (
 )
 
 __all__ = [
-    "Reservoir",
-    "Readout",
+    "AnomalyReadout",
     "EchoStateNetwork",
+    "PatternReadout",
+    "Readout",
+    "Reservoir",
+    "SalienceReadout",
 ]
