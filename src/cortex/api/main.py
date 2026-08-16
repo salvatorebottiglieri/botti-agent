@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from cortex.api.dependencies import set_app_state
 from cortex.api.routes import (
@@ -103,6 +105,11 @@ def create_api_app() -> FastAPI:
             "version": settings.version,
             "docs": "/docs",
         }
+
+    # Minimal web UI (single self-contained page, no build step)
+    static_dir = Path(__file__).resolve().parent / "static"
+    if static_dir.is_dir():
+        app.mount("/ui", StaticFiles(directory=static_dir, html=True), name="ui")
 
     return app
 
