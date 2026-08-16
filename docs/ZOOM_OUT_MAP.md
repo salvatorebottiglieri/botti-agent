@@ -95,7 +95,6 @@
 |--------|----------|---------------|-------|--------|
 | **ExecutionModule** | `src/cortex/execution/module.py` | `goal.created`, `recommendation.executed` | `goal.*` via EventEmitter | ✅ **UPDATED** |
 | **InteractionService** | `src/cortex/interaction/service.py` | (called by API) | Uses `SessionRepository` + `policy` module | ✅ **UPDATED** |
-| **PersonalityService** | `src/cortex/interaction/service.py` | (reads MemoryService) | Personality profile from MemoryContext | ✅ |
 | **API Gateway** | `src/cortex/api/` | FastAPI routes | HTTP → InteractionService | ✅ |
 
 ### Layer 6 — Integration
@@ -176,7 +175,7 @@ App Bootstrap (initialize_app)
         12. LoopExecutor (takes ToolExecutor, EventBus)
         13. AgentLoop (takes ContextBuilder, Reasoner, LoopExecutor, EventBus)
         14. ExecutionModule (takes AgentLoop, EventBus — no GoalStore)
-        15. PersonalityService + InteractionService
+        15. InteractionService
         16. API Gateway
         17. Subscribe services → EventBus
         18. MinionService (optional)
@@ -333,7 +332,7 @@ src/cortex/
 │
 ├── interaction/             # Wave 5 — Interaction Module
 │   ├── __init__.py
-│   └── service.py           # InteractionService, PersonalityService
+│   └── service.py           # InteractionService
 │
 ├── learning/                # Wave 7.1 — Learning Module (planned)
 │   ├── __init__.py          # (planned)

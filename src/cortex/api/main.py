@@ -125,7 +125,6 @@ def bootstrap_app(state: dict[str, Any]) -> FastAPI:
             - session_service
             - execution_module
             - interaction_service
-            - personality_service
             - minion_service
             - memory_service
             - llm_client
