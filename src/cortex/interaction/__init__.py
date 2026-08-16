@@ -1,5 +1,5 @@
 """Cortex Interaction Module."""
 
-from cortex.interaction.service import InteractionService, PersonalityService
+from cortex.interaction.service import InteractionService
 
-__all__ = ["InteractionService", "PersonalityService"]
+__all__ = ["InteractionService"]

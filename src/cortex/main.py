@@ -40,7 +40,6 @@ class CortexApp:
     session_repository: Any = field(default=None)
     execution_module: Any = field(default=None)
     interaction_service: Any = field(default=None)
-    personality_service: Any = field(default=None)
     memory_service: Any = field(default=None)
     minion_service: Any = field(default=None)
     llm_client: Any = field(default=None)
@@ -235,16 +234,11 @@ async def initialize_app() -> CortexApp:
     # direct call, not routed through the event bus.
     await cortex.execution_module.resume_in_flight()
 
-    # 5f. Create personality service
-    from cortex.interaction.service import PersonalityService
-    cortex.personality_service = PersonalityService(memory_service=cortex.memory_service)
-
-    # 5g. Create interaction service
+    # 5f. Create interaction service
     from cortex.interaction.service import InteractionService
     cortex.interaction_service = InteractionService(
         execution_module=cortex.execution_module,
         session_repository=cortex.session_repository,
-        personality_service=cortex.personality_service,
     )
 
     # 7. Create state dict for API
@@ -254,7 +248,6 @@ async def initialize_app() -> CortexApp:
         "session_repository": cortex.session_repository,
         "execution_module": cortex.execution_module,
         "interaction_service": cortex.interaction_service,
-        "personality_service": cortex.personality_service,
         "memory_service": cortex.memory_service,
         "minion_service": None,  # Will be initialized separately
         "llm_client": cortex.llm_client,
