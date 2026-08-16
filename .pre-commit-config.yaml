@@ -27,5 +27,6 @@ repos:
           - httpx>=0.27
           - typer>=0.15
           - uvicorn>=0.30
+          - numpy>=2.5.2
           - types-PyYAML
           - types-colorama
