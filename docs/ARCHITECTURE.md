@@ -1895,7 +1895,7 @@ Database:
 **Internal Components:**
 ```python
 MemoryService             # Service API (query, store, search)
-FactStore                # Postgres client for facts/concepts
+FactStore                # pure CRUD seam over FactRepository: dedup-on-write by symbolic_repr, session-scoped listing; MemoryService delegates CRUD to it
 FactExtractor           # rule-based: raw events (location/payment/activity/calendar/call_log/app_usage) -> facts via extract_from_event_type
                         # LLM-powered: free text -> facts via extract_from_text; MinionService & MemoryService.handle_event delegate to it
 LogicEngine             # PyDatalog — validates LLM reasoning, checks consistency

@@ -139,6 +139,29 @@ class FactRepository(ABC):
         ...
 
     @abstractmethod
+    async def list_by_session(
+        self,
+        session_id: UUID,
+        fact_type: FactType | None = None,
+        *,
+        limit: int = 100,
+    ) -> list[Fact]:
+        """
+        List active facts for a session, optionally filtered by type.
+
+        The session filter is applied before any row limit.
+
+        Args:
+            session_id: The session's UUID.
+            fact_type: Optional fact type to filter by.
+            limit: Maximum number of results.
+
+        Returns:
+            Active facts for the session.
+        """
+        ...
+
+    @abstractmethod
     async def record_access(self, fact_id: UUID) -> None:
         """
         Record that a fact was accessed.

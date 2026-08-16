@@ -181,6 +181,34 @@ class PostgresFactRepository(FactRepository):
             )
             return [self._row_to_fact(row) for row in rows]
 
+    async def list_by_session(
+        self,
+        session_id: UUID,
+        fact_type: FactType | None = None,
+        *,
+        limit: int = 100,
+    ) -> list[Fact]:
+        """List active facts for a session, optionally filtered by type."""
+        type_filter = ""
+        params: list[Any] = [str(session_id), limit]
+        if fact_type is not None:
+            type_filter = "AND type = $2"
+            params.insert(1, fact_type.value if hasattr(fact_type, "value") else fact_type)
+        async with DbSession() as db:
+            rows = await db.fetch(
+                f"""
+                SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
+                       payload, confidence, created_at, retracted_at,
+                       last_accessed_at, access_count
+                FROM facts
+                WHERE payload->>'session_id' = $1 AND retracted_at IS NULL {type_filter}
+                ORDER BY created_at DESC
+                LIMIT ${len(params)}
+                """,
+                *params,
+            )
+            return [self._row_to_fact(row) for row in rows]
+
     async def record_access(self, fact_id: UUID) -> None:
         """Record that a fact was accessed."""
         async with DbSession() as db:
