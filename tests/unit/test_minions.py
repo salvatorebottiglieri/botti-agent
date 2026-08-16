@@ -384,6 +384,17 @@ class TestMinionInterfaces:
         assert EventType.HEARTBEAT.value == "minion.heartbeat"
         assert EventType.LOCATION_UPDATE.value == "location.update"
 
+    def test_payment_and_call_log_event_types(self):
+        """Test payment/call_log event types construct via MQTT path."""
+        event = MinionEvent.create(
+            minion_id="m",
+            event_type="payment",
+            payload={},
+        )
+        assert event.event_type == EventType.PAYMENT
+        assert EventType("payment") is EventType.PAYMENT
+        assert EventType("call_log") is EventType.CALL_LOG
+
 
 class TestPostgresMinionRegistry:
     """Tests for Postgres-backed MinionRegistry."""

@@ -18,6 +18,11 @@ class FactType(StrEnum):
     TIME = "time"
     ACTIVITY = "activity"
 
+    # Sensory events
+    PAYMENT = "payment"
+    CALL_LOG = "call_log"
+    APP_USAGE = "app_usage"
+
     # Contextual
     CALENDAR = "calendar"
     WEATHER = "weather"

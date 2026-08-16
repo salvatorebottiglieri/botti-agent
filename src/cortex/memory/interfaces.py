@@ -5,6 +5,8 @@ from abc import ABC, abstractmethod
 from typing import Any
 from uuid import UUID
 
+from cortex.events.base import BaseEvent
+
 from .models import Concept, Fact, FactType
 
 
@@ -210,13 +212,12 @@ class FactExtractor(ABC):
     """
 
     @abstractmethod
-    async def extract_from_text(self, text: str, context: dict[str, Any] | None = None) -> list[Fact]:
+    async def extract_from_text(self, text: str) -> list[Fact]:
         """
-        Extract facts from text.
+        Extract facts from free text (LLM-powered).
 
         Args:
             text: The text to extract from.
-            context: Optional context (session_id, etc.).
 
         Returns:
             Extracted facts.
@@ -224,12 +225,26 @@ class FactExtractor(ABC):
         ...
 
     @abstractmethod
-    async def extract_from_event(self, event_data: dict[str, Any]) -> list[Fact]:
+    def extract_from_event(self, event: BaseEvent) -> list[Fact]:
         """
         Extract facts from an event.
 
         Args:
-            event_data: Event data to extract from.
+            event: The event to extract from.
+
+        Returns:
+            Extracted facts.
+        """
+        ...
+
+    @abstractmethod
+    def extract_from_event_type(self, event_type: str, payload: dict[str, Any]) -> list[Fact]:
+        """
+        Extract facts from a raw event type and payload.
+
+        Args:
+            event_type: The event type name (e.g. "location").
+            payload: The event payload.
 
         Returns:
             Extracted facts.

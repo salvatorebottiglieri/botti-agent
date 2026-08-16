@@ -257,10 +257,17 @@ class TestMemoryService:
         assert ctx.formality >= 0  # Should be derived from facts
 
     @pytest.mark.asyncio
-    async def test_handle_event_location(self, service, mock_fact_repo):
-        """Location events create facts."""
+    async def test_handle_event_location(self, service, mock_fact_repo, mock_extractor):
+        """Location events create facts via the extractor."""
         mock_fact_repo.get_by_symbolic_repr.return_value = None
         mock_fact_repo.store.return_value = Fact()
+        mock_extractor.extract_from_event_type.return_value = [
+            Fact(
+                type=FactType.LOCATION,
+                symbolic_repr="location.home",
+                natural_lang_repr="At home",
+            )
+        ]
 
         event = MagicMock()
         event.type = "location"
@@ -272,7 +279,10 @@ class TestMemoryService:
 
         await service.handle_event(event)
 
-        # Check that store was called (create a location fact)
+        mock_extractor.extract_from_event_type.assert_called_once_with(
+            "location", event.payload
+        )
+        # Check that store was called with the LOCATION fact from the extractor
         mock_fact_repo.store.assert_called()
         call_args = mock_fact_repo.store.call_args[0][0]
         assert call_args.type == FactType.LOCATION

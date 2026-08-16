@@ -263,9 +263,7 @@ class MemoryService:
         if not self._extractor:
             return []
 
-        facts = await self._extractor.extract_from_text(
-            text, context={"session_id": str(session_id) if session_id else None}
-        )
+        facts = await self._extractor.extract_from_text(text)
 
         # Store extracted facts
         for fact in facts:
@@ -277,69 +275,20 @@ class MemoryService:
         """
         Process an event, extracting facts if applicable.
 
-        Event types handled:
-        - location: GPS coordinates
-        - activity: Current activity
-        - calendar: Calendar events
+        Delegates extraction to the FactExtractor; unknown event types
+        yield no facts.
         """
         event_type = getattr(event, "type", None)
         payload = getattr(event, "payload", {})
 
-        if event_type == "location":
-            await self._extract_location_facts(payload)
-        elif event_type == "activity":
-            await self._extract_activity_facts(payload)
-        elif event_type == "calendar":
-            await self._extract_calendar_facts(payload)
+        if not isinstance(event_type, str):
+            return
 
-    async def _extract_location_facts(self, payload: dict[str, Any]) -> None:
-        """Extract facts from location events."""
-        lat = payload.get("latitude")
-        lon = payload.get("longitude")
-        place = payload.get("place")
+        if not self._extractor:
+            return
 
-        fact = Fact(
-            type=FactType.LOCATION,
-            mutability=FactMutability.MUTABLE,
-            symbolic_repr=f"location.{place or 'current'}",
-            natural_lang_repr=f"At {place or 'unknown location'}",
-            payload={"latitude": lat, "longitude": lon, "place": place},
-            confidence=0.9 if place else 0.6,
-        )
-
-        await self.store_fact(fact)
-
-    async def _extract_activity_facts(self, payload: dict[str, Any]) -> None:
-        """Extract facts from activity events."""
-        activity = payload.get("activity")
-        duration = payload.get("duration")
-
-        fact = Fact(
-            type=FactType.ACTIVITY,
-            mutability=FactMutability.EPHEMERAL,
-            symbolic_repr=f"activity.{activity or 'unknown'}",
-            natural_lang_repr=f"Currently {activity or 'doing something'}",
-            payload={"duration": duration},
-            confidence=0.8,
-        )
-
-        await self.store_fact(fact)
-
-    async def _extract_calendar_facts(self, payload: dict[str, Any]) -> None:
-        """Extract facts from calendar events."""
-        title = payload.get("title")
-        start = payload.get("start_time")
-
-        fact = Fact(
-            type=FactType.CALENDAR,
-            mutability=FactMutability.MUTABLE,
-            symbolic_repr=f"calendar.{_slugify(title or 'event')}",
-            natural_lang_repr=f"Event: {title or 'Unknown event'}",
-            payload={"start_time": start, **payload},
-            confidence=0.9,
-        )
-
-        await self.store_fact(fact)
+        for fact in self._extractor.extract_from_event_type(event_type, payload):
+            await self.store_fact(fact)
 
     # ─── Concept Management ───────────────────────────────────────────────
 
@@ -426,12 +375,3 @@ def _avg(values: list[float], default: float) -> float:
     if not values:
         return default
     return sum(values) / len(values)
-
-
-def _slugify(text: str) -> str:
-    """Convert text to a slug for symbolic representation."""
-    import re
-
-    text = text.lower()
-    text = re.sub(r"[^a-z0-9]+", "_", text)
-    return text.strip("_")

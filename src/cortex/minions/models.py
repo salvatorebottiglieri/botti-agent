@@ -42,6 +42,8 @@ class EventType(StrEnum):
     CALENDAR_EVENT = "calendar.event"
     ACTIVITY_DETECTED = "activity.detected"
     APP_USAGE = "app.usage"
+    PAYMENT = "payment"
+    CALL_LOG = "call_log"
     BATTERY_LEVEL = "battery.level"
     NOTIFICATION = "notification"
 
