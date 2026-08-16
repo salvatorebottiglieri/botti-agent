@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from pydantic import BaseModel
+
 # Lazy-loaded schemas (generated from Pydantic models at import time)
 _schemas_cache: dict[str, object] | None = None
 
@@ -35,7 +37,7 @@ def _get_schemas() -> dict[str, object]:
     )
 
     # All events + config + messages
-    model_to_name = {
+    model_to_name: dict[type[BaseModel], str] = {
         LocationEvent: "location_event",
         ActivityEvent: "activity_event",
         CalendarEvent: "calendar_event",

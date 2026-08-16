@@ -59,7 +59,7 @@ jobs:
         run: uv sync --frozen --all-extras
 
       - name: Run mypy
-        run: uv run mypy src/cortex
+        run: uv run mypy src
 
   coverage:
     name: Coverage (pytest-cov)
