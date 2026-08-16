@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from cortex.minions.interfaces import MinionEventHandler, MinionGateway, MinionRegistry
+from cortex.minions.interfaces import MinionGateway, MinionRegistry
 from cortex.minions.models import (
     MinionConfig,
     MinionEvent,
@@ -48,14 +48,6 @@ class TestMinionService:
         return bus
 
     @pytest.fixture
-    def mock_handler(self):
-        """Create a mock event handler."""
-        handler = MagicMock(spec=MinionEventHandler)
-        handler.handle_event = AsyncMock()
-        handler.handle_batch = AsyncMock(return_value=[])
-        return handler
-
-    @pytest.fixture
     def config(self):
         """Create a minion config."""
         return MinionConfig(
@@ -81,7 +73,7 @@ class TestMinionService:
         await service.connect()
 
         mock_gateway.connect.assert_called_once()
-        mock_gateway.subscribe.assert_called_once()
+        mock_gateway.subscribe.assert_called_once_with(service)
         mock_registry.register.assert_called_once()
 
     @pytest.mark.asyncio
@@ -173,6 +165,88 @@ class TestMinionService:
         assert mock_event_bus.publish.called
 
     @pytest.mark.asyncio
+    async def test_handle_event_uses_fact_extractor(
+        self, mock_gateway, mock_registry, mock_event_bus, config
+    ):
+        """handle_event routes extraction through FactExtractor and stores facts."""
+        from cortex.memory.models import Fact, FactMutability, FactType
+        memory_service = MagicMock()
+        memory_service.store_fact = AsyncMock()
+        fact_extractor = MagicMock()
+        fact_extractor.extract_from_event_type = MagicMock(
+            return_value=[
+                Fact(
+                    type=FactType.LOCATION,
+                    mutability=FactMutability.MUTABLE,
+                    symbolic_repr="location.work",
+                    natural_lang_repr="At work",
+                ),
+                Fact(
+                    type=FactType.ACTIVITY,
+                    mutability=FactMutability.EPHEMERAL,
+                    symbolic_repr="activity.walking",
+                    natural_lang_repr="Currently walking",
+                ),
+            ]
+        )
+        service = MinionService(
+            config=config,
+            gateway=mock_gateway,
+            registry=mock_registry,
+            event_bus=mock_event_bus,
+            memory_service=memory_service,
+            fact_extractor=fact_extractor,
+        )
+
+        from cortex.minions.models import EventType
+        event = MinionEvent(
+            event_id="e3",
+            minion_id="test-minion",
+            event_type=EventType.LOCATION_UPDATE,
+            payload={"latitude": 37.77, "longitude": -122.41, "place": "work"},
+        )
+
+        await service.handle_event(event)
+
+        # The dotted enum value ("location.update") is translated to the plain
+        # sensory vocabulary ("location") before reaching the extractor.
+        fact_extractor.extract_from_event_type.assert_called_once_with(
+            "location", event.payload
+        )
+        assert memory_service.store_fact.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_handle_event_passes_plain_string_sensory_type(
+        self, mock_gateway, mock_registry, mock_event_bus, config
+    ):
+        """A plain-string sensory event type is passed through untranslated."""
+        memory_service = MagicMock()
+        memory_service.store_fact = AsyncMock()
+        fact_extractor = MagicMock()
+        fact_extractor.extract_from_event_type = MagicMock(return_value=[])
+        service = MinionService(
+            config=config,
+            gateway=mock_gateway,
+            registry=mock_registry,
+            event_bus=mock_event_bus,
+            memory_service=memory_service,
+            fact_extractor=fact_extractor,
+        )
+
+        event = MinionEvent(
+            event_id="e4",
+            minion_id="test-minion",
+            event_type="payment",
+            payload={"merchant_name": "Tesco", "amount": 12.5},
+        )
+
+        await service.handle_event(event)
+
+        fact_extractor.extract_from_event_type.assert_called_once_with(
+            "payment", event.payload
+        )
+
+    @pytest.mark.asyncio
     async def test_batch_events_processed(self, service):
         """Batch events are processed correctly."""
         from cortex.minions.models import EventType
@@ -189,68 +263,6 @@ class TestMinionService:
         processed = await service.handle_batch(batch)
 
         assert processed is not None  # Should return processed events
-
-
-class TestMinionEventHandler:
-    """Tests for MinionEventProcessor."""
-
-    @pytest.fixture
-    def processor(self):
-        """Create a processor with mocked dependencies."""
-        from cortex.services.minion_service import MinionEventProcessor
-        mock_bus = MagicMock()
-        return MinionEventProcessor(event_bus=mock_bus)
-
-    @pytest.mark.asyncio
-    async def test_process_location_event(self, processor):
-        """Location events are processed correctly."""
-        from cortex.minions.models import EventType
-        event = MinionEvent(
-            event_id="event-1",
-            minion_id="minion-1",
-            event_type=EventType.LOCATION_UPDATE,
-            payload={
-                "latitude": 37.7749,
-                "longitude": -122.4194,
-                "accuracy": 10.0,
-                "place": "coffee_shop"
-            }
-        )
-
-        await processor.handle_event(event)
-
-    @pytest.mark.asyncio
-    async def test_process_activity_event(self, processor):
-        """Activity events are processed correctly."""
-        from cortex.minions.models import EventType
-        event = MinionEvent(
-            event_id="event-2",
-            minion_id="minion-1",
-            event_type=EventType.ACTIVITY_DETECTED,
-            payload={
-                "activity": "driving",
-                "confidence": 0.85
-            }
-        )
-
-        await processor.handle_event(event)
-
-    @pytest.mark.asyncio
-    async def test_process_batch(self, processor):
-        """Batch events are processed."""
-        from cortex.minions.models import EventType
-        batch = MinionEventBatch(
-            batch_id="batch-123",
-            minion_id="minion-1",
-            events=[
-                MinionEvent(event_id="e1", minion_id="test", event_type=EventType.LOCATION_UPDATE, payload={}),
-                MinionEvent(event_id="e2", minion_id="test", event_type=EventType.BATTERY_LEVEL, payload={"level": 80}),
-            ]
-        )
-
-        results = await processor.handle_batch(batch)
-
-        assert len(results) == 2
 
 
 class TestMinionConfig:

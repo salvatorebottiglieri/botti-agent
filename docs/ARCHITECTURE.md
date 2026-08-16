@@ -1896,7 +1896,8 @@ Database:
 ```python
 MemoryService             # Service API (query, store, search)
 FactStore                # Postgres client for facts/concepts
-FactExtractor           # LLM client — extracts structured facts from text
+FactExtractor           # rule-based: raw events (location/payment/activity/calendar/call_log/app_usage) -> facts via extract_from_event_type
+                        # LLM-powered: free text -> facts via extract_from_text; MinionService & MemoryService.handle_event delegate to it
 LogicEngine             # PyDatalog — validates LLM reasoning, checks consistency
 HierarchyManager        # manages frequency-adjusted fact hierarchy (hot/warm/cold)
 ```

@@ -154,17 +154,21 @@ async def initialize_app() -> CortexApp:
     goal_repo: GoalRepository = PostgresGoalRepository()
 
     # 5c. Create memory repositories
-    from cortex.memory.interfaces import ConceptRepository, FactExtractor, FactRepository
+    from cortex.memory.interfaces import ConceptRepository, FactRepository
     from cortex.memory.repository import PostgresConceptRepository, PostgresFactRepository
 
     fact_repo: FactRepository = PostgresFactRepository()
     concept_repo: ConceptRepository = PostgresConceptRepository()
-    memory_extractor: FactExtractor | None = None
 
     # 5d. Create LLM client
     from cortex.llm.factory import LLMClientFactory
     llm_factory = LLMClientFactory(settings)
     cortex.llm_client = llm_factory.create()
+
+    # 5d'. Create fact extractor so MemoryService's conversation/event
+    # extraction is live rather than a silent no-op.
+    from cortex.memory.fact_extractor import FactExtractor
+    memory_extractor = FactExtractor(llm_client=cortex.llm_client)
 
     # 5e. Create tool registry and executor
     from cortex.tools.executor import DefaultToolExecutor
@@ -320,6 +324,7 @@ async def _subscribe_services(cortex: CortexApp) -> None:
 
 async def _initialize_minion_service(cortex: CortexApp) -> None:
     """Initialize MinionService for MQTT-based minion communication."""
+    from cortex.memory.fact_extractor import FactExtractor
     from cortex.minions.models import MinionConfig
     from cortex.minions.mqtt_client import MinionMQTTClient
     from cortex.minions.registry import InMemoryMinionRegistry
@@ -348,12 +353,14 @@ async def _initialize_minion_service(cortex: CortexApp) -> None:
     registry = InMemoryMinionRegistry()
 
     # Create and configure service
+    fact_extractor = FactExtractor(llm_client=cortex.llm_client)
     cortex.minion_service = MinionService(
         config=minion_config,
         gateway=gateway,
         registry=registry,
         event_bus=cortex.event_bus,
         memory_service=cortex.memory_service,
+        fact_extractor=fact_extractor,
     )
 
     # Connect gateway

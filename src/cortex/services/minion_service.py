@@ -6,8 +6,11 @@ import logging
 from typing import Any
 
 from cortex.events import EventEmitter
+from cortex.memory.fact_extractor import SUPPORTED_EVENT_TYPES
+from cortex.memory.interfaces import FactExtractor
 from cortex.minions.interfaces import MinionEventHandler, MinionGateway, MinionRegistry
 from cortex.minions.models import (
+    EventType,
     MinionConfig,
     MinionEvent,
     MinionEventBatch,
@@ -17,15 +20,32 @@ from cortex.minions.models import (
 
 logger = logging.getLogger(__name__)
 
+_MINION_EVENT_TYPE_TO_SENSORY = {
+    "location.update": "location",
+    "activity.detected": "activity",
+    "calendar.event": "calendar",
+    "app.usage": "app_usage",
+    "payment": "payment",
+    "call_log": "call_log",
+}
 
-class MinionService:
+
+def _sensory_event_type(event_type: EventType | str) -> str | None:
+    """Map a minion event type to the plain sensory vocabulary FactExtractor dispatches on."""
+    value = event_type.value if isinstance(event_type, EventType) else str(event_type)
+    if value in SUPPORTED_EVENT_TYPES:
+        return value
+    return _MINION_EVENT_TYPE_TO_SENSORY.get(value)
+
+
+class MinionService(MinionEventHandler):
     """
     Service layer for minion management.
 
     Wraps the MinionGateway with:
     - Registry integration
     - Event processing
-    - Fact extraction
+    - Fact extraction (via FactExtractor)
     - Sequence gap detection
     - Health monitoring
     """
@@ -36,19 +56,18 @@ class MinionService:
         gateway: MinionGateway,
         registry: MinionRegistry,
         event_bus: Any | None = None,
-        memory_service: Any | None = None
+        memory_service: Any | None = None,
+        fact_extractor: FactExtractor | None = None,
     ):
         self._config = config
         self._gateway = gateway
         self._registry = registry
         self._memory_service = memory_service
+        self._fact_extractor = fact_extractor
         self._emitter = EventEmitter(event_bus, source_module="minion_service")
 
         # Sequence tracking for gap detection
         self._last_sequence: dict[str, int] = {}
-
-        # Create event handler
-        self._handler = MinionEventProcessor(event_bus, memory_service)
 
     async def connect(self) -> None:
         """Connect to the message broker and start listening."""
@@ -67,7 +86,7 @@ class MinionService:
 
         # Connect gateway
         await self._gateway.connect()
-        await self._gateway.subscribe(self._handler)
+        await self._gateway.subscribe(self)
 
         logger.info(f"MinionService connected for {self._config.minion_id}")
 
@@ -115,13 +134,25 @@ class MinionService:
         # Update heartbeat
         await self.heartbeat()
 
-        # Process based on event type
-        if event.event_type == "location":
-            await self._handle_location_event(event)
-        elif event.event_type == "activity":
-            await self._handle_activity_event(event)
-        elif event.event_type == "calendar":
-            await self._handle_calendar_event(event)
+        # Translate the minion event type to the plain sensory vocabulary
+        # FactExtractor dispatches on (EventType values are dotted, e.g.
+        # "location.update" -> "location").
+        sensory_type = _sensory_event_type(event.event_type)
+
+        # Track last known location in the registry
+        if sensory_type == "location":
+            info = await self._registry.get(event.minion_id)
+            if info:
+                info.last_location = event.payload.get("place") or (
+                    f"{event.payload.get('latitude')},{event.payload.get('longitude')}"
+                )
+
+        # Extract facts from the event via the FactExtractor
+        if sensory_type and self._fact_extractor and self._memory_service:
+            for fact in self._fact_extractor.extract_from_event_type(
+                sensory_type, event.payload
+            ):
+                await self._memory_service.store_fact(fact)
 
         await self._emitter.emit(
             "minion.event",
@@ -163,150 +194,6 @@ class MinionService:
             processed.append(event)
         return processed
 
-    async def _handle_location_event(self, event: MinionEvent) -> None:
-        """Handle a location event."""
-        payload = event.payload
-
-        # Update registry with location
-        info = await self._registry.get(event.minion_id)
-        if info:
-            info.last_location = payload.get("place") or f"{payload.get('latitude')},{payload.get('longitude')}"
-
-        # Extract fact if memory service available
-        if self._memory_service:
-            fact = await self._memory_service._extract_location_facts(payload)
-            if fact:
-                await self._memory_service.store_fact(fact)
-
-    async def _handle_activity_event(self, event: MinionEvent) -> None:
-        """Handle an activity event."""
-        payload = event.payload
-
-        # Extract fact if memory service available
-        if self._memory_service:
-            fact = await self._memory_service._extract_activity_facts(payload)
-            if fact:
-                await self._memory_service.store_fact(fact)
-
-    async def _handle_calendar_event(self, event: MinionEvent) -> None:
-        """Handle a calendar event."""
-        payload = event.payload
-
-        # Extract fact if memory service available
-        if self._memory_service:
-            fact = await self._memory_service._extract_calendar_facts(payload)
-            if fact:
-                await self._memory_service.store_fact(fact)
-
     def is_connected(self) -> bool:
         """Check if the gateway is connected."""
         return self._gateway.is_connected()
-
-
-class MinionEventProcessor(MinionEventHandler):
-    """
-    Process incoming minion events.
-
-    Transforms raw events into structured facts and emits to the system.
-    """
-
-    def __init__(self, event_bus: Any | None = None, memory_service: Any | None = None):
-        self._memory_service = memory_service
-        self._emitter = EventEmitter(event_bus, source_module="minion_event_processor")
-
-    async def handle_event(self, event: MinionEvent) -> None:
-        """
-        Handle a single minion event.
-
-        Args:
-            event: The minion event to process
-        """
-        # Process based on type
-        if event.event_type == "location":
-            await self._process_location(event)
-        elif event.event_type == "activity":
-            await self._process_activity(event)
-        elif event.event_type == "battery":
-            await self._process_battery(event)
-        elif event.event_type == "app_usage":
-            await self._process_app_usage(event)
-        elif event.event_type == "calendar":
-            await self._process_calendar(event)
-
-    async def handle_batch(self, batch: MinionEventBatch) -> list[MinionEvent]:
-        """
-        Handle a batch of events.
-
-        Args:
-            batch: The batch of events
-
-        Returns:
-            Processed events
-        """
-        processed = []
-        for event in batch.events:
-            await self.handle_event(event)
-            processed.append(event)
-        return processed
-
-    async def _process_location(self, event: MinionEvent) -> None:
-        """Process a location event."""
-        payload = event.payload
-        await self._emitter.emit(
-            "minion.location",
-            {
-                "minion_id": event.minion_id,
-                "latitude": payload.get("latitude"),
-                "longitude": payload.get("longitude"),
-                "place": payload.get("place"),
-                "accuracy": payload.get("accuracy"),
-            },
-        )
-
-    async def _process_activity(self, event: MinionEvent) -> None:
-        """Process an activity event."""
-        payload = event.payload
-        await self._emitter.emit(
-            "minion.activity",
-            {
-                "minion_id": event.minion_id,
-                "activity": payload.get("activity"),
-                "confidence": payload.get("confidence"),
-            },
-        )
-
-    async def _process_battery(self, event: MinionEvent) -> None:
-        """Process a battery event."""
-        payload = event.payload
-        await self._emitter.emit(
-            "minion.battery",
-            {
-                "minion_id": event.minion_id,
-                "level": payload.get("level"),
-                "is_charging": payload.get("is_charging"),
-            },
-        )
-
-    async def _process_app_usage(self, event: MinionEvent) -> None:
-        """Process an app usage event."""
-        payload = event.payload
-        await self._emitter.emit(
-            "minion.app_usage",
-            {
-                "minion_id": event.minion_id,
-                "app": payload.get("app"),
-                "duration": payload.get("duration"),
-            },
-        )
-
-    async def _process_calendar(self, event: MinionEvent) -> None:
-        """Process a calendar event."""
-        payload = event.payload
-        await self._emitter.emit(
-            "minion.calendar",
-            {
-                "minion_id": event.minion_id,
-                "event": payload.get("title"),
-                "start_time": payload.get("start_time"),
-            },
-        )
