@@ -150,12 +150,27 @@ class AgentLoop:
         tools_used: list[str] = []
         messages: list[Message] = []
 
+        # Seed history from the repository so multi-turn context works. The
+        # limit mirrors the context builder's window (max_messages - 1) so
+        # the seeded conversation never exceeds what the builder expects.
+        if self._session_repository is not None:
+            history = await self._session_repository.get_messages(
+                session_id, limit=self._context_builder.max_messages - 1
+            )
+            messages.extend(history)
+
         # Add user message
         messages.append(Message(
             session_id=session_id,
             role=MessageRole.USER,
             content=user_message,
         ))
+
+        # Persist the user message when a repository is wired
+        if self._session_repository is not None:
+            await self._session_repository.add_message(
+                session_id, MessageRole.USER, user_message
+            )
 
         try:
             while iterations < max_iters:
@@ -180,6 +195,10 @@ class AgentLoop:
                     case DecisionType.RESPOND:
                         # Done! Stream the response
                         text = decision.text or "I'm not sure how to respond."
+                        if self._session_repository is not None:
+                            await self._session_repository.add_message(
+                                session_id, MessageRole.ASSISTANT, text
+                            )
                         yield TextDeltaEvent(session_id, delta=text)
                         yield ResponseDoneEvent(
                             session_id,
@@ -192,6 +211,10 @@ class AgentLoop:
                     case DecisionType.ASK_QUESTION:
                         # Return the question
                         text = decision.text or "Could you clarify?"
+                        if self._session_repository is not None:
+                            await self._session_repository.add_message(
+                                session_id, MessageRole.ASSISTANT, text
+                            )
                         yield TextDeltaEvent(session_id, delta=text)
                         yield ResponseDoneEvent(
                             session_id,
@@ -223,6 +246,23 @@ class AgentLoop:
                                 ],
                             ))
 
+                            # Persist the assistant tool-call message before the
+                            # tool messages that answer them (same shape as run_goal).
+                            if self._session_repository is not None:
+                                await self._session_repository.add_message(
+                                    session_id,
+                                    MessageRole.ASSISTANT,
+                                    "",
+                                    tool_calls=[
+                                        {
+                                            "id": call.id,
+                                            "name": call.name,
+                                            "arguments": call.arguments,
+                                        }
+                                        for call in decision.tool_calls
+                                    ],
+                                )
+
                             for call in decision.tool_calls:
                                 # Track tools used
                                 tools_used.append(call.name)
@@ -245,6 +285,20 @@ class AgentLoop:
                                     execution_time_ms=result.execution_time_ms,
                                 )
 
+                                # Persist the tool result, linked to its call,
+                                # so the next context build sees it.
+                                if self._session_repository is not None:
+                                    await self._session_repository.add_message(
+                                        session_id,
+                                        MessageRole.TOOL_RESULT,
+                                        (
+                                            result.output or ""
+                                            if result.success
+                                            else f"Error: {result.error}"
+                                        ),
+                                        tool_call_id=call.id,
+                                    )
+
                                 # 4. Observe - add tool result to conversation
                                 msg = Message(
                                     session_id=session_id,
@@ -262,6 +316,10 @@ class AgentLoop:
                         else:
                             # No tools to execute, respond
                             fallback = "I couldn't determine what tools to use."
+                            if self._session_repository is not None:
+                                await self._session_repository.add_message(
+                                    session_id, MessageRole.ASSISTANT, fallback
+                                )
                             yield TextDeltaEvent(session_id, delta=fallback)
                             yield ResponseDoneEvent(
                                 session_id,

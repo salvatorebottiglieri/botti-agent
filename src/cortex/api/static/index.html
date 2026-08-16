@@ -168,7 +168,7 @@ function addTool(name, ok, out) {
 function renderHistory(messages) {
   for (const m of messages) {
     if (m.role === "user") addMsg("user", m.content);
-    else if (m.role === "assistant") addMsg("assistant", m.content);
+    else if (m.role === "assistant" && m.content) addMsg("assistant", m.content);
   }
 }
 
