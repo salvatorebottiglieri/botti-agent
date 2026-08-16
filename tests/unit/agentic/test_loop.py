@@ -906,3 +906,222 @@ class TestStreamChat:
         assert done_event.message == "Here is the answer."
         assert done_event.iterations == 1
         assert done_event.tools_used == ["search", "read"]
+
+
+class TestStreamChatPersistence:
+    """Tests for AgentLoop.stream_chat message persistence."""
+
+    @pytest.fixture
+    def mock_context_builder(self):
+        """Create a mock context builder."""
+        builder = MagicMock()
+        builder.max_messages = 20
+        builder.build = AsyncMock()
+        return builder
+
+    @pytest.fixture
+    def mock_reasoner(self):
+        """Create a mock reasoner."""
+        reasoner = MagicMock()
+        reasoner.reason = AsyncMock()
+        return reasoner
+
+    @pytest.fixture
+    def mock_executor(self):
+        """Create a mock executor."""
+        executor = MagicMock()
+        executor.execute_single = AsyncMock()
+        return executor
+
+    @pytest.fixture
+    def mock_event_bus(self):
+        """Create a mock event bus."""
+        bus = MagicMock()
+        bus.publish = AsyncMock()
+        return bus
+
+    @pytest.fixture
+    def repo(self):
+        """Create a mocked session repository."""
+        repository = MagicMock()
+        repository.add_message = AsyncMock(return_value=MagicMock())
+        repository.get_messages = AsyncMock(return_value=[])
+        return repository
+
+    @pytest.fixture
+    def loop(self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus):
+        """Create an AgentLoop without a session repository."""
+        return AgentLoop(
+            context_builder=mock_context_builder,
+            reasoner=mock_reasoner,
+            executor=mock_executor,
+            event_bus=mock_event_bus,
+        )
+
+    def make_loop(
+        self,
+        mock_context_builder,
+        mock_reasoner,
+        mock_executor,
+        mock_event_bus,
+        repo,
+    ) -> AgentLoop:
+        """Create an AgentLoop with a wired session repository."""
+        return AgentLoop(
+            context_builder=mock_context_builder,
+            reasoner=mock_reasoner,
+            executor=mock_executor,
+            event_bus=mock_event_bus,
+            session_repository=repo,
+        )
+
+    @pytest.mark.asyncio
+    async def test_respond_persists_user_then_assistant(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
+    ) -> None:
+        """RESPOND persists USER then ASSISTANT in order, with correct content."""
+        session_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.respond(
+            "Hello!", reasoning="decided to greet",
+        ))
+
+        loop = self.make_loop(
+            mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
+        )
+
+        events = [e async for e in loop.stream_chat(session_id, "Hi")]
+
+        assert [e.event_type for e in events] == ["thinking", "text", "done"]
+        calls = repo.add_message.await_args_list
+        assert [c.args[1] for c in calls] == [MessageRole.USER, MessageRole.ASSISTANT]
+        assert calls[0].args[0] == session_id
+        assert calls[0].args[2] == "Hi"
+        assert calls[1].args[0] == session_id
+        assert calls[1].args[2] == "Hello!"
+
+    @pytest.mark.asyncio
+    async def test_tool_round_trip_persists_full_sequence(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
+    ) -> None:
+        """Tool round-trip persists USER, ASSISTANT(tool_calls), TOOL_RESULT,
+        ASSISTANT(text) in order, with the internal tool-call shape."""
+        from cortex.tools.interfaces import ToolResult
+
+        session_id = uuid4()
+        call = ToolCall(id="call_1", name="search", arguments={"q": "x"})
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(side_effect=[
+            Decision.execute_tools([call], reasoning="searching"),
+            Decision.respond("Found it.", reasoning="synthesized"),
+        ])
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="call_1", tool_name="search", success=True, output="found",
+        ))
+
+        loop = self.make_loop(
+            mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
+        )
+
+        events = [e async for e in loop.stream_chat(session_id, "Find it")]
+
+        assert isinstance(events[-1], ResponseDoneEvent)
+        calls = repo.add_message.await_args_list
+        assert [c.args[1] for c in calls] == [
+            MessageRole.USER,
+            MessageRole.ASSISTANT,
+            MessageRole.TOOL_RESULT,
+            MessageRole.ASSISTANT,
+        ]
+        # user message
+        assert calls[0].args[2] == "Find it"
+        # assistant tool-call message, internal shape
+        assert calls[1].args[2] == ""
+        assert calls[1].kwargs["tool_calls"] == [
+            {"id": "call_1", "name": "search", "arguments": {"q": "x"}}
+        ]
+        # tool result, linked by id
+        assert calls[2].args[2] == "found"
+        assert calls[2].kwargs["tool_call_id"] == "call_1"
+        # final assistant text
+        assert calls[3].args[2] == "Found it."
+
+    @pytest.mark.asyncio
+    async def test_seeds_history_from_repository(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
+    ) -> None:
+        """Prior messages are seeded into the conversation before the new
+        user message; get_messages is called with limit == max_messages - 1."""
+        session_id = uuid4()
+        prior = [
+            Message(session_id=session_id, role=MessageRole.USER, content="first"),
+            Message(session_id=session_id, role=MessageRole.ASSISTANT, content="first reply"),
+        ]
+        repo.get_messages = AsyncMock(return_value=list(prior))
+
+        mock_context_builder.max_messages = 20
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        seen: dict[str, list[Message]] = {}
+
+        async def record_reason(context):
+            seen["conversation"] = list(context.conversation)
+            return Decision.respond("How can I help?", reasoning="greeting")
+
+        mock_reasoner.reason = AsyncMock(side_effect=record_reason)
+
+        loop = self.make_loop(
+            mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
+        )
+
+        events = [e async for e in loop.stream_chat(session_id, "second")]
+
+        assert isinstance(events[-1], ResponseDoneEvent)
+        repo.get_messages.assert_awaited_once_with(session_id, limit=19)
+        conv = seen["conversation"]
+        assert [m.content for m in conv[:2]] == ["first", "first reply"]
+        assert conv[-1].role == MessageRole.USER
+        assert conv[-1].content == "second"
+        assert len(conv) == 3
+
+    @pytest.mark.asyncio
+    async def test_ask_question_persists_as_assistant(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
+    ) -> None:
+        """ASK_QUESTION persists the question text as an ASSISTANT message."""
+        session_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.ask_question(
+            "Did you mean file A or file B?", reasoning="need clarification",
+        ))
+
+        loop = self.make_loop(
+            mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
+        )
+
+        events = [e async for e in loop.stream_chat(session_id, "Open the file")]
+
+        assert [e.event_type for e in events] == ["thinking", "text", "done"]
+        calls = repo.add_message.await_args_list
+        assert [c.args[1] for c in calls] == [MessageRole.USER, MessageRole.ASSISTANT]
+        assert calls[1].args[2] == "Did you mean file A or file B?"
+
+    @pytest.mark.asyncio
+    async def test_without_repository_skips_persistence(
+        self, loop, mock_context_builder, mock_reasoner
+    ) -> None:
+        """Without a repository wired, stream_chat still streams normally and
+        never persists anything (backward-compatible path)."""
+        session_id = uuid4()
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.respond(
+            "Hello!", reasoning="decided to greet",
+        ))
+
+        events = [e async for e in loop.stream_chat(session_id, "Hi")]
+
+        assert [e.event_type for e in events] == ["thinking", "text", "done"]
+        assert loop._session_repository is None
