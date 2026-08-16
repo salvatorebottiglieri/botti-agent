@@ -1,75 +1,36 @@
-"""Memory Service - high-level interface for the Memory module."""
+"""ContextProvider - bundle seam + cross-repository operations for the Memory module."""
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 from uuid import UUID
 
 from cortex.agentic.models import AmbientContext, MemoryContext, PersonalityContext
 from cortex.memory.fact_store import FactStore
-from cortex.memory.interfaces import ConceptRepository, FactExtractor, FactRepository
+from cortex.memory.interfaces import ConceptRepository, FactRepository
 from cortex.memory.models import Concept, Fact, FactType
 
 logger = logging.getLogger(__name__)
 
 
-class MemoryService:
-    """
-    Service API for the Memory Module.
+class ContextProvider:
+    """Bundle seam + cross-repository operations.
 
-    Provides a high-level interface for:
-    - Storing and retrieving facts
-    - Extracting facts from conversations
-    - Building derived concepts
-    - Getting personality and ambient context
+    No CRUD (delegates to FactStore), no extraction (delegates to
+    FactExtractor), no LLM calls.
     """
 
     def __init__(
         self,
         fact_repository: FactRepository,
-        fact_extractor: FactExtractor | None = None,
+        fact_store: FactStore,
         concept_repository: ConceptRepository | None = None,
-        event_bus: Any | None = None,
-        llm_client: Any | None = None,
     ):
         self._fact_repo = fact_repository
-        self._fact_store = FactStore(fact_repository)
-        self._extractor = fact_extractor
+        self._fact_store = fact_store
         self._concept_repo = concept_repository
-        self._event_bus = event_bus
-        self._llm_client = llm_client
 
-        self._default_confidence = 0.7
         self._min_relevant_confidence = 0.4
-
-    # ─── Storage Methods ─────────────────────────────────────────────────
-
-    async def store_fact(self, fact: Fact) -> Fact:
-        """
-        Store a new fact.
-
-        Deduplication by symbolic representation is handled by FactStore.
-        """
-        return await self._fact_store.add_fact(fact)
-
-    async def store_batch(self, facts: list[Fact]) -> list[Fact]:
-        """Store multiple facts (dedup applied per fact)."""
-        return [await self._fact_store.add_fact(fact) for fact in facts]
-
-    async def retract_fact(self, fact_id: UUID, reason: str | None = None) -> bool:
-        """
-        Retract a fact (soft delete).
-
-        Also invalidates any concepts that depend on this fact.
-        """
-        deleted = await self._fact_store.retract_fact(fact_id, reason)
-
-        # Cascade to concepts
-        if self._concept_repo:
-            await self._concept_repo.invalidate_from_fact(fact_id)
-
-        return deleted
 
     # ─── Bundle Seam ─────────────────────────────────────────────────────
 
@@ -90,10 +51,10 @@ class MemoryService:
         bundle = MemoryContext()
 
         try:
-            bundle.facts = await self._get_relevant_facts(
+            bundle.facts = await self.get_relevant_facts(
+                session_id=session_id,
                 query=query,
                 limit=max_facts,
-                session_id=session_id,
                 fact_types=fact_types,
             )
         except Exception as e:
@@ -107,7 +68,7 @@ class MemoryService:
             bundle.degraded_dimensions.append("personality")
 
         try:
-            bundle.ambient = await self._get_ambient_context()
+            bundle.ambient = await self.get_ambient_context()
         except Exception as e:
             logger.warning(f"MemoryContext: ambient dimension failed: {e}")
             bundle.degraded_dimensions.append("ambient")
@@ -116,12 +77,12 @@ class MemoryService:
 
     # ─── Query Methods ───────────────────────────────────────────────────
 
-    async def _get_relevant_facts(
+    async def get_relevant_facts(
         self,
+        session_id: UUID | None,
         query: str,
         *,
         limit: int = 10,
-        session_id: UUID | None = None,
         fact_types: list[FactType] | None = None,
         min_confidence: float | None = None,
     ) -> list[Fact]:
@@ -187,7 +148,7 @@ class MemoryService:
 
         return score
 
-    async def _get_ambient_context(self) -> AmbientContext | None:
+    async def get_ambient_context(self) -> AmbientContext | None:
         """
         Get current ambient context (time, location, activity, weather).
 
@@ -241,45 +202,22 @@ class MemoryService:
             directness=_avg([], 0.5),
         )
 
-    # ─── Fact Extraction ─────────────────────────────────────────────────
+    # ─── Retraction ──────────────────────────────────────────────────────
 
-    async def extract_from_conversation(
-        self, text: str, session_id: UUID | None = None
-    ) -> list[Fact]:
+    async def retract_fact(self, fact_id: UUID, reason: str | None = None) -> bool:
         """
-        Extract facts from conversation text.
+        Retract a fact (soft delete).
 
-        Uses the FactExtractor if available.
+        Also invalidates any concepts that depend on this fact, but only
+        when the FactStore reports the fact was actually retracted.
         """
-        if not self._extractor:
-            return []
+        deleted = await self._fact_store.retract_fact(fact_id, reason)
 
-        facts = await self._extractor.extract_from_text(text)
+        # Cascade to concepts
+        if deleted and self._concept_repo:
+            await self._concept_repo.invalidate_from_fact(fact_id)
 
-        # Store extracted facts
-        for fact in facts:
-            await self.store_fact(fact)
-
-        return facts
-
-    async def handle_event(self, event: Any) -> None:
-        """
-        Process an event, extracting facts if applicable.
-
-        Delegates extraction to the FactExtractor; unknown event types
-        yield no facts.
-        """
-        event_type = getattr(event, "type", None)
-        payload = getattr(event, "payload", {})
-
-        if not isinstance(event_type, str):
-            return
-
-        if not self._extractor:
-            return
-
-        for fact in self._extractor.extract_from_event_type(event_type, payload):
-            await self.store_fact(fact)
+        return deleted
 
     # ─── Concept Management ───────────────────────────────────────────────
 
@@ -334,31 +272,6 @@ class MemoryService:
             chain_parts.append(f"{i}. {fact.natural_lang_repr} (confidence: {fact.confidence:.2f})")
 
         return "Based on the following observations:\n" + "\n".join(chain_parts)
-
-    # ─── Search & Retrieval ─────────────────────────────────────────────
-
-    async def search_facts(
-        self,
-        query: str,
-        *,
-        fact_types: list[FactType] | None = None,
-        min_confidence: float | None = None,
-        limit: int = 10,
-    ) -> list[Fact]:
-        """Search facts by text query."""
-        return await self._fact_repo.search(
-            query, limit=limit, fact_types=fact_types, min_confidence=min_confidence
-        )
-
-    async def get_recent_facts(self, *, limit: int = 20) -> list[Fact]:
-        """Get recently stored facts."""
-        return await self._fact_repo.get_recent(limit=limit)
-
-    async def get_facts_by_type(
-        self, fact_type: FactType, *, limit: int = 50, active_only: bool = True
-    ) -> list[Fact]:
-        """Get facts of a specific type."""
-        return await self._fact_repo.get_by_type(fact_type, limit=limit, active_only=active_only)
 
 
 def _avg(values: list[float], default: float) -> float:

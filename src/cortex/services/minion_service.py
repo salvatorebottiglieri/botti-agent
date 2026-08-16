@@ -7,6 +7,7 @@ from typing import Any
 
 from cortex.events import EventEmitter
 from cortex.memory.fact_extractor import SUPPORTED_EVENT_TYPES
+from cortex.memory.fact_store import FactStore
 from cortex.memory.interfaces import FactExtractor
 from cortex.minions.interfaces import MinionEventHandler, MinionGateway, MinionRegistry
 from cortex.minions.models import (
@@ -56,13 +57,13 @@ class MinionService(MinionEventHandler):
         gateway: MinionGateway,
         registry: MinionRegistry,
         event_bus: Any | None = None,
-        memory_service: Any | None = None,
+        fact_store: FactStore | None = None,
         fact_extractor: FactExtractor | None = None,
     ):
         self._config = config
         self._gateway = gateway
         self._registry = registry
-        self._memory_service = memory_service
+        self._fact_store = fact_store
         self._fact_extractor = fact_extractor
         self._emitter = EventEmitter(event_bus, source_module="minion_service")
 
@@ -148,11 +149,11 @@ class MinionService(MinionEventHandler):
                 )
 
         # Extract facts from the event via the FactExtractor
-        if sensory_type and self._fact_extractor and self._memory_service:
+        if sensory_type and self._fact_extractor and self._fact_store:
             for fact in self._fact_extractor.extract_from_event_type(
                 sensory_type, event.payload
             ):
-                await self._memory_service.store_fact(fact)
+                await self._fact_store.add_fact(fact)
 
         await self._emitter.emit(
             "minion.event",

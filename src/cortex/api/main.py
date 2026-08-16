@@ -126,7 +126,8 @@ def bootstrap_app(state: dict[str, Any]) -> FastAPI:
             - execution_module
             - interaction_service
             - minion_service
-            - memory_service
+            - context_provider
+            - fact_store
             - llm_client
     """
     # Set the app state for dependency injection

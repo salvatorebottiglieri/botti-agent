@@ -94,7 +94,8 @@ class TestCortexAppBootstrap:
         mock_session_repository = MagicMock()
         mock_execution_module = MagicMock()
         mock_interaction_service = MagicMock()
-        mock_memory_service = MagicMock()
+        mock_context_provider = MagicMock()
+        mock_fact_store = MagicMock()
         mock_minion_service = MagicMock()
         mock_llm_client = MagicMock()
 
@@ -104,7 +105,8 @@ class TestCortexAppBootstrap:
             "session_repository": mock_session_repository,
             "execution_module": mock_execution_module,
             "interaction_service": mock_interaction_service,
-            "memory_service": mock_memory_service,
+            "context_provider": mock_context_provider,
+            "fact_store": mock_fact_store,
             "minion_service": mock_minion_service,
             "llm_client": mock_llm_client,
         }
@@ -157,7 +159,8 @@ class TestStartupShutdown:
         assert hasattr(app, 'session_repository')
         assert hasattr(app, 'execution_module')
         assert hasattr(app, 'interaction_service')
-        assert hasattr(app, 'memory_service')
+        assert hasattr(app, 'context_provider')
+        assert hasattr(app, 'fact_store')
         assert hasattr(app, 'minion_service')
         assert hasattr(app, 'llm_client')
         assert hasattr(app, 'settings')

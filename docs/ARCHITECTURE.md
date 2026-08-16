@@ -248,9 +248,9 @@ Concept = DerivedFact {
 
 ---
 
-## MemoryService Interface
+## Memory Module Interfaces
 
-> Explicit service API for querying and storing facts. All modules interact with Memory through this interface, not raw SQL.
+> MemoryService was split (ADR-0003) into ContextProvider (bundle seam), FactStore (CRUD), FactExtractor (ingestion). ContextBuilder consumes the ContextProvider bundle; all modules interact with Memory through these interfaces, not raw SQL.
 
 ### Design Rationale
 
@@ -263,6 +263,8 @@ Concept = DerivedFact {
 ### Service API
 
 ```python
+# Historical reference (ADR-0003): MemoryService was split into
+# ContextProvider (bundle seam), FactStore (CRUD), FactExtractor (ingestion).
 class MemoryService:
     """
     Service API for the Memory Module.
@@ -1727,7 +1729,7 @@ while (true) {
 - **Dynamic spawning:** Yes — Execution Module can spawn workers for complex tasks
 - **Learning scope:** Both preferences AND knowledge; proactive recommendations powered by minion data
 - **Memory role:** Proactive transformer — watches all events (user + minion), extracts facts autonomously. Ambient context for Agentic Loop.
-- **MemoryService API:** Explicit service interface for querying/storing facts. All modules use this API, not raw SQL. Defined in ARCHITECTURE.md.
+- **Memory API:** ContextProvider (bundle seam) + FactStore (CRUD) + FactExtractor (ingestion) — split from the former MemoryService (ADR-0003). All modules use these, not raw SQL. Defined in ARCHITECTURE.md.
 - **PersonalityModule:** Manages learned personality traits. Traits are stored as facts in Memory (type=`preference`). PersonalityService provides context for system prompt injection with reserved quota (max 500 tokens).
 - **Minion security (v1):** Plain MQTT, no TLS, API token auth via MQTT username/password. Runs on trusted local network.
 - **Streaming:** SSE-only. Events: thinking, text, tool_start, tool_done, done. Non-blocking buffer with drop-oldest policy. No reconnection/resume in v1.
@@ -1886,7 +1888,7 @@ Subscriptions:
 └── minion.* (all types)             # sensory data — extract facts
 
 Service API:
-└── MemoryService                    # exposed to other modules for querying
+└── ContextProvider + FactStore + FactExtractor  # ContextBuilder consumes the bundle; FactStore owns CRUD; FactExtractor owns ingestion
 
 Database:
 └── Postgres (facts table)          # facts stored via FactStore
@@ -1894,15 +1896,15 @@ Database:
 
 **Internal Components:**
 ```python
-MemoryService             # Service API (query, store, search)
-FactStore                # pure CRUD seam over FactRepository: dedup-on-write by symbolic_repr, session-scoped listing; MemoryService delegates CRUD to it
+ContextProvider          # bundle seam: get_memory_context, get_relevant_facts (semantic search + relevance ranking), get_personality_context, get_ambient_context, retract_fact (concept cascade), build_concept
+FactStore                # pure CRUD seam over FactRepository: dedup-on-write by symbolic_repr, session-scoped listing; owns CRUD (ContextProvider delegates to it)
 FactExtractor           # rule-based: raw events (location/payment/activity/calendar/call_log/app_usage) -> facts via extract_from_event_type
-                        # LLM-powered: free text -> facts via extract_from_text; MinionService & MemoryService.handle_event delegate to it
+                        # LLM-powered: free text -> facts via extract_from_text; MinionService and the location/activity/calendar event-bus closure delegate to it
 LogicEngine             # PyDatalog — validates LLM reasoning, checks consistency
 HierarchyManager        # manages frequency-adjusted fact hierarchy (hot/warm/cold)
 ```
 
-**Public API (MemoryService):**
+**Public API (historical reference — MemoryService was split into ContextProvider / FactStore / FactExtractor):**
 ```python
 get_relevant(query, limit, session_id, fact_types) -> list[Fact]
 get_context(dimensions) -> dict  # ambient context (time, location, activity)
@@ -2063,7 +2065,7 @@ ProgressTracker          # emits goal.status updates
 | Module | Input Events | Output Events | Service API |
 |--------|-------------|---------------|------------|
 | Interaction | `user.message`, `recommendation.generated` | `conversation.message`, `goal.created` | `InteractionService` |
-| Memory | `user.message`, `conversation.message`, `minion.*` | (writes via `MemoryService`) | `MemoryService` (public) + `FactStore`, `FactExtractor`, `LogicEngine`, `HierarchyManager` (internal) |
+| Memory | `user.message`, `conversation.message`, `minion.*` | (writes via `FactStore`/`FactExtractor`) | `ContextProvider` (bundle) + `FactStore`, `FactExtractor`, `LogicEngine`, `HierarchyManager` (internal) |
 | Personality | `user.feedback`, `preference.learned`, `conversation.ended` | (writes via `MemoryService`) | `PersonalityService` |
 | Learning | `user.message`, `conversation.message`, `goal.*`, `recommendation.executed` | `pattern.detected`, `preference.learned`, `recommendation.generated` | `PatternAnalyzer`, `PreferenceEngine`, `Recommender` |
 | Tool Ecosystem | `tool.request` | `tool.result` | `ToolRegistry`, `ToolExecutor` |
@@ -2097,7 +2099,7 @@ cortex/
 │       │
 │       ├── memory/                   # Memory Module
 │       │   ├── __init__.py
-│       │   ├── service.py            # MemoryService (public API)
+│       │   ├── context_provider.py  # ContextProvider (bundle seam)
 │       │   ├── fact_store.py         # Postgres client for facts/concepts
 │       │   ├── extractor.py          # LLM fact extraction
 │       │   ├── logic_engine.py       # PyDatalog validation

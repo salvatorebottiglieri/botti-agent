@@ -40,7 +40,9 @@ class CortexApp:
     session_repository: Any = field(default=None)
     execution_module: Any = field(default=None)
     interaction_service: Any = field(default=None)
-    memory_service: Any = field(default=None)
+    context_provider: Any = field(default=None)
+    fact_store: Any = field(default=None)
+    fact_extractor: Any = field(default=None)
     minion_service: Any = field(default=None)
     llm_client: Any = field(default=None)
 
@@ -165,8 +167,8 @@ async def initialize_app() -> CortexApp:
     llm_factory = LLMClientFactory(settings)
     cortex.llm_client = llm_factory.create()
 
-    # 5d'. Create fact extractor so MemoryService's conversation/event
-    # extraction is live rather than a silent no-op.
+    # 5d'. Create fact extractor so sensory-event extraction is live rather
+    # than a silent no-op.
     from cortex.memory.fact_extractor import FactExtractor
     memory_extractor = FactExtractor(llm_client=cortex.llm_client)
 
@@ -193,19 +195,22 @@ async def initialize_app() -> CortexApp:
     from cortex.agentic.reasoner import Reasoner
     from cortex.execution.module import ExecutionModule
 
-    # Create placeholder memory service first (needed for context builder)
-    from cortex.services.memory_service import MemoryService
-    cortex.memory_service = MemoryService(
+    # Create fact store and context provider (needed for context builder)
+    from cortex.memory.context_provider import ContextProvider
+    from cortex.memory.fact_store import FactStore
+
+    fact_store = FactStore(fact_repo)
+    cortex.fact_store = fact_store
+    cortex.fact_extractor = memory_extractor
+    cortex.context_provider = ContextProvider(
         fact_repository=fact_repo,
-        fact_extractor=memory_extractor,
+        fact_store=fact_store,
         concept_repository=concept_repo,
-        event_bus=cortex.event_bus,
-        llm_client=cortex.llm_client,
     )
 
     context_builder = ContextBuilder(
         session_repository=cortex.session_repository,
-        memory_service=cortex.memory_service,
+        context_provider=cortex.context_provider,
         tool_registry=tool_registry,
     )
 
@@ -252,7 +257,8 @@ async def initialize_app() -> CortexApp:
         "session_repository": cortex.session_repository,
         "execution_module": cortex.execution_module,
         "interaction_service": cortex.interaction_service,
-        "memory_service": cortex.memory_service,
+        "context_provider": cortex.context_provider,
+        "fact_store": cortex.fact_store,
         "minion_service": None,  # Will be initialized separately
         "llm_client": cortex.llm_client,
         "tool_registry": tool_registry,
@@ -304,20 +310,15 @@ async def _subscribe_services(cortex: CortexApp) -> None:
     # Subscribe execution module
     await cortex.execution_module.subscribe()
 
-    # Subscribe memory service to relevant events
-    if cortex.memory_service:
-        async def handle_location(event: BaseEvent) -> None:
-            await cortex.memory_service.handle_event(event)
+    # Extract facts from sensory events and store them via the fact store
+    if cortex.fact_store and cortex.fact_extractor:
+        async def handle_sensory_event(event: BaseEvent) -> None:
+            for fact in cortex.fact_extractor.extract_from_event_type(event.type, event.payload):
+                await cortex.fact_store.add_fact(fact)
 
-        async def handle_activity(event: BaseEvent) -> None:
-            await cortex.memory_service.handle_event(event)
-
-        async def handle_calendar(event: BaseEvent) -> None:
-            await cortex.memory_service.handle_event(event)
-
-        await cortex.event_bus.subscribe("location", handle_location)
-        await cortex.event_bus.subscribe("activity", handle_activity)
-        await cortex.event_bus.subscribe("calendar", handle_calendar)
+        await cortex.event_bus.subscribe("location", handle_sensory_event)
+        await cortex.event_bus.subscribe("activity", handle_sensory_event)
+        await cortex.event_bus.subscribe("calendar", handle_sensory_event)
 
     logger.debug("Services subscribed to event bus")
 
@@ -359,7 +360,7 @@ async def _initialize_minion_service(cortex: CortexApp) -> None:
         gateway=gateway,
         registry=registry,
         event_bus=cortex.event_bus,
-        memory_service=cortex.memory_service,
+        fact_store=cortex.fact_store,
         fact_extractor=fact_extractor,
     )
 

@@ -26,8 +26,8 @@ class TestContextBuilder:
         return repo
 
     @pytest.fixture
-    def mock_memory_service(self):
-        """Create a mock memory service."""
+    def mock_context_provider(self):
+        """Create a mock context provider."""
         service = MagicMock()
         service.get_memory_context = AsyncMock(
             return_value=MemoryContext(personality=PersonalityContext())
@@ -42,11 +42,11 @@ class TestContextBuilder:
         return registry
 
     @pytest.fixture
-    def builder(self, mock_session_repository, mock_memory_service, mock_tool_registry):
+    def builder(self, mock_session_repository, mock_context_provider, mock_tool_registry):
         """Create a ContextBuilder."""
         return ContextBuilder(
             session_repository=mock_session_repository,
-            memory_service=mock_memory_service,
+            context_provider=mock_context_provider,
             tool_registry=mock_tool_registry,
         )
 
@@ -99,9 +99,9 @@ class TestContextBuilder:
         assert len(context.tools) == 1
 
     @pytest.mark.asyncio
-    async def test_build_includes_personality(self, builder, mock_memory_service):
+    async def test_build_includes_personality(self, builder, mock_context_provider):
         """Build should include personality context from the Memory bundle."""
-        mock_memory_service.get_memory_context = AsyncMock(
+        mock_context_provider.get_memory_context = AsyncMock(
             return_value=MemoryContext(personality=PersonalityContext(formality=0.8))
         )
 
@@ -115,9 +115,9 @@ class TestContextBuilder:
         assert context.memory.personality.formality == 0.8
 
     @pytest.mark.asyncio
-    async def test_build_includes_ambient_context(self, builder, mock_memory_service):
+    async def test_build_includes_ambient_context(self, builder, mock_context_provider):
         """Build should include ambient context from the Memory bundle."""
-        mock_memory_service.get_memory_context = AsyncMock(
+        mock_context_provider.get_memory_context = AsyncMock(
             return_value=MemoryContext(
                 ambient=AmbientContext(time_of_day="afternoon", location="home"),
             )
@@ -133,7 +133,7 @@ class TestContextBuilder:
         assert context.memory.ambient.time_of_day == "afternoon"
 
     @pytest.mark.asyncio
-    async def test_build_with_goal_mode(self, builder, mock_memory_service):
+    async def test_build_with_goal_mode(self, builder, mock_context_provider):
         """Build should include goal context in GOAL mode."""
         goal_id = uuid4()
 
@@ -148,7 +148,7 @@ class TestContextBuilder:
         assert context.goal.goal_id == goal_id
 
     @pytest.mark.asyncio
-    async def test_build_includes_relevant_facts(self, builder, mock_memory_service):
+    async def test_build_includes_relevant_facts(self, builder, mock_context_provider):
         """Build should include relevant facts from the Memory bundle."""
         from cortex.memory.models import Fact, FactMutability, FactType
 
@@ -160,7 +160,7 @@ class TestContextBuilder:
                 mutability=FactMutability.MUTABLE,
             )
         ]
-        mock_memory_service.get_memory_context = AsyncMock(
+        mock_context_provider.get_memory_context = AsyncMock(
             return_value=MemoryContext(facts=facts)
         )
 
@@ -198,7 +198,7 @@ class TestContextBuilder:
         assert len(context.conversation) <= builder.max_messages
 
     @pytest.mark.asyncio
-    async def test_build_uses_fact_type_filter(self, builder, mock_memory_service):
+    async def test_build_uses_fact_type_filter(self, builder, mock_context_provider):
         """Build should forward fact_types to the Memory bundle call."""
         from cortex.memory.models import FactType
 
@@ -209,8 +209,8 @@ class TestContextBuilder:
             fact_types=["location"],
         )
 
-        mock_memory_service.get_memory_context.assert_called_once()
-        call_kwargs = mock_memory_service.get_memory_context.call_args.kwargs
+        mock_context_provider.get_memory_context.assert_called_once()
+        call_kwargs = mock_context_provider.get_memory_context.call_args.kwargs
         assert call_kwargs["fact_types"] == [FactType.LOCATION]
 
     @pytest.mark.asyncio
@@ -253,7 +253,7 @@ class TestContextBuilderEdgeCases:
         return service
 
     @pytest.fixture
-    def mock_memory_service(self):
+    def mock_context_provider(self):
         service = MagicMock()
         service.get_memory_context = AsyncMock(return_value=MemoryContext())
         return service
@@ -263,11 +263,11 @@ class TestContextBuilderEdgeCases:
         return MagicMock(spec=[])  # Empty spec
 
     @pytest.mark.asyncio
-    async def test_build_handles_missing_personality(self, mock_session_repository, mock_memory_service, mock_tool_registry):
+    async def test_build_handles_missing_personality(self, mock_session_repository, mock_context_provider, mock_tool_registry):
         """Build handles when personality is None."""
         builder = ContextBuilder(
             session_repository=mock_session_repository,
-            memory_service=mock_memory_service,
+            context_provider=mock_context_provider,
             tool_registry=mock_tool_registry,
         )
 
@@ -281,14 +281,14 @@ class TestContextBuilderEdgeCases:
         assert context.memory.personality is None or isinstance(context.memory.personality, PersonalityContext)
 
     @pytest.mark.asyncio
-    async def test_build_handles_tool_registry_exception(self, mock_session_repository, mock_memory_service):
+    async def test_build_handles_tool_registry_exception(self, mock_session_repository, mock_context_provider):
         """Build handles when tool registry fails."""
         mock_tool_registry = MagicMock()
         mock_tool_registry.get_schemas.side_effect = Exception("Registry error")
 
         builder = ContextBuilder(
             session_repository=mock_session_repository,
-            memory_service=mock_memory_service,
+            context_provider=mock_context_provider,
             tool_registry=mock_tool_registry,
         )
 
@@ -304,8 +304,8 @@ class TestContextBuilderEdgeCases:
     @pytest.mark.asyncio
     async def test_build_handles_degraded_memory(self, mock_session_repository):
         """Build returns a Context when the Memory bundle reports degraded dimensions."""
-        mock_memory_service = MagicMock()
-        mock_memory_service.get_memory_context = AsyncMock(
+        mock_context_provider = MagicMock()
+        mock_context_provider.get_memory_context = AsyncMock(
             return_value=MemoryContext(
                 degraded_dimensions=["facts", "personality", "ambient"],
             )
@@ -313,7 +313,7 @@ class TestContextBuilderEdgeCases:
 
         builder = ContextBuilder(
             session_repository=mock_session_repository,
-            memory_service=mock_memory_service,
+            context_provider=mock_context_provider,
             tool_registry=MagicMock(),
         )
 
