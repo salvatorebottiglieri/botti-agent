@@ -115,6 +115,10 @@ class EchoStateNetwork:
             raise ValueError(f"Readout already registered: {name}")
         self._readouts[name] = readout
 
+    def get_readout(self, name: str) -> Readout:
+        """Return the readout registered under ``name``; KeyError on unknown names."""
+        return self._readouts[name]
+
     def read(self, name: str) -> NDArray[np.float64]:
         """Predict from the current reservoir state; KeyError on unknown names."""
         return self._readouts[name].predict(self.reservoir.state)
