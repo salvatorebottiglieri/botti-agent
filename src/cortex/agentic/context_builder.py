@@ -14,7 +14,7 @@ from cortex.agentic.models import (
 from cortex.memory.models import FactType
 
 if TYPE_CHECKING:
-    from cortex.services.memory_service import MemoryService
+    from cortex.memory.context_provider import ContextProvider
     from cortex.sessions.interfaces import SessionRepository
     from cortex.tools.interfaces import ToolRegistry
 
@@ -37,13 +37,13 @@ class ContextBuilder:
     def __init__(
         self,
         session_repository: SessionRepository,
-        memory_service: MemoryService,
+        context_provider: ContextProvider,
         tool_registry: ToolRegistry,
         max_messages: int = 20,
         max_facts: int = 10,
     ):
         self._session_repository = session_repository
-        self._memory_service = memory_service
+        self._context_provider = context_provider
         self._tool_registry = tool_registry
         self.max_messages = max_messages
         self.max_facts = max_facts
@@ -93,7 +93,7 @@ class ContextBuilder:
 
         # 4. Get everything Memory contributes in one call
         types = [FactType(t) for t in fact_types] if fact_types else None
-        memory_ctx = await self._memory_service.get_memory_context(
+        memory_ctx = await self._context_provider.get_memory_context(
             session_id=session_id,
             query=user_message,
             max_facts=self.max_facts,

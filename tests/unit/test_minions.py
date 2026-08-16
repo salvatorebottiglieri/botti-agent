@@ -538,7 +538,7 @@ class TestMinionServiceSequenceGap:
                 gateway=mock_gateway,
                 registry=mock_registry,
                 event_bus=bus,
-                memory_service=None,
+                fact_store=None,
             )
 
             # Set up service and track sequences via events

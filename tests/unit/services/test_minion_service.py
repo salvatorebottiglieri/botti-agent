@@ -170,8 +170,8 @@ class TestMinionService:
     ):
         """handle_event routes extraction through FactExtractor and stores facts."""
         from cortex.memory.models import Fact, FactMutability, FactType
-        memory_service = MagicMock()
-        memory_service.store_fact = AsyncMock()
+        fact_store = MagicMock()
+        fact_store.add_fact = AsyncMock()
         fact_extractor = MagicMock()
         fact_extractor.extract_from_event_type = MagicMock(
             return_value=[
@@ -194,7 +194,7 @@ class TestMinionService:
             gateway=mock_gateway,
             registry=mock_registry,
             event_bus=mock_event_bus,
-            memory_service=memory_service,
+            fact_store=fact_store,
             fact_extractor=fact_extractor,
         )
 
@@ -213,15 +213,15 @@ class TestMinionService:
         fact_extractor.extract_from_event_type.assert_called_once_with(
             "location", event.payload
         )
-        assert memory_service.store_fact.await_count == 2
+        assert fact_store.add_fact.await_count == 2
 
     @pytest.mark.asyncio
     async def test_handle_event_passes_plain_string_sensory_type(
         self, mock_gateway, mock_registry, mock_event_bus, config
     ):
         """A plain-string sensory event type is passed through untranslated."""
-        memory_service = MagicMock()
-        memory_service.store_fact = AsyncMock()
+        fact_store = MagicMock()
+        fact_store.add_fact = AsyncMock()
         fact_extractor = MagicMock()
         fact_extractor.extract_from_event_type = MagicMock(return_value=[])
         service = MinionService(
@@ -229,7 +229,7 @@ class TestMinionService:
             gateway=mock_gateway,
             registry=mock_registry,
             event_bus=mock_event_bus,
-            memory_service=memory_service,
+            fact_store=fact_store,
             fact_extractor=fact_extractor,
         )
 

@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from cortex.execution.module import ExecutionModule
     from cortex.interaction.service import InteractionService
     from cortex.llm.base import LLMClient
-    from cortex.services.memory_service import MemoryService
     from cortex.services.minion_service import MinionService
     from cortex.sessions.interfaces import SessionRepository
 
@@ -61,12 +60,6 @@ async def get_minion_service() -> MinionService | None:
     return cast("MinionService | None", state.get("minion_service"))
 
 
-async def get_memory_service() -> MemoryService | None:
-    """Get the memory service."""
-    state = get_app_state()
-    return cast("MemoryService | None", state.get("memory_service"))
-
-
 async def get_db_pool() -> asyncpg.Pool:
     """Get the database pool."""
     state = get_app_state()
@@ -84,6 +77,5 @@ SessionRepositoryDep = Depends(get_session_repository)
 ExecutionModuleDep = Depends(get_execution_module)
 InteractionServiceDep = Depends(get_interaction_service)
 MinionServiceDep = Depends(get_minion_service)
-MemoryServiceDep = Depends(get_memory_service)
 DbPoolDep = Depends(get_db_pool)
 LlmClientDep = Depends(get_llm_client)
