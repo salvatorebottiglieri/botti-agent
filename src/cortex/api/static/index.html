@@ -137,6 +137,114 @@ function setStatus(on, text) { $("dot").classList.toggle("on", on); $("stext").t
 function showBanner(msg) { if (!msg) { banner.style.display = "none"; return; } banner.textContent = msg; banner.style.display = "block"; }
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  )).replace(/\u0000/g, "");
+}
+
+function safeUrl(u) {
+  return /^(https?:|mailto:)/i.test(u) ? u : "#";
+}
+
+// Inline pass: code spans -> placeholders, then links, bold, italic, then restore spans.
+function inline(s) {
+  const spans = [];
+  let out = s.replace(/`([^`\n]+)`/g, (m, code) => {
+    const ph = "\u0000I" + spans.length + "\u0000";
+    spans.push("<code>" + code + "</code>");
+    return ph;
+  });
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g, (m, txt, url) => {
+    const ph = "\u0000I" + spans.length + "\u0000";
+    spans.push('<a href="' + safeUrl(url) + '" target="_blank" rel="noopener">' + txt + "</a>");
+    return ph;
+  });
+  out = out.replace(/\*\*([^*<>\n]+)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/\*([^*<>\n]+)\*/g, "<em>$1</em>");
+  return out.replace(/\u0000I(\d+)\u0000/g, (m, n) => spans[+n]);
+}
+
+function renderMarkdown(text) {
+  // Escape-first: raw input can only become HTML through escapeHtml + fixed-tag transforms.
+  const esc = escapeHtml(text || "");
+  // Fenced code blocks (content already escaped) -> placeholders, restored at the end.
+  const blocks = [];
+  const noFences = esc.replace(/^```[^\n]*\n([\s\S]*?)\n?```[ \t]*$/gm, (m, code) => {
+    const ph = "\u0000B" + blocks.length + "\u0000";
+    blocks.push("<pre><code>" + code.trim() + "</code></pre>");
+    return ph;
+  });
+
+  const lines = noFences.split("\n");
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+
+    const fencePh = /^\u0000B(\d+)\u0000\s*$/.exec(line);
+    if (fencePh) { out.push(blocks[+fencePh[1]]); i++; continue; }
+
+    const h = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (h) {
+      const lvl = h[1].length;
+      out.push("<h" + lvl + ">" + inline(h[2]) + "</h" + lvl + ">");
+      i++; continue;
+    }
+
+    // Input is escaped first, so the original "> " marker now reads "&gt; ".
+    if (/^&gt;\s?/.test(line)) {
+      const quote = [];
+      while (i < lines.length && /^&gt;\s?/.test(lines[i])) {
+        quote.push(inline(lines[i].replace(/^&gt;\s?/, "")));
+        i++;
+      }
+      out.push("<blockquote>" + quote.join("<br>") + "</blockquote>");
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
+        items.push("<li>" + inline(lines[i].replace(/^[-*]\s+/, "")) + "</li>");
+        i++;
+      }
+      out.push("<ul>" + items.join("") + "</ul>");
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+        items.push("<li>" + inline(lines[i].replace(/^\d+\.\s+/, "")) + "</li>");
+        i++;
+      }
+      out.push("<ol>" + items.join("") + "</ol>");
+      continue;
+    }
+
+    // Paragraph: consecutive lines until blank line, placeholder, or a new block start;
+    // single newlines become <br>.
+    const para = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !/^\u0000B\d+\u0000\s*$/.test(lines[i]) &&
+      !/^(#{1,3})\s+/.test(lines[i]) &&
+      !/^&gt;\s?/.test(lines[i]) &&
+      !/^[-*]\s+/.test(lines[i]) &&
+      !/^\d+\.\s+/.test(lines[i])
+    ) {
+      para.push(inline(lines[i]));
+      i++;
+    }
+    out.push("<p>" + para.join("<br>") + "</p>");
+  }
+
+  return out.join("").replace(/\u0000B(\d+)\u0000/g, (m, n) => blocks[+n]);
+}
+
 function addMsg(cls, text) {
   const el = document.createElement("div");
   el.className = "msg " + cls;
@@ -168,7 +276,10 @@ function addTool(name, ok, out) {
 function renderHistory(messages) {
   for (const m of messages) {
     if (m.role === "user") addMsg("user", m.content);
-    else if (m.role === "assistant" && m.content) addMsg("assistant", m.content);
+    else if (m.role === "assistant" && m.content) {
+      const el = addMsg("assistant", "");
+      el.innerHTML = renderMarkdown(m.content);
+    }
   }
 }
 
@@ -184,7 +295,8 @@ function handleFrame(frame, assistantEl, thinkingEl, onDone) {
     case "text":
       if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
       assistantEl.classList.add("streaming");
-      assistantEl.textContent += data.delta || "";
+      assistantEl.dataset.raw = (assistantEl.dataset.raw || "") + (data.delta || "");
+      assistantEl.innerHTML = renderMarkdown(assistantEl.dataset.raw);
       scroll();
       break;
     case "tool_start":
@@ -195,7 +307,8 @@ function handleFrame(frame, assistantEl, thinkingEl, onDone) {
       break;
     case "done":
       if (assistantEl.classList.contains("streaming")) assistantEl.classList.remove("streaming");
-      if (!assistantEl.textContent && data.final_message) assistantEl.textContent = data.final_message;
+      if (!assistantEl.dataset.raw && data.final_message) assistantEl.dataset.raw = data.final_message;
+      assistantEl.innerHTML = renderMarkdown(assistantEl.dataset.raw || data.final_message || "");
       onDone();
       break;
     case "error":
@@ -260,7 +373,7 @@ async function send() {
       }
     }
     if (thinkingEl) thinkingEl.remove();
-    if (!assistantEl.textContent) assistantEl.remove();
+    if (!assistantEl.dataset.raw && !assistantEl.textContent) assistantEl.remove();
   } catch (e) {
     if (thinkingEl) thinkingEl.remove();
     assistantEl.remove();
