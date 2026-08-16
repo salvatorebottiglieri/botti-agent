@@ -2115,6 +2115,8 @@ cortex/
 │       │   ├── __init__.py
 │       │   ├── reservoir.py          # ESN core: Reservoir, Readout, EchoStateNetwork
 │       │   ├── readouts.py           # Salience/Anomaly/Pattern readouts
+│       │   ├── encoding.py           # MinionEventEncoder: event → reservoir input
+│       │   ├── module.py             # LearningModule: event-bus consumer
 │       │   ├── patterns.py
 │       │   ├── preferences.py
 │       │   ├── recommender.py
