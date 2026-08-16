@@ -2113,6 +2113,7 @@ cortex/
 │       │
 │       ├── learning/                 # Learning Module
 │       │   ├── __init__.py
+│       │   ├── reservoir.py          # ESN core: Reservoir, Readout, EchoStateNetwork
 │       │   ├── patterns.py
 │       │   ├── preferences.py
 │       │   ├── recommender.py
