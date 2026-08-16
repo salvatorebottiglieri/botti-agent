@@ -222,22 +222,27 @@ class TestMemoryService:
     async def test_retract_fact(self, service, mock_fact_repo):
         """Retracting a fact calls repository."""
         fact_id = uuid4()
+        mock_fact_repo.get.return_value = Fact()
 
-        await service.retract_fact(fact_id, reason="Outdated")
+        result = await service.retract_fact(fact_id, reason="Outdated")
 
+        mock_fact_repo.get.assert_awaited_once_with(fact_id)
         mock_fact_repo.retract.assert_called_once_with(fact_id, "Outdated")
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_retract_cascades_to_concepts(self, service, mock_fact_repo):
         """Retracting a fact invalidates derived concepts."""
         fact_id = uuid4()
+        mock_fact_repo.get.return_value = Fact()
         concept_repo = MagicMock()
         concept_repo.invalidate_from_fact = AsyncMock()
         service._concept_repo = concept_repo
 
-        await service.retract_fact(fact_id)
+        result = await service.retract_fact(fact_id)
 
         concept_repo.invalidate_from_fact.assert_called_once_with(fact_id)
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_get_personality_context_returns_facts(self, service, mock_fact_repo):
@@ -318,15 +323,19 @@ class TestMemoryService:
 
     @pytest.mark.asyncio
     async def test_store_batch(self, service, mock_fact_repo):
-        """Store batch stores multiple facts."""
+        """Store batch stores multiple facts with dedup applied per fact."""
         facts = [
             Fact(symbolic_repr="fact.1", natural_lang_repr="Fact 1"),
             Fact(symbolic_repr="fact.2", natural_lang_repr="Fact 2"),
         ]
+        mock_fact_repo.get_by_symbolic_repr.return_value = None
+        mock_fact_repo.store.side_effect = lambda f: f
 
-        await service.store_batch(facts)
+        stored = await service.store_batch(facts)
 
-        mock_fact_repo.store_batch.assert_called_once_with(facts)
+        mock_fact_repo.store_batch.assert_not_called()
+        assert mock_fact_repo.store.call_count == 2
+        assert stored == facts
 
     @pytest.mark.asyncio
     async def test_build_concept_from_facts(self, service):

@@ -7,8 +7,9 @@ from typing import Any
 from uuid import UUID
 
 from cortex.agentic.models import AmbientContext, MemoryContext, PersonalityContext
+from cortex.memory.fact_store import FactStore
 from cortex.memory.interfaces import ConceptRepository, FactExtractor, FactRepository
-from cortex.memory.models import Concept, Fact, FactMutability, FactType
+from cortex.memory.models import Concept, Fact, FactType
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class MemoryService:
         llm_client: Any | None = None,
     ):
         self._fact_repo = fact_repository
+        self._fact_store = FactStore(fact_repository)
         self._extractor = fact_extractor
         self._concept_repo = concept_repository
         self._event_bus = event_bus
@@ -47,38 +49,27 @@ class MemoryService:
         """
         Store a new fact.
 
-        Handles deduplication by checking for existing facts with
-        the same symbolic representation.
+        Deduplication by symbolic representation is handled by FactStore.
         """
-        # Check for existing fact
-        existing = await self._fact_repo.get_by_symbolic_repr(fact.symbolic_repr)
-        if existing:
-            # Update existing instead
-            if fact.mutability != FactMutability.STATIC:
-                fact_updated = await self._fact_repo.update(existing.id, fact.to_dict())
-                if not fact_updated:
-                    logger.warning("Fact update not return the new fact")
-                    raise Exception("Fact update not return the new fact")
-                return fact_updated
-            # Static facts don't get updated
-
-        return await self._fact_repo.store(fact)
+        return await self._fact_store.add_fact(fact)
 
     async def store_batch(self, facts: list[Fact]) -> list[Fact]:
-        """Store multiple facts in a batch."""
-        return await self._fact_repo.store_batch(facts)
+        """Store multiple facts (dedup applied per fact)."""
+        return [await self._fact_store.add_fact(fact) for fact in facts]
 
-    async def retract_fact(self, fact_id: UUID, reason: str | None = None) -> None:
+    async def retract_fact(self, fact_id: UUID, reason: str | None = None) -> bool:
         """
         Retract a fact (soft delete).
 
         Also invalidates any concepts that depend on this fact.
         """
-        await self._fact_repo.retract(fact_id, reason)
+        deleted = await self._fact_store.retract_fact(fact_id, reason)
 
         # Cascade to concepts
         if self._concept_repo:
             await self._concept_repo.invalidate_from_fact(fact_id)
+
+        return deleted
 
     # ─── Bundle Seam ─────────────────────────────────────────────────────
 

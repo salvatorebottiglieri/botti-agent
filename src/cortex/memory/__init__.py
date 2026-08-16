@@ -1,4 +1,5 @@
 """Memory module types and models."""
+from .fact_store import FactStore
 from .models import (
     Concept,
     ConfidenceLevel,
@@ -8,6 +9,7 @@ from .models import (
 )
 
 __all__ = [
+    "FactStore",
     "Fact",
     "Concept",
     "FactType",
