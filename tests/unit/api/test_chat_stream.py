@@ -25,7 +25,7 @@ from cortex.agentic.events import (
 from cortex.api.auth import get_api_key
 from cortex.api.dependencies import get_execution_module, get_interaction_service
 from cortex.main import create_app
-from cortex.sessions.models import Session
+from cortex.sessions.models import Session, SessionState
 
 AUTH_HEADERS = {"Authorization": "Bearer dummy-key"}
 
@@ -87,7 +87,11 @@ class FakeInteractionService:
             return self._existing_session
         return None
 
-    async def _get_or_create_session(self, session_id: UUID | None) -> Session:
+    async def get_or_create_session(self, session_id: UUID | None) -> Session:
+        if session_id is not None:
+            existing = await self.get_session(session_id)
+            if existing is not None and existing.state != SessionState.ENDED:
+                return existing
         session = Session()
         self.created_sessions.append(session)
         return session
@@ -340,6 +344,44 @@ class TestChatStreamSSE:
         assert fake_exec.calls[0][2] == 20  # max_iterations default
         assert parse_sse(response.text) == [
             ("thinking", {"message": "Fresh session."}),
+            ("done", {"final_message": "Done.", "tool_calls": [], "iterations": 1}),
+        ]
+
+    def test_provided_ended_session_creates_fresh_session_and_streams(self):
+        """A provided-but-ENDED session_id is not handed back: the policy
+        treats ENDED as absent, so get_or_create_session creates a fresh
+        session and the route runs the stream against it — never the ENDED
+        id, and never a 404 (the session does exist)."""
+        ended_id = uuid4()
+        fake_exec = FakeExecutionModule([
+            TextDeltaEvent(session_id=ended_id, delta="Fresh session."),
+            ResponseDoneEvent(
+                session_id=ended_id,
+                message="Done.",
+                tools_used=[],
+                iterations=1,
+            ),
+        ])
+        fake_interaction = FakeInteractionService(
+            existing_session=Session(id=ended_id, state=SessionState.ENDED)
+        )
+        client = build_client(fake_exec, fake_interaction)
+
+        response = client.post(
+            "/chat/stream",
+            json={"message": "hi", "session_id": str(ended_id)},
+            headers=AUTH_HEADERS,
+        )
+
+        assert response.status_code == 200  # no 404: the ENDED session exists
+        assert len(fake_interaction.created_sessions) == 1
+        created = fake_interaction.created_sessions[0]
+        assert created.id != ended_id
+        # the stream runs against the fresh session, not the ENDED id
+        assert fake_exec.calls[0][0] == created.id
+        assert fake_exec.calls[0][2] == 20  # max_iterations default
+        assert parse_sse(response.text) == [
+            ("text", {"delta": "Fresh session."}),
             ("done", {"final_message": "Done.", "tool_calls": [], "iterations": 1}),
         ]
 

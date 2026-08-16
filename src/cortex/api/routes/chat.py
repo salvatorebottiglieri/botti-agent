@@ -64,7 +64,7 @@ async def chat(
         ChatResponse with message, iterations, tools_used
     """
     try:
-        # Get or create session
+        # Get or create session; a provided-but-unknown session_id is a 404
         if request.session_id:
             session = await interaction_service.get_session(request.session_id)
             if not session:
@@ -72,11 +72,8 @@ async def chat(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail={"error": "not_found", "detail": "Session not found"},
                 )
-            session_id = request.session_id
-        else:
-            # Create new session
-            session = await interaction_service._get_or_create_session(None)
-            session_id = session.id
+        session = await interaction_service.get_or_create_session(request.session_id)
+        session_id = session.id
 
         # Run chat
         max_iterations = request.max_iterations or 20
@@ -132,7 +129,8 @@ async def chat_stream(
     - done: Response complete
     - error: Error occurred
     """
-    # Get or create session (before the stream, same policy as non-streaming)
+    # Get or create session (before the stream, same policy as non-streaming);
+    # a provided-but-unknown session_id is a 404
     if request.session_id:
         session = await interaction_service.get_session(request.session_id)
         if not session:
@@ -140,10 +138,8 @@ async def chat_stream(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"error": "not_found", "detail": "Session not found"},
             )
-        session_id = request.session_id
-    else:
-        session = await interaction_service._get_or_create_session(None)
-        session_id = session.id
+    session = await interaction_service.get_or_create_session(request.session_id)
+    session_id = session.id
 
     max_iterations = request.max_iterations or 20
 
