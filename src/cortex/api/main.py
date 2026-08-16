@@ -12,6 +12,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
+from starlette.types import Scope
 
 from cortex.api.dependencies import set_app_state
 from cortex.api.routes import (
@@ -25,6 +27,15 @@ from cortex.api.routes import (
 from cortex.config.loader import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """StaticFiles with no-cache so UI updates are always picked up."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 @asynccontextmanager
@@ -109,7 +120,7 @@ def create_api_app() -> FastAPI:
     # Minimal web UI (single self-contained page, no build step)
     static_dir = Path(__file__).resolve().parent / "static"
     if static_dir.is_dir():
-        app.mount("/ui", StaticFiles(directory=static_dir, html=True), name="ui")
+        app.mount("/ui", NoCacheStaticFiles(directory=static_dir, html=True), name="ui")
 
     return app
 
