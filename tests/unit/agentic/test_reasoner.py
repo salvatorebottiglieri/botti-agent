@@ -1,5 +1,6 @@
 """Tests for Reasoner."""
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -14,6 +15,15 @@ from cortex.agentic.models import (
     PersonalityContext,
 )
 from cortex.agentic.reasoner import Reasoner
+from cortex.llm.models import ChatMessage, ChatResult, Role
+
+
+def _chat_result(content: str | None = None, tool_calls=None) -> ChatResult:
+    """Build a ChatResult with an assistant message, as llm.chat would return."""
+    return ChatResult(
+        message=ChatMessage(role=Role.ASSISTANT, content=content),
+        tool_calls=tool_calls,
+    )
 
 
 class TestReasoner:
@@ -44,10 +54,7 @@ class TestReasoner:
     @pytest.mark.asyncio
     async def test_reason_returns_decision(self, reasoner, mock_llm_client):
         """Reason should return a Decision."""
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="Hello, how can I help?",
-            tool_calls=[],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="Hello, how can I help?", tool_calls=[]))
 
         context = Context(session_id=uuid4())
 
@@ -59,10 +66,7 @@ class TestReasoner:
     @pytest.mark.asyncio
     async def test_reason_calls_llm(self, reasoner, mock_llm_client):
         """Reason should call the LLM client."""
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="Response",
-            tool_calls=[],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="Response", tool_calls=[]))
 
         context = Context(session_id=uuid4())
 
@@ -73,10 +77,7 @@ class TestReasoner:
     @pytest.mark.asyncio
     async def test_reason_with_simple_response(self, reasoner, mock_llm_client):
         """Reason handles simple text responses."""
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="The weather is sunny today.",
-            tool_calls=[],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="The weather is sunny today.", tool_calls=[]))
 
         context = Context(session_id=uuid4())
 
@@ -92,10 +93,7 @@ class TestReasoner:
 
         tool_call = ToolCall(id="call-1", name="file_read", arguments={"path": "/test"})
 
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="Let me read that file.",
-            tool_calls=[tool_call],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="Let me read that file.", tool_calls=[tool_call]))
 
         context = Context(session_id=uuid4())
 
@@ -108,11 +106,7 @@ class TestReasoner:
     @pytest.mark.asyncio
     async def test_reason_includes_reasoning(self, reasoner, mock_llm_client):
         """Decision should include reasoning."""
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="Done",
-            tool_calls=[],
-            reasoning="User asked a simple question, no tools needed",
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="Done"))
 
         context = Context(session_id=uuid4())
 
@@ -129,10 +123,7 @@ class TestReasoner:
             system_prompt="You are a pirate assistant. Arr!",
         )
 
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="Arr!",
-            tool_calls=[],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="Arr!", tool_calls=[]))
 
         context = Context(session_id=uuid4())
 
@@ -149,10 +140,7 @@ class TestReasoner:
     @pytest.mark.asyncio
     async def test_reason_with_empty_context(self, reasoner, mock_llm_client):
         """Reason handles empty context."""
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="Hello!",
-            tool_calls=[],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="Hello!", tool_calls=[]))
 
         context = Context(session_id=uuid4())
 
@@ -166,10 +154,7 @@ class TestReasoner:
         from cortex.tools.interfaces import ToolDefinition
 
         mock_llm_client = MagicMock()
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="Using a tool",
-            tool_calls=[],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="Using a tool", tool_calls=[]))
 
         reasoner = Reasoner(
             llm_client=mock_llm_client,
@@ -195,10 +180,7 @@ class TestReasoner:
     async def test_reason_omits_tools_kwarg_when_context_has_no_tools(self):
         """When context has no tools, llm.chat is called with tools=None."""
         mock_llm_client = MagicMock()
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="ok",
-            tool_calls=[],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="ok", tool_calls=[]))
 
         reasoner = Reasoner(
             llm_client=mock_llm_client,
@@ -217,10 +199,7 @@ class TestReasoner:
 
         llm_call = ToolCall(id="call_1", name="file_read", arguments={"path": "/x"})
         mock_llm_client = MagicMock()
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content=None,
-            tool_calls=[llm_call],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content=None, tool_calls=[llm_call]))
 
         reasoner = Reasoner(
             llm_client=mock_llm_client,
@@ -242,7 +221,7 @@ class TestReasoner:
         ToolCall objects) into the LLM prompt — provider-agnostic, no wire shape."""
         from cortex.sessions.models import Message, MessageRole
 
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(content="ok", tool_calls=[]))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="ok", tool_calls=[]))
         session_id = uuid4()
         context = Context(session_id=session_id, conversation=[
             Message(
@@ -313,10 +292,7 @@ class TestReasonerEdgeCases:
         """Reason handles GOAL mode."""
         from cortex.agentic.models import GoalContext
 
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="Working on the goal.",
-            tool_calls=[],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="Working on the goal.", tool_calls=[]))
 
         reasoner = Reasoner(
             llm_client=mock_llm_client,
@@ -335,10 +311,7 @@ class TestReasonerEdgeCases:
     @pytest.mark.asyncio
     async def test_reason_with_personality_context(self, mock_llm_client):
         """Reason uses personality context for formatting."""
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="As you wish.",
-            tool_calls=[],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="As you wish.", tool_calls=[]))
 
         reasoner = Reasoner(
             llm_client=mock_llm_client,
@@ -357,10 +330,7 @@ class TestReasonerEdgeCases:
     @pytest.mark.asyncio
     async def test_reason_with_ambient_context(self, mock_llm_client):
         """Reason considers ambient context."""
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="Good morning!",
-            tool_calls=[],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="Good morning!", tool_calls=[]))
 
         reasoner = Reasoner(
             llm_client=mock_llm_client,
@@ -381,13 +351,10 @@ class TestReasonerEdgeCases:
         """Reason handles multiple tool calls."""
         from cortex.tools.interfaces import ToolCall
 
-        mock_llm_client.chat = AsyncMock(return_value=MagicMock(
-            content="I'll read the file and then search.",
-            tool_calls=[
-                ToolCall(id="1", name="file_read", arguments={"path": "/test"}),
-                ToolCall(id="2", name="grep", arguments={"pattern": "TODO"}),
-            ],
-        ))
+        mock_llm_client.chat = AsyncMock(return_value=_chat_result(content="I'll read the file and then search.", tool_calls=[
+            ToolCall(id="1", name="file_read", arguments={"path": "/test"}),
+            ToolCall(id="2", name="grep", arguments={"pattern": "TODO"}),
+        ]))
 
         reasoner = Reasoner(
             llm_client=mock_llm_client,
@@ -400,3 +367,104 @@ class TestReasonerEdgeCases:
 
         assert decision.decision_type == DecisionType.EXECUTE_TOOLS
         assert len(decision.tool_calls) == 2
+
+
+class TestReasonerParseResponse:
+    """Tests for Reasoner._parse_response parsing rules (issues #24, #25)."""
+
+    @pytest.fixture
+    def mock_llm_client(self):
+        client = MagicMock()
+        client.chat = AsyncMock()
+        return client
+
+    @pytest.fixture
+    def mock_tool_registry(self):
+        registry = MagicMock()
+        return registry
+
+    @pytest.fixture
+    def reasoner(self, mock_llm_client, mock_tool_registry):
+        return Reasoner(
+            llm_client=mock_llm_client,
+            tool_registry=mock_tool_registry,
+            system_prompt="You are a helpful assistant.",
+        )
+
+    @pytest.fixture
+    def context(self):
+        return Context(session_id=uuid4())
+
+    def test_empty_content_raises_value_error(self, reasoner, context):
+        """Empty response (no content, no tool calls) raises ValueError (#24)."""
+        result = _chat_result(content=None, tool_calls=[])
+
+        with pytest.raises(ValueError, match="Empty response from LLM"):
+            reasoner._parse_response(result, context)
+
+    def test_missing_message_raises_value_error(self, reasoner, context):
+        """A ChatResult without a message raises ValueError (#24)."""
+        result = ChatResult.model_construct(message=None)
+
+        with pytest.raises(ValueError, match="Empty response from LLM"):
+            reasoner._parse_response(result, context)
+
+    def test_parse_response_has_no_getattr(self):
+        """Typed field access only — no getattr chains in _parse_response (#24)."""
+        source = inspect.getsource(Reasoner._parse_response)
+        assert "getattr(" not in source
+
+    def test_question_marker_routes_to_ask_question(self, reasoner, context):
+        """[QUESTION] marker routes to Decision.ask_question (#25)."""
+        result = _chat_result("What budget? [QUESTION]Quale budget?[/QUESTION]")
+
+        decision = reasoner._parse_response(result, context)
+
+        assert decision.decision_type == DecisionType.ASK_QUESTION
+        assert decision.text == "Quale budget?"
+
+    def test_multiline_question_captured_fully_and_stripped(self, reasoner, context):
+        """Multi-line questions inside markers are captured fully and stripped (#25)."""
+        result = _chat_result("[QUESTION]\nWhat budget\nshould we use?\n[/QUESTION]")
+
+        decision = reasoner._parse_response(result, context)
+
+        assert decision.decision_type == DecisionType.ASK_QUESTION
+        assert decision.text == "What budget\nshould we use?"
+
+    def test_tool_calls_take_priority_over_question_marker(self, reasoner, context):
+        """Tool calls win over [QUESTION] markers (#25, note 3)."""
+        from cortex.tools.interfaces import ToolCall
+
+        tool_call = ToolCall(id="call-1", name="file_read", arguments={"path": "/x"})
+        result = _chat_result(
+            content="[QUESTION]Should I?[/QUESTION]",
+            tool_calls=[tool_call],
+        )
+
+        decision = reasoner._parse_response(result, context)
+
+        assert decision.decision_type == DecisionType.EXECUTE_TOOLS
+
+    def test_empty_question_marker_raises_value_error(self, reasoner, context):
+        """[QUESTION][/QUESTION] with no question raises ValueError (#25)."""
+        result = _chat_result("[QUESTION][/QUESTION]")
+
+        with pytest.raises(ValueError, match="LLM signaled clarification with no question"):
+            reasoner._parse_response(result, context)
+
+    def test_whitespace_only_question_marker_raises_value_error(self, reasoner, context):
+        """Whitespace-only [QUESTION] marker raises ValueError (#25)."""
+        result = _chat_result("[QUESTION]   [/QUESTION]")
+
+        with pytest.raises(ValueError, match="LLM signaled clarification with no question"):
+            reasoner._parse_response(result, context)
+
+    def test_default_system_prompt_includes_question_convention(self):
+        """Default system prompt teaches the [QUESTION] convention (#25)."""
+        reasoner = Reasoner(
+            llm_client=MagicMock(),
+            tool_registry=MagicMock(),
+        )
+
+        assert "[QUESTION]your question here[/QUESTION]" in reasoner._system_prompt
