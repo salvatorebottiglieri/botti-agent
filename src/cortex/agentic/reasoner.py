@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+import re
+from typing import TYPE_CHECKING
 
 from cortex.agentic.models import (
     Context,
     Decision,
 )
-from cortex.llm.models import ChatMessage, Role
+from cortex.llm.models import ChatMessage, ChatResult, Role
 from cortex.sessions.models import MessageRole
 from cortex.tools.interfaces import ToolCall
 
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
     from cortex.tools.interfaces import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+QUESTION_PATTERN = re.compile(r"\[QUESTION\](.*?)\[/QUESTION\]", re.DOTALL)
 
 
 _MESSAGE_ROLE_TO_LLM_ROLE: dict[str, Role] = {
@@ -53,7 +56,9 @@ class Reasoner:
         return (
             "You are Cortex, an intelligent AI assistant. "
             "When a tool fits the user's request, call it; otherwise respond directly. "
-            "Always be helpful, concise, and precise."
+            "Always be helpful, concise, and precise. "
+            "If you need clarification from the user, respond with "
+            "[QUESTION]your question here[/QUESTION] and nothing else."
         )
 
     async def reason(self, context: Context) -> Decision:
@@ -152,13 +157,17 @@ class Reasoner:
 
         return messages
 
-    def _parse_response(self, result: Any, context: Context) -> Decision:
+    def _parse_response(self, result: ChatResult, context: Context) -> Decision:
         """Parse LLM response into a Decision."""
-        message = getattr(result, "message", None)
-        content = getattr(message, "content", None) if message is not None else None
-        if content is None:
-            content = getattr(result, "content", "")
-        tool_calls = getattr(result, "tool_calls", None) or []
+        message = result.message
+        if message is None:
+            raise ValueError("Empty response from LLM")
+
+        content = message.content or ""
+        tool_calls = result.tool_calls or []
+
+        if not content and not tool_calls:
+            raise ValueError("Empty response from LLM")
 
         if tool_calls:
             return Decision.execute_tools(
@@ -166,14 +175,18 @@ class Reasoner:
                 reasoning=f"Using {len(tool_calls)} tool(s) to complete the request",
             )
 
-        if content:
-            return Decision.respond(
-                text=content,
-                reasoning="Direct response to user",
+        match = QUESTION_PATTERN.search(content)
+        if match:
+            question = match.group(1).strip()
+            if not question:
+                raise ValueError("LLM signaled clarification with no question")
+            return Decision.ask_question(
+                question=question,
+                reasoning="LLM signaled need for clarification",
             )
 
         return Decision.respond(
-            text="I'm not sure how to respond. Could you clarify?",
-            reasoning="Empty response from LLM",
+            text=content,
+            reasoning="Direct response to user",
         )
 
