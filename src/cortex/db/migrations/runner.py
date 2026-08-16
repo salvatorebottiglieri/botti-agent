@@ -7,7 +7,21 @@ from cortex.db.pool import get_pool
 
 logger = logging.getLogger(__name__)
 
-MIGRATIONS_DIR = Path(__file__).parent.parent.parent.parent / "migrations"
+
+def _migrations_dir() -> Path:
+    """Resolve the migrations directory.
+
+    Canonical location is the repo-root ``migrations/`` (works in local
+    checkouts and in the Docker image, where both the repo root and the
+    ``src/migrations`` copy exist). Falls back to ``src/migrations`` for
+    layouts that only ship the copied directory.
+    """
+    repo_root = Path(__file__).parents[4]
+    candidates = (repo_root / "migrations", Path(__file__).parents[3] / "migrations")
+    return next((c for c in candidates if c.exists()), candidates[0])
+
+
+MIGRATIONS_DIR = _migrations_dir()
 
 
 async def run_migrations() -> None:
