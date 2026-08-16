@@ -156,6 +156,12 @@ class AgentLoop:
             role=MessageRole.USER,
             content=user_message,
         ))
+        if self._session_repository is not None:
+            await self._session_repository.add_message(
+                session_id,
+                MessageRole.USER,
+                user_message,
+            )
 
         try:
             while iterations < max_iters:
@@ -180,6 +186,12 @@ class AgentLoop:
                     case DecisionType.RESPOND:
                         # Done! Stream the response
                         text = decision.text or "I'm not sure how to respond."
+                        if self._session_repository is not None:
+                            await self._session_repository.add_message(
+                                session_id,
+                                MessageRole.ASSISTANT,
+                                text,
+                            )
                         yield TextDeltaEvent(session_id, delta=text)
                         yield ResponseDoneEvent(
                             session_id,
@@ -192,6 +204,12 @@ class AgentLoop:
                     case DecisionType.ASK_QUESTION:
                         # Return the question
                         text = decision.text or "Could you clarify?"
+                        if self._session_repository is not None:
+                            await self._session_repository.add_message(
+                                session_id,
+                                MessageRole.ASSISTANT,
+                                text,
+                            )
                         yield TextDeltaEvent(session_id, delta=text)
                         yield ResponseDoneEvent(
                             session_id,
@@ -209,19 +227,27 @@ class AgentLoop:
                             # translates to its own wire format). Providers
                             # require an assistant message with the tool calls
                             # to precede the tool messages that answer them.
+                            tool_calls_payload = [
+                                {
+                                    "id": call.id,
+                                    "name": call.name,
+                                    "arguments": call.arguments,
+                                }
+                                for call in decision.tool_calls
+                            ]
                             messages.append(Message(
                                 session_id=session_id,
                                 role=MessageRole.ASSISTANT,
                                 content="",
-                                tool_calls=[
-                                    {
-                                        "id": call.id,
-                                        "name": call.name,
-                                        "arguments": call.arguments,
-                                    }
-                                    for call in decision.tool_calls
-                                ],
+                                tool_calls=tool_calls_payload,
                             ))
+                            if self._session_repository is not None:
+                                await self._session_repository.add_message(
+                                    session_id,
+                                    MessageRole.ASSISTANT,
+                                    "",
+                                    tool_calls=tool_calls_payload,
+                                )
 
                             for call in decision.tool_calls:
                                 # Track tools used
@@ -246,22 +272,36 @@ class AgentLoop:
                                 )
 
                                 # 4. Observe - add tool result to conversation
+                                tool_content = (
+                                    result.output or ""
+                                    if result.success
+                                    else f"Error: {result.error}"
+                                )
                                 msg = Message(
                                     session_id=session_id,
                                     role=MessageRole.TOOL_RESULT,
-                                    content=(
-                                        result.output or ""
-                                        if result.success
-                                        else f"Error: {result.error}"
-                                    ),
+                                    content=tool_content,
                                     tool_call_id=call.id,
                                 )
                                 messages.append(msg)
+                                if self._session_repository is not None:
+                                    await self._session_repository.add_message(
+                                        session_id,
+                                        MessageRole.TOOL_RESULT,
+                                        tool_content,
+                                        tool_call_id=call.id,
+                                    )
 
                             iterations += 1
                         else:
                             # No tools to execute, respond
                             fallback = "I couldn't determine what tools to use."
+                            if self._session_repository is not None:
+                                await self._session_repository.add_message(
+                                    session_id,
+                                    MessageRole.ASSISTANT,
+                                    fallback,
+                                )
                             yield TextDeltaEvent(session_id, delta=fallback)
                             yield ResponseDoneEvent(
                                 session_id,
