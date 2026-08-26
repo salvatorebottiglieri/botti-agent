@@ -50,3 +50,28 @@ _Avoid_: Stream adapter, SSE endpoint, chat stream
 **System Event**:
 An event published on the Cortex event bus for any module to consume (e.g. goal.created, concept.rejected). Distinct from LoopEvent: system events are system-wide domain information; LoopEvents are per-caller progress.
 _Avoid_: Domain event, bus event
+## Memory
+
+**Fact**:
+A unit of knowledge Cortex stores about the user and their world: a symbolic representation (`symbolic_repr`), a natural-language form, a confidence, a mutability, and a payload. Facts are observed directly, extracted from conversations, or derived.
+_Avoid_: memory item, knowledge unit, note
+
+**Confidence**:
+The posterior probability that a Fact is true, in [0, 1]. Computed by a Bayesian odds update over accumulated Evidence; pinned at 1.0 for Static Facts. Serves as the base of relevance ranking and the `min_confidence` retrieval threshold.
+_Avoid_: certainty, trust score, strength
+
+**Evidence**:
+An observation that updates a Fact's confidence — a sensory event, a user confirmation, or an LLM extraction touching the same symbolic representation. Carries a source type (sensor, user_confirm, llm), a strength (the confidence of the ingested fact), and a timestamp. Deduplicated per (source, source_id, fact) within a time window.
+_Avoid_: proof, confirmation, data point, supporting observation
+
+**EvidenceStore**:
+The module that records Evidence and recomputes Fact confidence through the Bayesian update. Owns the deduplication window and the likelihood-ratio constants.
+_Avoid_: confidence engine, scorer, confidence store
+
+**Likelihood ratio (LR)**:
+The per-source constant encoding how strongly a full-strength Evidence of that source moves a Fact's confidence — the calibration point of the Bayesian update.
+_Avoid_: weight, importance, source reliability
+
+**Static Fact**:
+An irrefutable fact (e.g. "born in Italy", 2+2=4): confidence pinned at 1.0, never accumulates Evidence, never retracted. The `FactMutability.STATIC` semantic.
+_Avoid_: immutable fact, axiom (as a storage term)

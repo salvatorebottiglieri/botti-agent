@@ -6,6 +6,7 @@ How the engineering skills should consume this repo's domain documentation when 
 
 - **`CONTEXT.md`** at the repo root
 - **`docs/adr/`** — read ADRs that touch the area you're about to work in
+- **`docs/evidence-system.md`** — when touching the Memory module or the evidence system
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence.
 
