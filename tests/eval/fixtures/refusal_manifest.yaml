@@ -6,6 +6,6 @@
 suite:
   name: refusal
   version: 1.0.0
-prompt_version: 1
+prompt_version: "1"
 model: deepseek-chat
 grading_version: 1

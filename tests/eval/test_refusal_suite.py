@@ -13,7 +13,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import yaml
 
 from cortex.config.models import ModelPricing
 from cortex.eval.fixtures import (
@@ -23,6 +22,7 @@ from cortex.eval.fixtures import (
     EvalTask,
     GoalState,
     assert_balanced_refusal_suite,
+    load_manifest,
     load_suite,
 )
 from cortex.eval.grader import GRADING_SCHEMA_VERSION, grade_goal, normalize_answer
@@ -258,12 +258,12 @@ class TestRefusalManifest:
     """The manifest pins prompt/model/grading versions (ADR-0015)."""
 
     def test_manifest_pins_suite_and_versions(self):
-        raw = yaml.safe_load(REFUSAL_MANIFEST_PATH.read_text(encoding="utf-8"))
-        assert raw["suite"]["name"] == "refusal"
-        assert raw["suite"]["version"] == load_suite(REFUSAL_SUITE_PATH).version
-        assert isinstance(raw["prompt_version"], int)
-        assert isinstance(raw["model"], str) and raw["model"]
-        assert raw["grading_version"] == GRADING_SCHEMA_VERSION
+        manifest = load_manifest(REFUSAL_MANIFEST_PATH)
+        assert manifest.suite_name == "refusal"
+        assert manifest.suite_version == load_suite(REFUSAL_SUITE_PATH).version
+        assert manifest.prompt_version
+        assert manifest.model
+        assert manifest.grading_version == str(GRADING_SCHEMA_VERSION)
 
 
 def _queue_comply(client: ScriptedLLMClient, task: EvalTask) -> None:
