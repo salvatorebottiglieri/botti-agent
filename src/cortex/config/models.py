@@ -2,10 +2,39 @@
 Pydantic settings models for Cortex configuration.
 """
 
-from typing import Literal
+from __future__ import annotations
 
-from pydantic import Field, SecretStr
+from typing import TYPE_CHECKING, Literal
+
+from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from cortex.llm.models import UsageStats
+
+
+class ModelPricing(BaseModel):
+    """Per-model token pricing, in USD per 1M tokens (mtok).
+
+    Mirrors the published per-model price sheets (OpenAI, DeepSeek):
+    input tokens and output tokens are priced independently.
+    """
+
+    input_per_mtok: float
+    output_per_mtok: float
+
+
+def derive_cost(usage: UsageStats, pricing: ModelPricing) -> float:
+    """Derive the USD cost of a call's token usage from per-model pricing.
+
+    Pure and deterministic: same usage + pricing always yields the same cost.
+    ``total_tokens`` is informational — cost is driven by the
+    prompt/completion split because the two directions are priced differently.
+    """
+    return (
+        usage.prompt_tokens * pricing.input_per_mtok
+        + usage.completion_tokens * pricing.output_per_mtok
+    ) / 1_000_000
 
 
 class Settings(BaseSettings):
@@ -52,6 +81,15 @@ class Settings(BaseSettings):
     circuit_breaker_timeout: float = Field(default=30.0, ge=0.0)
     circuit_breaker_half_open_successes: int = Field(default=3, ge=1)
     llm_timeout: int = Field(default=60, ge=1)
+    llm_pricing: dict[str, ModelPricing] = Field(
+        default_factory=lambda: {
+            # Defaults cover the shipped config model and the Settings default;
+            # override via LLM_PRICING (JSON) or constructor for any other model.
+            "deepseek-chat": ModelPricing(input_per_mtok=0.27, output_per_mtok=1.10),
+            "gpt-4o": ModelPricing(input_per_mtok=2.50, output_per_mtok=10.00),
+        },
+        description="Per-model token pricing in USD per 1M tokens",
+    )
 
     # ─── MQTT ─────────────────────────────────────────────────
     mqtt_broker_url: str = Field(

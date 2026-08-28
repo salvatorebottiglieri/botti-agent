@@ -173,6 +173,7 @@ class Reasoner:
             return Decision.execute_tools(
                 tool_calls=list(tool_calls),
                 reasoning=f"Using {len(tool_calls)} tool(s) to complete the request",
+                usage=result.usage,
             )
 
         match = QUESTION_PATTERN.search(content)
@@ -183,10 +184,12 @@ class Reasoner:
             return Decision.ask_question(
                 question=question,
                 reasoning="LLM signaled need for clarification",
+                usage=result.usage,
             )
 
         return Decision.respond(
             text=content,
             reasoning="Direct response to user",
+            usage=result.usage,
         )
 

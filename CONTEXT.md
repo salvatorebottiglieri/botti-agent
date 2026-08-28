@@ -36,7 +36,7 @@ A unit of the loop's response text delivered to the caller. One event per respon
 _Avoid_: Token event, streaming chunk
 
 **ResponseDoneEvent**:
-The loop's final-response signal, emitted once per response after the last TextDeltaEvent. Carries the full response text, the tool names used, and the iteration count — the metadata a non-streaming consumer needs for its final result.
+The loop's final-response signal, emitted once per response after the last TextDeltaEvent. Carries the full response text, the tool names used, and the iteration count — the metadata a non-streaming consumer needs for its final result. It also carries the accumulated token usage (`usage`) and the response latency in milliseconds (`latency_ms`).
 _Avoid_: Done event, completion event, final event
 
 **Drain wrapper**:

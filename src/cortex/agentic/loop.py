@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from cortex.agentic.executor import LoopExecutor
     from cortex.agentic.reasoner import Reasoner
     from cortex.events import EventBus
+    from cortex.llm.models import UsageStats
     from cortex.sessions.interfaces import SessionRepository
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ class AgentLoop:
         session_repository: SessionRepository | None = None,
         max_chat_iterations: int = 20,
         max_goal_iterations: int = 100,
+        now: Callable[[], float] = time.monotonic,
     ):
         self._context_builder = context_builder
         self._reasoner = reasoner
@@ -70,6 +72,7 @@ class AgentLoop:
         self._session_repository = session_repository
         self._max_chat_iterations = max_chat_iterations
         self._max_goal_iterations = max_goal_iterations
+        self._now = now
 
     async def run_chat(
         self,
@@ -102,6 +105,8 @@ class AgentLoop:
         response_text = ""
         tools_used: list[str] = []
         iterations = 0
+        usage: UsageStats | None = None
+        latency_ms: float | None = None
         async for event in self.stream_chat(
             session_id=session_id,
             user_message=user_message,
@@ -112,6 +117,7 @@ class AgentLoop:
                     response_text += delta
                 case ResponseDoneEvent(tools_used=used, iterations=iters):
                     tools_used, iterations = used, iters
+                    usage, latency_ms = event.usage, event.latency_ms
                 # Ignore progress events; stream_chat re-raises the original exception
                 case _:
                     pass
@@ -120,6 +126,8 @@ class AgentLoop:
             tools_used=tools_used,
             iterations=iterations,
             session_id=session_id,
+            usage=usage,
+            latency_ms=latency_ms,
         )
 
     async def stream_chat(
@@ -149,6 +157,8 @@ class AgentLoop:
         iterations = 0
         tools_used: list[str] = []
         messages: list[Message] = []
+        started_at = self._now()
+        total_usage: UsageStats | None = None
 
         # Seed history from the repository so multi-turn context works. The
         # limit mirrors the context builder's window (max_messages - 1) so
@@ -186,6 +196,14 @@ class AgentLoop:
 
                 # 2. Think - reason about what to do
                 decision = await self._reasoner.reason(context)
+                # Accumulate per-call usage so the final done event carries
+                # the whole task's token spend (prompt/completion/total).
+                if decision.usage is not None:
+                    total_usage = (
+                        total_usage + decision.usage
+                        if total_usage is not None
+                        else decision.usage
+                    )
 
                 # Emit the reasoning step for this iteration
                 yield ThinkingEvent(session_id, message=decision.reasoning)
@@ -200,11 +218,13 @@ class AgentLoop:
                                 session_id, MessageRole.ASSISTANT, text
                             )
                         yield TextDeltaEvent(session_id, delta=text)
-                        yield ResponseDoneEvent(
+                        yield self._done_event(
                             session_id,
-                            message=text,
-                            tools_used=tools_used,
-                            iterations=iterations,
+                            text,
+                            tools_used,
+                            iterations,
+                            total_usage=total_usage,
+                            started_at=started_at,
                         )
                         return
 
@@ -216,11 +236,13 @@ class AgentLoop:
                                 session_id, MessageRole.ASSISTANT, text
                             )
                         yield TextDeltaEvent(session_id, delta=text)
-                        yield ResponseDoneEvent(
+                        yield self._done_event(
                             session_id,
-                            message=text,
-                            tools_used=tools_used,
-                            iterations=iterations,
+                            text,
+                            tools_used,
+                            iterations,
+                            total_usage=total_usage,
+                            started_at=started_at,
                         )
                         return
 
@@ -321,11 +343,13 @@ class AgentLoop:
                                     session_id, MessageRole.ASSISTANT, fallback
                                 )
                             yield TextDeltaEvent(session_id, delta=fallback)
-                            yield ResponseDoneEvent(
+                            yield self._done_event(
                                 session_id,
-                                message=fallback,
-                                tools_used=tools_used,
-                                iterations=iterations,
+                                fallback,
+                                tools_used,
+                                iterations,
+                                total_usage=total_usage,
+                                started_at=started_at,
                             )
                             return
 
@@ -503,4 +527,24 @@ class AgentLoop:
         await self._emitter.emit(
             f"goal.{status}",
             {"goal_id": str(goal_id), **data},
+        )
+
+    def _done_event(
+        self,
+        session_id: UUID,
+        text: str,
+        tools_used: list[str],
+        iterations: int,
+        *,
+        total_usage: UsageStats | None,
+        started_at: float,
+    ) -> ResponseDoneEvent:
+        """Build the final done event, computing usage and latency once."""
+        return ResponseDoneEvent(
+            session_id,
+            message=text,
+            tools_used=tools_used,
+            iterations=iterations,
+            usage=total_usage,
+            latency_ms=(self._now() - started_at) * 1000.0,
         )

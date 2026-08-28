@@ -533,6 +533,8 @@ class AgentLoop:
         response_text = ""
         tools_used: list[str] = []
         iterations = 0
+        usage: UsageStats | None = None
+        latency_ms: float | None = None
 
         async for event in self.stream_chat(
             session_id=session_id,
@@ -544,6 +546,7 @@ class AgentLoop:
                     response_text += delta
                 case ResponseDoneEvent(tools_used=used, iterations=iters):
                     tools_used, iterations = used, iters
+                    usage, latency_ms = event.usage, event.latency_ms
                 case _:
                     pass  # progress events + ErrorEvent; generator re-raises
 
@@ -552,6 +555,8 @@ class AgentLoop:
             tools_used=tools_used,
             iterations=iterations,
             session_id=session_id,
+            usage=usage,
+            latency_ms=latency_ms,
         )
 
     async def run_goal(

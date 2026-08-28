@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 if TYPE_CHECKING:
+    from cortex.llm.models import UsageStats
     from cortex.memory.models import Fact
     from cortex.sessions.models import Message
     from cortex.tools.interfaces import ToolCall, ToolDefinition
@@ -45,37 +46,42 @@ class Decision:
         text: Text response (for RESPOND or ASK_QUESTION)
         tool_calls: Tools to execute (for EXECUTE_TOOLS)
         reasoning: Explanation of why this decision was made
+        usage: Token usage of the reasoning call that produced this decision
     """
     decision_type: DecisionType
     text: str | None = None
     tool_calls: list[ToolCall] | None = None
     reasoning: str = ""
+    usage: UsageStats | None = None
 
     @classmethod
-    def respond(cls, text: str, reasoning: str = "") -> Decision:
+    def respond(cls, text: str, reasoning: str = "", usage: UsageStats | None = None) -> Decision:
         """Create a RESPOND decision."""
         return cls(
             decision_type=DecisionType.RESPOND,
             text=text,
             reasoning=reasoning,
+            usage=usage,
         )
 
     @classmethod
-    def execute_tools(cls, tool_calls: list[ToolCall], reasoning: str = "") -> Decision:
+    def execute_tools(cls, tool_calls: list[ToolCall], reasoning: str = "", usage: UsageStats | None = None) -> Decision:
         """Create an EXECUTE_TOOLS decision."""
         return cls(
             decision_type=DecisionType.EXECUTE_TOOLS,
             tool_calls=tool_calls,
             reasoning=reasoning,
+            usage=usage,
         )
 
     @classmethod
-    def ask_question(cls, question: str, reasoning: str = "") -> Decision:
+    def ask_question(cls, question: str, reasoning: str = "", usage: UsageStats | None = None) -> Decision:
         """Create an ASK_QUESTION decision."""
         return cls(
             decision_type=DecisionType.ASK_QUESTION,
             text=question,
             reasoning=reasoning,
+            usage=usage,
         )
 
 
@@ -147,6 +153,8 @@ class ChatResponse:
     iterations: int = 0
     tools_used: list[str] = field(default_factory=list)
     session_id: UUID | None = None
+    usage: UsageStats | None = None
+    latency_ms: float | None = None
 
     @property
     def tool_names(self) -> list[str]:
