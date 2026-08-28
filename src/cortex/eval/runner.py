@@ -23,6 +23,7 @@ from cortex.agentic.events import LoopEvent, TextDeltaEvent
 from cortex.agentic.executor import LoopExecutor
 from cortex.agentic.loop import AgentLoop
 from cortex.agentic.reasoner import Reasoner
+from cortex.config.models import ModelPricing
 from cortex.eval.baseline import record_baseline
 from cortex.eval.fixtures import EvalSuite, EvalTask
 from cortex.eval.grader import GradingResult, grade_goal
@@ -34,7 +35,6 @@ from cortex.tools.executor import DefaultToolExecutor
 from cortex.tools.registry import InMemoryToolRegistry
 
 if TYPE_CHECKING:
-    from cortex.config.models import ModelPricing
     from cortex.llm.base import LLMClient
     from cortex.memory.context_provider import ContextProvider
 
@@ -266,9 +266,7 @@ def _build_loop(
     session_repository: SessionRepository = _InMemorySessionRepository()
     from cortex.memory.context_provider import ContextProvider
 
-    context_provider: ContextProvider = cast(
-        ContextProvider, _EmptyContextProvider()
-    )
+    context_provider: ContextProvider = cast(ContextProvider, _EmptyContextProvider())
     context_builder = ContextBuilder(
         session_repository=session_repository,
         context_provider=context_provider,
@@ -318,4 +316,6 @@ def _suite_metrics(results: list[TaskResult]) -> SuiteMetrics:
         total_iterations=sum(r.metrics.iterations for r in results),
         total_tool_calls=sum(r.metrics.tool_calls for r in results),
         tools_used=tools_used,
+        total_latency_ms=sum(r.metrics.latency_ms or 0.0 for r in results),
+        total_cost_usd=sum(r.metrics.cost_usd for r in results),
     )

@@ -1,0 +1,11 @@
+# Refusal suite manifest (T6): pins prompt/model/grading versions so score
+# drift is attributable (ADR-0015). grading_version must equal
+# cortex.eval.grader.GRADING_SCHEMA_VERSION (asserted in tests); bump
+# prompt_version whenever any refusal_suite.yaml prompt text changes; model
+# is the LLM the suite is validated against.
+suite:
+  name: refusal
+  version: 1.0.0
+prompt_version: 1
+model: deepseek-chat
+grading_version: 1
