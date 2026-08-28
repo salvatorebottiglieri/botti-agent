@@ -15,6 +15,7 @@ from cortex.agentic.events import (
     ToolResultEvent,
     ToolStartEvent,
 )
+from cortex.llm.models import UsageStats
 
 WIRE_NAMES = {
     ThinkingEvent: "thinking",
@@ -290,6 +291,50 @@ class TestResponseDoneEvent:
         second = ResponseDoneEvent(session_id=uuid4(), message="Done")
         first.tools_used.append("web_search")
         assert second.tools_used == []
+
+    def test_usage_defaults_to_none(self):
+        event = ResponseDoneEvent(session_id=uuid4(), message="Done")
+        assert event.usage is None
+
+    def test_latency_ms_defaults_to_none(self):
+        event = ResponseDoneEvent(session_id=uuid4(), message="Done")
+        assert event.latency_ms is None
+
+    def test_usage_field_accepts_usage_stats(self):
+        event = ResponseDoneEvent(
+            session_id=uuid4(),
+            message="Done",
+            usage=UsageStats(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+        )
+        assert event.usage == UsageStats(prompt_tokens=1, completion_tokens=2, total_tokens=3)
+
+    def test_latency_ms_field(self):
+        event = ResponseDoneEvent(session_id=uuid4(), message="Done", latency_ms=12.5)
+        assert event.latency_ms == 12.5
+
+    def test_to_dict_serializes_usage_as_plain_dict(self):
+        """to_dict stays JSON-ready: usage is a plain dict, not a model object."""
+        event = ResponseDoneEvent(
+            session_id=uuid4(),
+            message="Done",
+            usage=UsageStats(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+            latency_ms=12.5,
+        )
+        payload = event.to_dict()
+        assert payload["usage"] == {
+            "prompt_tokens": 1,
+            "completion_tokens": 2,
+            "total_tokens": 3,
+        }
+        assert payload["latency_ms"] == 12.5
+        json.dumps(payload)  # JSON-ready without default=str
+
+    def test_to_dict_usage_none_roundtrips(self):
+        event = ResponseDoneEvent(session_id=uuid4(), message="Done")
+        payload = event.to_dict()
+        assert payload["usage"] is None
+        assert payload["latency_ms"] is None
+        json.dumps(payload)
 
 
 class TestErrorEvent:

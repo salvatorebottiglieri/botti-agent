@@ -41,3 +41,7 @@ The obsolete `loop.*` members in `EventTypes` (loop.started, loop.thought, loop.
 - Session resolution happens before the stream starts: a missing session is an HTTP 404, never an in-stream `error` frame. The stream itself only iterates `stream_chat()`.
 - Error policy: on `ErrorEvent` the adapter yields the `error` frame and returns — the loop's reraise stays silent, so expected conditions like `max_iterations` produce no server traceback. Unexpected exceptions in the adapter yield an `error{code:null}` frame and then re-raise, so bugs are logged.
 - Consequence of the above: streaming and non-streaming diverge on max-iterations — the stream emits `error{code:"max_iterations"}` and ends, while non-streaming `run_chat()` returns the friendly fallback message.
+
+## Consequences (refined during #87)
+
+`ResponseDoneEvent` carries `usage` (`UsageStats`) and `latency_ms`, and LLM-layer data models such as `UsageStats` may ride on agentic-core dataclasses (`Decision`, `ChatResponse`, `LoopEvent`). This refines "Pydantic stays at the API boundary": pydantic models are value objects defined in the llm layer — core never imports pydantic at runtime, and serialization is delegated to the model's own `model_dump()` at the `to_dict` boundary. Rationale: the one-type-per-concept rule documented in `llm/models.py` wins over duplicating a parallel core type.

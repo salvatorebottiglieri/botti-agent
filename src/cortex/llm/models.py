@@ -5,6 +5,8 @@
 there is one type per concept across the codebase.
 """
 
+from __future__ import annotations
+
 from datetime import datetime
 from enum import StrEnum
 
@@ -42,6 +44,14 @@ class UsageStats(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+
+    def __add__(self, other: UsageStats) -> UsageStats:
+        """Accumulate usage across calls: sums each token counter."""
+        return UsageStats(
+            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
+            completion_tokens=self.completion_tokens + other.completion_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+        )
 
 
 class ChatResult(BaseModel):

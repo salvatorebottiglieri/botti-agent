@@ -19,8 +19,11 @@ Instances are JSON-ready via :meth:`LoopEvent.to_dict`.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from cortex.llm.models import UsageStats
 
 
 @dataclass
@@ -94,6 +97,15 @@ class ResponseDoneEvent(LoopEvent):
     message: str
     tools_used: list[str] = field(default_factory=list)
     iterations: int = 0
+    usage: UsageStats | None = None
+    latency_ms: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-ready dict; usage is a plain dict so payloads stay serializable."""
+        payload = super().to_dict()
+        if self.usage is not None:
+            payload["usage"] = self.usage.model_dump()
+        return payload
 
 
 @dataclass
