@@ -1,0 +1,350 @@
+# T8 (spec #85): CI eval workflow.
+#
+# Two levels:
+#   * E1 PR gate — the deterministic evidence-invariants suite runs on every
+#     PR that touches the eval harness (path-filtered). E1 is
+#     importorskip-gated on #83, so the evidence tests skip cleanly today
+#     and the job still passes; they go live the moment
+#     cortex.memory.evidence_store lands (zero workflow changes).
+#   * E2/E3/E6 nightly — the loop, capability, and refusal suites on a cron
+#     plus manual workflow_dispatch. The nightly validates the suites
+#     deterministically (pytest node selection, scripted goldens, no API),
+#     records each suite's metrics as a versioned baseline JSON via
+#     record_baseline (run_suite(baseline_path=...)), compares them against
+#     the stored versioned baseline through the gate module
+#     (src/cortex/eval/gate.py), and fails ONLY on a gross regression
+#     (>= 2 sd of the run-to-run difference) or a harness error — model
+#     noise on small sets never alarms (v1 gate rule).
+#
+# v1 baseline mechanism (documented, honest):
+#   The versioned baseline for each suite+version lives in the GitHub
+#   actions cache (key `eval-baseline-v1`) as one JSON file per
+#   suite-version: eval-baselines/<suite>-<version>.json, the same shape
+#   record_baseline writes (the file's suite_version field is the version).
+#   The FIRST successful nightly run has no baseline: the gate passes with
+#   "no versioned baseline yet — this run records it" and the run's metrics
+#   are stored as the baseline for the next night. Later runs restore the
+#   baseline and compare against it; a passing run never clobbers the
+#   known-good numbers. Baselines are not committed to git in v1 — the
+#   cache is the source of truth and the report artifact preserves every
+#   night's numbers (git-versioned baselines under tests/eval/ are the
+#   future path).
+#
+#   Record/save semantics (NOT cache-hit gated): the record step runs on
+#   EVERY nightly and skips a suite+version only when its baseline file
+#   already exists (or the run failed / produced no metrics), so a first
+#   run, a skipped first run (no API key), or a suite version bump
+#   (manifest change) can never permanently disable baselining. The save
+#   step persists the baselines dir only when the cache missed AND the dir
+#   actually contains files — an empty eval-baselines is never cached.
+#   Because actions/cache/save cannot overwrite an existing key, a
+#   version-bump baseline recorded on a cache-hit night is re-recorded
+#   idempotently each night; to persist it (or force a clean re-baseline),
+#   delete the cache entry (`gh actions-cache delete eval-baseline-v1`).
+
+name: Eval CI
+
+on:
+  pull_request:
+    paths:
+      - "src/cortex/eval/**"
+      - "tests/eval/**"
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: eval-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e1-pr-gate:
+    name: E1 deterministic invariants (PR gate)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync --frozen --all-extras
+
+      # E1 is importorskip-gated on #83: today the evidence-invariants tests
+      # skip with reason "evidence engine #83 not landed" and this job still
+      # passes; once the engine lands they run and gate every PR touching
+      # the harness (path filter above).
+      - name: Run deterministic eval suites (E1)
+        run: uv run pytest tests/eval -q
+
+  nightly:
+    name: Nightly LLM suites (E2/E3/E6)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync --frozen --all-extras
+
+      - name: Restore versioned baselines
+        id: baselines
+        uses: actions/cache/restore@v4
+        with:
+          path: eval-baselines
+          key: eval-baseline-v1
+
+      # Deterministic validation of the three LLM suites through the real
+      # harness with scripted goldens (no API): fixture, balance, manifest,
+      # and end-to-end goal-state grading.
+      - name: Run E2/E3/E6 suite validation (deterministic)
+        run: uv run pytest tests/eval/test_loop_suite.py tests/eval/test_capability_suite.py tests/eval/test_refusal_suite.py -q
+
+      # Real-model nightly run. Each suite is driven through run_suite with
+      # the settings-configured client (config.yaml llm.model; LLM_API_KEY
+      # from the secret above). run_suite(baseline_path=...) records the
+      # run's metrics as a versioned baseline JSON (record_baseline) into
+      # eval-metrics/<suite>.json. Without an API key the run is skipped
+      # (reported, never failed) so an unconfigured secret cannot alarm the
+      # nightly. A crash here (harness error) is caught downstream by the
+      # gate as missing metrics and fails the job.
+      - name: Run nightly suites and record metrics
+        id: run-suite
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p eval-metrics
+          if [ -z "${LLM_API_KEY:-}" ]; then
+            echo "LLM_API_KEY not configured — real-model run skipped" > eval-metrics/SKIPPED
+            exit 0
+          fi
+          uv run python - <<'PY'
+          import asyncio
+          import json
+          from pathlib import Path
+
+          from cortex.eval.fixtures import load_suite
+          from cortex.eval.runner import run_suite
+
+          SUITES = [
+              ("loop", Path("tests/eval/fixtures/loop_suite.yaml")),
+              ("capability", Path("tests/eval/fixtures/capability_suite.yaml")),
+              ("refusal", Path("tests/eval/fixtures/refusal_suite.yaml")),
+          ]
+          for name, path in SUITES:
+              suite = load_suite(path)
+              result = asyncio.run(
+                  run_suite(suite, baseline_path=Path("eval-metrics") / f"{name}.json")
+              )
+              print(
+                  json.dumps(
+                      {
+                          "suite": name,
+                          "version": suite.version,
+                          "task_count": result.metrics.task_count,
+                          "pass_count": result.metrics.pass_count,
+                          "pass_rate": result.metrics.pass_rate,
+                          "cost_usd": result.metrics.total_cost_usd,
+                          "latency_ms": result.metrics.total_latency_ms,
+                      }
+                  )
+              )
+          PY
+
+      # Compare every suite against its versioned baseline through the
+      # tested gate CLI (`uv run python -m cortex.eval.gate compare ...`),
+      # which owns ALL verdict logic — no untested re-implementation in
+      # YAML. The CLI prints the verdict JSON (same shape as the previous
+      # inline script) and exits 0 on pass / 1 on fail; the exit code is
+      # captured, not propagated, because this step never fails: per-suite
+      # verdicts are written to eval-report/<suite>.json and the final gate
+      # step fails the job only if a verdict failed. Missing or malformed
+      # run metrics count as a harness error (CLI, gate fail); a skipped
+      # run (no API key) reports pass with reason "skipped".
+      - name: Compare against versioned baselines
+        id: compare
+        run: |
+          set -euo pipefail
+          mkdir -p eval-report
+          uv run python - <<'PY'
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          from cortex.eval.baseline import load_baseline
+
+          SUITES = ["loop", "capability", "refusal"]
+          metrics_dir = Path("eval-metrics")
+          baselines_dir = Path("eval-baselines")
+          report_dir = Path("eval-report")
+
+          skipped = (metrics_dir / "SKIPPED").exists()
+          for name in SUITES:
+              if skipped:
+                  verdict = {
+                      "suite": name,
+                      "suite_version": "skipped",
+                      "passed": True,
+                      "reason": "skipped: LLM_API_KEY not configured",
+                      "run_pass_rate": None,
+                      "baseline_pass_rate": None,
+                  }
+                  (report_dir / f"{name}.json").write_text(
+                      json.dumps(verdict) + "\n", encoding="utf-8"
+                  )
+                  continue
+              cmd = [
+                  "uv", "run", "python", "-m", "cortex.eval.gate",
+                  "compare", "--run", str(metrics_dir / f"{name}.json"),
+              ]
+              run = load_baseline(metrics_dir / f"{name}.json")
+              if run is not None:
+                  cmd += [
+                      "--baseline",
+                      str(baselines_dir / f"{name}-{run.suite_version}.json"),
+                  ]
+              proc = subprocess.run(cmd, capture_output=True, text=True)
+              lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+              if not lines:
+                  print(proc.stderr, file=sys.stderr)
+                  sys.exit(f"gate CLI produced no verdict for {name}")
+              (report_dir / f"{name}.json").write_text(
+                  lines[-1] + "\n", encoding="utf-8"
+              )
+              if proc.returncode not in (0, 1):
+                  print(proc.stderr, file=sys.stderr)
+                  sys.exit(f"gate CLI crashed for {name}: {proc.stderr.strip()}")
+          PY
+
+      # Promote each suite's passing run to the versioned baseline. This
+      # step runs on EVERY nightly (no cache-hit guard — the cache-hit
+      # guard conflated "no cache entry" with "no baseline for this
+      # suite+version" and permanently disabled baselining after a first
+      # skipped/failed run); the per-suite+version skip is on FILE
+      # EXISTENCE below, so an already-stored baseline is never clobbered
+      # while a brand-new suite+version (first run, or after a manifest
+      # version bump) is baselined even on a cache hit. Failed/harness-
+      # error runs are not baselined — the next night retries.
+      - name: Record first known-good run as versioned baseline
+        run: |
+          set -euo pipefail
+          mkdir -p eval-baselines
+          uv run python - <<'PY'
+          import json
+          import shutil
+          from pathlib import Path
+
+          metrics_dir = Path("eval-metrics")
+          baselines_dir = Path("eval-baselines")
+          report_dir = Path("eval-report")
+          for name in ("loop", "capability", "refusal"):
+              run_path = metrics_dir / f"{name}.json"
+              verdict_path = report_dir / f"{name}.json"
+              if not run_path.exists() or not verdict_path.exists():
+                  continue
+              verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
+              if not verdict["passed"]:
+                  continue
+              run = json.loads(run_path.read_text(encoding="utf-8"))
+              baseline_path = baselines_dir / f"{name}-{run['suite_version']}.json"
+              if baseline_path.exists():
+                  continue
+              shutil.copyfile(run_path, baseline_path)
+          PY
+
+      # Persist the baselines dir only when the cache missed (save@v4
+      # errors on an existing key) AND the dir actually contains files —
+      # an empty eval-baselines (skipped/failed first run) is never cached,
+      # so the next night can still establish the baseline.
+      - name: Save versioned baselines
+        if: steps.baselines.outputs.cache-hit != 'true' && hashFiles('eval-baselines/*.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: eval-baselines
+          key: eval-baseline-v1
+
+      # Publish the report (job summary + report.json) and enforce the
+      # gate: the job fails only when a verdict failed — a gross regression
+      # (>= 2 sd drop) or a harness error. The report is written before the
+      # exit, so the artifact step below always captures it.
+      - name: Publish report and enforce gate
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          report_dir = Path("eval-report")
+          suites = ["loop", "capability", "refusal"]
+          verdicts = [
+              json.loads((report_dir / f"{name}.json").read_text(encoding="utf-8"))
+              for name in suites
+          ]
+          failed = [v for v in verdicts if not v["passed"]]
+
+          report = {
+              "generated_at": datetime.now(UTC).isoformat(),
+              "workflow": "eval.yml",
+              "event": os.environ.get("GITHUB_EVENT_NAME", ""),
+              "run_id": os.environ.get("GITHUB_RUN_ID", ""),
+              "suites": verdicts,
+              "passed": not failed,
+          }
+          (report_dir / "report.json").write_text(
+              json.dumps(report, indent=2) + "\n", encoding="utf-8"
+          )
+
+          def pct(rate):
+              return f"{rate:.1%}" if isinstance(rate, (int, float)) else "-"
+
+          rows = [
+              "| {s} | {v} | {run} | {base} | {mark} | {reason} |".format(
+                  s=v["suite"],
+                  v=v["suite_version"],
+                  run=pct(v.get("run_pass_rate")),
+                  base=pct(v.get("baseline_pass_rate")),
+                  mark="PASS" if v["passed"] else "FAIL",
+                  reason=v["reason"],
+              )
+              for v in verdicts
+          ]
+          summary = "\n".join(
+              [
+                  "## Nightly eval report (E2/E3/E6)",
+                  "",
+                  "| Suite | Version | Pass rate | Baseline | Verdict | Reason |",
+                  "|---|---|---|---|---|---|",
+                  *rows,
+              ]
+          ) + "\n"
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(summary, encoding="utf-8")
+          print(summary)
+          raise SystemExit(1 if failed else 0)
+          PY
+
+      # if-no-files-found: ignore — the always() step also runs on early
+      # failures/cancellation when eval-report/ and eval-metrics/ were
+      # never created; upload-artifact@v4 would otherwise error on no
+      # matching files and mask the root cause.
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: |
+            eval-report
+            eval-metrics
+          if-no-files-found: ignore
