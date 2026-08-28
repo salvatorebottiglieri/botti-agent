@@ -13,6 +13,9 @@ Public seam:
   injected (or factory-created) LLM client, grades goal states, records
   metrics and an optional versioned baseline
 * :func:`record_baseline` / :func:`load_baseline` — per-suite baseline JSON
+* :func:`compare_run_to_baseline` / :class:`GateVerdict` — CI gate (spec
+  #85): a run passes unless its pass-rate drop vs the versioned baseline
+  reaches 2 sd of the run-to-run difference, or a harness error occurred
 * :func:`load_manifest` — per-suite version pins (prompt/model/grading)
 * :func:`validate_suite_balance` — golden-set positive/negative balance guard
 * :class:`TaskSandbox` — per-task sandbox the tools execute against
@@ -38,6 +41,7 @@ from cortex.eval.fixtures import (
     load_suite,
     validate_suite_balance,
 )
+from cortex.eval.gate import GateVerdict, compare_run_to_baseline, sd_of_difference
 from cortex.eval.grader import GradingResult, grade_goal
 from cortex.eval.judge import (
     DEFAULT_DIMENSION_ORDER,
@@ -75,6 +79,7 @@ __all__ = [
     "EvalManifest",
     "EvalSuite",
     "EvalTask",
+    "GateVerdict",
     "GradingResult",
     "GoalFile",
     "GoalState",
@@ -104,6 +109,7 @@ __all__ = [
     "assert_balanced_refusal_suite",
     "build_judge_client",
     "collect_metrics",
+    "compare_run_to_baseline",
     "compute_pass_k",
     "grade_goal",
     "judge_trust_gate",
@@ -116,5 +122,6 @@ __all__ = [
     "record_baseline",
     "render_transcript",
     "run_suite",
+    "sd_of_difference",
     "validate_suite_balance",
 ]
