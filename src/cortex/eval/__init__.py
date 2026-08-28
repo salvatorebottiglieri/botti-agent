@@ -13,17 +13,22 @@ Public seam:
   injected (or factory-created) LLM client, grades goal states, records
   metrics and an optional versioned baseline
 * :func:`record_baseline` / :func:`load_baseline` — per-suite baseline JSON
+* :func:`load_manifest` — per-suite version pins (prompt/model/grading)
+* :func:`validate_suite_balance` — golden-set positive/negative balance guard
 * :class:`TaskSandbox` — per-task sandbox the tools execute against
 """
 
 from cortex.eval.baseline import EvalBaseline, load_baseline, record_baseline
 from cortex.eval.fixtures import (
+    EvalManifest,
     EvalSuite,
     EvalTask,
     GoalFile,
     GoalState,
     SandboxFile,
+    load_manifest,
     load_suite,
+    validate_suite_balance,
 )
 from cortex.eval.grader import GradingResult, grade_goal
 from cortex.eval.metrics import SuiteMetrics, TaskMetrics, collect_metrics
@@ -32,6 +37,7 @@ from cortex.eval.sandbox import SandboxedTool, SandboxEscapeError, TaskSandbox
 
 __all__ = [
     "EvalBaseline",
+    "EvalManifest",
     "EvalSuite",
     "EvalTask",
     "GradingResult",
@@ -48,7 +54,9 @@ __all__ = [
     "collect_metrics",
     "grade_goal",
     "load_baseline",
+    "load_manifest",
     "load_suite",
     "record_baseline",
     "run_suite",
+    "validate_suite_balance",
 ]
