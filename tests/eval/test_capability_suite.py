@@ -200,6 +200,6 @@ class TestCapabilityEndToEnd:
         # One chat per question, so per-question cost = 1000/1M * $0.5
         # + 100/1M * $1.5 = $0.00065; latency is the loop's wall time.
         for task in result.results:
-            assert task.metrics.cost == pytest.approx(0.00065)
+            assert task.metrics.cost_usd == pytest.approx(0.00065)
             assert isinstance(task.metrics.latency_ms, float)
             assert task.metrics.latency_ms >= 0

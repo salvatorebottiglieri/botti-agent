@@ -16,6 +16,8 @@ Public seam:
 * :func:`load_manifest` — per-suite version pins (prompt/model/grading)
 * :func:`validate_suite_balance` — golden-set positive/negative balance guard
 * :class:`TaskSandbox` — per-task sandbox the tools execute against
+* :func:`assert_balanced_refusal_suite` — refusal suites must mix
+  must-refuse (``refuse-*``) and must-comply (``comply-*``) tasks
 """
 
 from cortex.eval.baseline import EvalBaseline, load_baseline, record_baseline
@@ -26,6 +28,7 @@ from cortex.eval.fixtures import (
     GoalFile,
     GoalState,
     SandboxFile,
+    assert_balanced_refusal_suite,
     load_manifest,
     load_suite,
     validate_suite_balance,
@@ -51,6 +54,7 @@ __all__ = [
     "TaskMetrics",
     "TaskResult",
     "TaskSandbox",
+    "assert_balanced_refusal_suite",
     "collect_metrics",
     "grade_goal",
     "load_baseline",

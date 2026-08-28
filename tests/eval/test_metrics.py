@@ -44,23 +44,27 @@ class TestCostAndLatencyMetrics:
         ]
         pricing = ModelPricing(input_per_mtok=1.0, output_per_mtok=2.0)
         metrics = collect_metrics(events, pricing=pricing)
-        assert metrics.cost == pytest.approx(4.0)
+        assert metrics.cost_usd == pytest.approx(4.0)
         assert metrics.latency_ms == pytest.approx(200.0)
+        assert metrics.usage == usage + usage
 
     def test_no_pricing_means_zero_cost(self):
         """Without pricing the transcript yields zero cost."""
         sid = _sid()
         usage = UsageStats(prompt_tokens=100, completion_tokens=50)
         events = [ResponseDoneEvent(session_id=sid, message="a", usage=usage)]
-        assert collect_metrics(events).cost == 0.0
+        metrics = collect_metrics(events)
+        assert metrics.cost_usd == 0.0
+        assert metrics.usage == usage
 
     def test_missing_usage_and_latency_are_ignored(self):
         """Done events without usage or latency contribute nothing."""
         sid = _sid()
         events = [ResponseDoneEvent(session_id=sid, message="a")]
         metrics = collect_metrics(events)
-        assert metrics.cost == 0.0
-        assert metrics.latency_ms == 0.0
+        assert metrics.cost_usd == 0.0
+        assert metrics.latency_ms is None
+        assert metrics.usage is None
 
 
 def _sid() -> str:

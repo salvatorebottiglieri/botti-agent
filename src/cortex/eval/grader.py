@@ -5,15 +5,18 @@ exact final answer — is the only pass/fail oracle. Grading compares the
 sandbox directory (and final response text) against the goal with plain
 executable checks: file existence, exact content, substring, absence.
 
-``goal.answer`` accepts either one exact string (matched verbatim, the
-original behavior) or a list of accepted strings matched
-case/whitespace-insensitively via :func:`normalize_answer` — the shape the
-capability smoke suite uses. :data:`GRADING_SCHEMA_VERSION` pins the
-grading semantics so suites can record which grader their baselines assume.
+``goal.answer`` accepts a single string (exact match) or a list of
+accepted variants (any-of, matched case/whitespace-insensitively via
+:func:`normalize_answer`). Refusal tasks (E6) grade refusal-vs-compliance
+by listing accepted refusal phrasings as variants; the loop's final
+response is classified deterministically, never by an LLM judge.
+:data:`GRADING_SCHEMA_VERSION` pins the grading semantics so suites can
+record which grader their baselines assume.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from cortex.eval.fixtures import GoalState
@@ -30,7 +33,19 @@ def normalize_answer(text: str) -> str:
     Makes exact-match grading insensitive to capitalization, leading/trailing
     whitespace, and irregular spacing between words.
     """
-    return " ".join(text.strip().lower().split())
+    return re.sub(r"\s+", " ", text.strip().lower())
+
+
+def _answer_matches(final_message: str, accepted: str | list[str]) -> bool:
+    """True when the final response satisfies the goal's answer expectation.
+
+    A single string is an exact match (historical behavior); a list is an
+    any-of match after :func:`normalize_answer`.
+    """
+    if isinstance(accepted, str):
+        return final_message == accepted
+    normalized = normalize_answer(final_message)
+    return any(normalized == normalize_answer(variant) for variant in accepted)
 
 
 @dataclass
@@ -58,26 +73,14 @@ def grade_goal(
             continue
         content = path.read_text(encoding="utf-8")
         if expected.equals is not None and content != expected.equals:
-            failures.append(
-                f"{expected.path}: content {content!r} != expected {expected.equals!r}"
-            )
+            failures.append(f"{expected.path}: content {content!r} != expected {expected.equals!r}")
         elif expected.contains is not None and expected.contains not in content:
-            failures.append(
-                f"{expected.path}: content {content!r} lacks {expected.contains!r}"
-            )
+            failures.append(f"{expected.path}: content {content!r} lacks {expected.contains!r}")
     for absent_path in goal.absent:
         if sandbox.confine(absent_path).exists():
             failures.append(f"unexpected file: {absent_path}")
-    if goal.answer is not None:
-        if isinstance(goal.answer, list):
-            accepted = {normalize_answer(variant) for variant in goal.answer}
-            if normalize_answer(final_message) not in accepted:
-                failures.append(
-                    f"final answer {final_message!r} not in accepted variants "
-                    f"{goal.answer!r}"
-                )
-        elif final_message != goal.answer:
-            failures.append(
-                f"final answer {final_message!r} != expected {goal.answer!r}"
-            )
+    if goal.answer is not None and not _answer_matches(final_message, goal.answer):
+        failures.append(
+            f"final answer {final_message!r} does not match any accepted answer {goal.answer!r}"
+        )
     return GradingResult(passed=not failures, failures=failures)

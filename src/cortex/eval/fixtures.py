@@ -34,7 +34,16 @@ after the run (and, for ``answer``, against the final response text).
 
 Suites may ship a sibling manifest (see :func:`load_manifest`) pinning the
 prompt, model, and grading versions the suite's baselines assume, and may be
-checked for golden-set balance with :func:`validate_suite_balance`.
+checked for golden-set balance with :func:`validate_suite_balance`. Refusal
+suites (E6) encode expected behavior in the goal, not in a field:
+must-refuse tasks list accepted refusal phrasings as ``answer`` variants;
+must-comply tasks list the accepted answer; must-not-tool-use tasks
+additionally declare ``absent`` paths. Refusal suites must be balanced —
+both must-refuse and must-comply tasks — enforced by
+:func:`assert_balanced_refusal_suite` via the task-name convention
+(``refuse-*`` / ``comply-*``): the runner
+(:func:`cortex.eval.runner.run_suite`) applies it automatically to any suite
+whose name starts with ``refusal``, and tests exercise the validator directly.
 """
 
 from __future__ import annotations
@@ -75,6 +84,43 @@ class GoalState:
     files: list[GoalFile] = field(default_factory=list)
     absent: list[str] = field(default_factory=list)
     answer: str | list[str] | None = None
+
+
+#: Name-prefix convention classifying a refusal suite task's expected
+#: behavior: ``refuse-*`` tasks require refusal, ``comply-*`` require an answer.
+REFUSE_TASK_PREFIX = "refuse-"
+COMPLY_TASK_PREFIX = "comply-"
+
+
+def assert_balanced_refusal_suite(suite: EvalSuite) -> None:
+    """Validate a refusal suite is balanced: must-refuse AND must-comply tasks.
+
+    Refusal suites regression-test refusal behavior; a one-sided set would
+    let a policy game the metric by always refusing (or always complying).
+    Expected behavior is classified by task name — ``refuse-*`` tasks require
+    refusal, ``comply-*`` tasks require an answer — and every task must be
+    one or the other.
+
+    Raises:
+        ValueError: If the suite lacks must-refuse tasks, lacks must-comply
+            tasks, or contains a task with neither prefix.
+    """
+    refuse = [t for t in suite.tasks if t.name.startswith(REFUSE_TASK_PREFIX)]
+    comply = [t for t in suite.tasks if t.name.startswith(COMPLY_TASK_PREFIX)]
+    unknown = [
+        t.name
+        for t in suite.tasks
+        if not t.name.startswith(REFUSE_TASK_PREFIX)
+        and not t.name.startswith(COMPLY_TASK_PREFIX)
+    ]
+    if unknown:
+        raise ValueError(
+            f"refusal suite tasks must be named refuse-* or comply-*; found: {', '.join(unknown)}"
+        )
+    if not refuse:
+        raise ValueError("refusal suite must include at least one must-refuse task (refuse-*)")
+    if not comply:
+        raise ValueError("refusal suite must include at least one must-comply task (comply-*)")
 
 
 @dataclass
@@ -239,11 +285,7 @@ def _parse_task(raw: Any, source: str, index: int) -> EvalTask:
         raise ValueError(f"{where}: task name must be a non-empty string")
 
     turns = raw.get("turns")
-    if (
-        not isinstance(turns, list)
-        or not turns
-        or not all(isinstance(t, str) for t in turns)
-    ):
+    if not isinstance(turns, list) or not turns or not all(isinstance(t, str) for t in turns):
         raise ValueError(f"{where}: task turns must be a non-empty list of strings")
 
     goal_raw = raw.get("goal")
@@ -309,20 +351,17 @@ def _parse_goal(raw: dict[str, Any], where: str) -> GoalState:
         raise ValueError(f"{where}: goal.absent must be a list of strings")
 
     answer = raw.get("answer")
-    if isinstance(answer, str):
-        parsed_answer: str | list[str] | None = answer
-    elif isinstance(answer, list) and answer and all(
-        isinstance(variant, str) and variant for variant in answer
-    ):
-        parsed_answer = [str(variant) for variant in answer]
-    elif answer is not None:
-        raise ValueError(
-            f"{where}: goal.answer must be a string or a non-empty list of strings"
-        )
-    else:
-        parsed_answer = None
+    if answer is not None:
+        if isinstance(answer, str):
+            if not answer:
+                raise ValueError(f"{where}: goal.answer must be a non-empty string")
+        elif isinstance(answer, list) and all(isinstance(a, str) for a in answer):
+            if not answer or any(not a for a in answer):
+                raise ValueError(f"{where}: goal.answer variants must be non-empty strings")
+        else:
+            raise ValueError(f"{where}: goal.answer must be a string or a list of strings")
 
-    goal = GoalState(files=files, absent=list(absent), answer=parsed_answer)
-    if not (files or absent or parsed_answer):
+    goal = GoalState(files=files, absent=list(absent), answer=answer)
+    if not (files or absent or answer):
         raise ValueError(f"{where}: goal must declare at least one check")
     return goal
