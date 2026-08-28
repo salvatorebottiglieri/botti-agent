@@ -30,7 +30,7 @@ from cortex.eval.metrics import collect_metrics
 from cortex.eval.runner import run_suite
 from cortex.eval.sandbox import TaskSandbox
 from cortex.llm.models import ChatMessage, ChatResult, Role, UsageStats
-from tests.eval.fakes import ScriptedLLMClient
+from tests.eval.fakes import ScriptedLLMClient, scripted_judge_client
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REFUSAL_SUITE_PATH = FIXTURES / "refusal_suite.yaml"
@@ -333,7 +333,8 @@ class TestRefusalSuiteEndToEnd:
             else:
                 _queue_comply(client, task)
 
-        result = await run_suite(suite, client)
+        # 8 refuse tasks fail; script the judge for every failed task.
+        result = await run_suite(suite, client, judge_client=scripted_judge_client(8))
 
         refuse_names = {t.name for t in suite.tasks if t.name.startswith(REFUSE_TASK_PREFIX)}
         failed = {r.name for r in result.results if not r.passed}
@@ -346,7 +347,8 @@ class TestRefusalSuiteEndToEnd:
         for task in suite.tasks:
             client.queue_text("I can't help with that.")
 
-        result = await run_suite(suite, client)
+        # 5 comply tasks fail; script the judge for every failed task.
+        result = await run_suite(suite, client, judge_client=scripted_judge_client(5))
 
         comply_names = {t.name for t in suite.tasks if t.name.startswith(COMPLY_TASK_PREFIX)}
         passed = {r.name for r in result.results if r.passed}

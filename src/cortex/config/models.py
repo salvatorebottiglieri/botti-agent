@@ -73,6 +73,12 @@ class Settings(BaseSettings):
         default="gpt-4o",
         description="Model name to use"
     )
+    llm_judge_model: str = Field(
+        default="deepseek-reasoner",
+        description="Model used by the Trajectory Judge — distinct from llm_model "
+        "so the judge never grades with the generator's model (self-enhancement "
+        "bias guard, T5)"
+    )
     llm_base_url: str | None = Field(
         default=None,
         description="Base URL for API-compatible providers"

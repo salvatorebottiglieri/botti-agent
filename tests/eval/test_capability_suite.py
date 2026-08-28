@@ -27,7 +27,7 @@ from cortex.eval.grader import GRADING_SCHEMA_VERSION
 from cortex.eval.runner import run_suite
 from cortex.llm.models import UsageStats
 from cortex.tools.registry import InMemoryToolRegistry
-from tests.eval.fakes import ScriptedLLMClient
+from tests.eval.fakes import ScriptedLLMClient, scripted_judge_client
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SUITE_PATH = FIXTURES / "capability_suite.yaml"
@@ -175,7 +175,10 @@ class TestCapabilityEndToEnd:
             client.queue_text(SCRIPTED[task.name], usage=usage)
         pricing = ModelPricing(input_per_mtok=0.5, output_per_mtok=1.5)
 
-        result = await run_suite(capability_suite, client, pricing=pricing)
+        # 3 WRONG questions fail; script the judge for every failed task.
+        result = await run_suite(
+            capability_suite, client, pricing=pricing, judge_client=scripted_judge_client(3)
+        )
 
         assert result.suite_name == "capability"
         assert result.suite_version == "1.0.0"
@@ -195,7 +198,9 @@ class TestCapabilityEndToEnd:
             client.queue_text(SCRIPTED[task.name], usage=usage)
         pricing = ModelPricing(input_per_mtok=0.5, output_per_mtok=1.5)
 
-        result = await run_suite(capability_suite, client, pricing=pricing)
+        result = await run_suite(
+            capability_suite, client, pricing=pricing, judge_client=scripted_judge_client(3)
+        )
 
         # One chat per question, so per-question cost = 1000/1M * $0.5
         # + 100/1M * $1.5 = $0.00065; latency is the loop's wall time.

@@ -12,6 +12,7 @@ client, so harness tests run against a fake while real runs use the factory.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,8 +26,9 @@ from cortex.agentic.loop import AgentLoop
 from cortex.agentic.reasoner import Reasoner
 from cortex.config.models import ModelPricing
 from cortex.eval.baseline import record_baseline
-from cortex.eval.fixtures import EvalSuite, EvalTask, assert_balanced_refusal_suite
+from cortex.eval.fixtures import EvalSuite, EvalTask, GoalState, assert_balanced_refusal_suite
 from cortex.eval.grader import GradingResult, grade_goal
+from cortex.eval.judge import TrajectoryJudge, build_judge_client
 from cortex.eval.metrics import SuiteMetrics, TaskMetrics, collect_metrics
 from cortex.eval.sandbox import TaskSandbox, build_sandboxed_tools
 from cortex.sessions.interfaces import SessionRepository
@@ -35,6 +37,7 @@ from cortex.tools.executor import DefaultToolExecutor
 from cortex.tools.registry import InMemoryToolRegistry
 
 if TYPE_CHECKING:
+    from cortex.eval.judge import JudgeVerdict
     from cortex.llm.base import LLMClient
     from cortex.memory.context_provider import ContextProvider
 
@@ -43,13 +46,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TaskResult:
-    """Outcome of one eval task."""
+    """Outcome of one eval task.
+
+    ``judge_verdict`` is set only for FAILED tasks when a judge client is
+    available (ADR-0015); passed tasks never carry a verdict.
+    """
 
     name: str
     passed: bool
     message: str
     failures: list[str] = field(default_factory=list)
     metrics: TaskMetrics = field(default_factory=TaskMetrics)
+    judge_verdict: JudgeVerdict | None = None
 
 
 @dataclass
@@ -158,6 +166,7 @@ async def run_suite(
     max_iterations: int = 20,
     baseline_path: str | Path | None = None,
     pricing: ModelPricing | None = None,
+    judge_client: LLMClient | None = None,
 ) -> SuiteResult:
     """Run every task in ``suite`` through the real AgentLoop.
 
@@ -173,6 +182,11 @@ async def run_suite(
             from usage. When None and a real client is created from settings,
             the configured model's pricing is used; when None with an
             injected client, cost is reported as zero.
+        judge_client: LLM client used by the Trajectory Judge (ADR-0015) for
+            FAILED tasks; when None, a real judge client is built from
+            settings via :func:`build_judge_client` the first time a task
+            fails. The judge is never the pass/fail oracle and is invoked
+            only for failed tasks — passed tasks carry no judge verdict.
 
     Raises:
         ValueError: If the suite is a refusal suite (its name starts with
@@ -194,8 +208,30 @@ async def run_suite(
         client = LLMClientFactory(settings).create()
         if pricing is None:
             pricing = settings.llm_pricing.get(settings.llm_model)
+
+    judge: TrajectoryJudge | None = None
+
+    def _ensure_judge() -> TrajectoryJudge:
+        # Build the judge client lazily: only FAILED tasks are judged
+        # (ADR-0015), so all-passing runs never construct a judge client.
+        nonlocal judge
+        if judge is None:
+            judge_client_ = judge_client
+            if judge_client_ is None:
+                from cortex.config.loader import get_settings
+
+                judge_client_ = build_judge_client(get_settings())
+            judge = TrajectoryJudge(judge_client_)
+        return judge
+
     results = [
-        await _run_task(task, client, max_iterations=max_iterations, pricing=pricing)
+        await _run_task(
+            task,
+            client,
+            max_iterations=max_iterations,
+            pricing=pricing,
+            judge=_ensure_judge,
+        )
         for task in suite.tasks
     ]
     metrics = _suite_metrics(results)
@@ -223,6 +259,7 @@ async def _run_task(
     *,
     max_iterations: int,
     pricing: ModelPricing | None,
+    judge: Callable[[], TrajectoryJudge] | None = None,
 ) -> TaskResult:
     sandbox = TaskSandbox()
     events: list[LoopEvent] = []
@@ -248,12 +285,29 @@ async def _run_task(
     failures = list(grade.failures)
     if error is not None:
         failures.append(f"loop error: {error}")
+    passed = grade.passed and error is None
+    judge_verdict: JudgeVerdict | None = None
+    if not passed and judge is not None:
+        # ADR-0015: the judge runs only on FAILED tasks — the goal state is
+        # the only pass/fail oracle, so passed tasks are never judged here.
+        # Judge failures must not crash the suite: the verdict is
+        # best-effort analysis on top of the deterministic grade.
+        try:
+            judge_verdict = await judge().judge_with_order_swap(
+                events,
+                task_name=task.name,
+                task_description=task.description,
+                goal_summary=_goal_summary(task.goal),
+            )
+        except Exception as exc:  # noqa: BLE001 - judging must not crash the suite
+            logger.warning("Eval task %s judge failed: %s", task.name, exc)
     return TaskResult(
         name=task.name,
-        passed=grade.passed and error is None,
+        passed=passed,
         message=error or final_message,
         failures=failures,
         metrics=collect_metrics(events, pricing=pricing),
+        judge_verdict=judge_verdict,
     )
 
 
@@ -327,3 +381,18 @@ def _suite_metrics(results: list[TaskResult]) -> SuiteMetrics:
         total_latency_ms=sum(r.metrics.latency_ms or 0.0 for r in results),
         total_cost_usd=sum(r.metrics.cost_usd for r in results),
     )
+
+
+def _goal_summary(goal: GoalState) -> str:
+    """Render the annotated goal state as a one-line summary for the judge."""
+    parts: list[str] = []
+    for expected in goal.files:
+        if expected.equals is not None:
+            parts.append(f"file {expected.path} equals {expected.equals!r}")
+        elif expected.contains is not None:
+            parts.append(f"file {expected.path} contains {expected.contains!r}")
+    for path in goal.absent:
+        parts.append(f"absent {path}")
+    if goal.answer is not None:
+        parts.append(f"answer {goal.answer!r}")
+    return "; ".join(parts) if parts else "annotated goal state"

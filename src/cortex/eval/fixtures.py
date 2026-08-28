@@ -33,7 +33,7 @@ The goal state is graded deterministically against the sandbox directory
 after the run (and, for ``answer``, against the final response text).
 
 Suites may ship a sibling manifest (see :func:`load_manifest`) pinning the
-prompt, model, and grading versions the suite's baselines assume, and may be
+prompt, model, grading, and rubric versions the suite's baselines assume, and may be
 checked for golden-set balance with :func:`validate_suite_balance`. Refusal
 suites (E6) encode expected behavior in the goal, not in a field:
 must-refuse tasks list accepted refusal phrasings as ``answer`` variants;
@@ -145,7 +145,7 @@ class EvalSuite:
 
 @dataclass
 class EvalManifest:
-    """Version pins for a suite: prompt, model, and grading versions.
+    """Version pins for a suite: prompt, model, grading, and rubric versions.
 
     Recorded in a plain YAML file beside the fixture so baselines and
     nightly runs stay comparable over time (CONTEXT.md: Eval Baseline).
@@ -156,6 +156,7 @@ class EvalManifest:
     prompt_version: str
     model: str
     grading_version: str
+    rubric_version: str
 
 
 def load_suite(path: str | Path) -> EvalSuite:
@@ -180,6 +181,7 @@ def load_manifest(path: str | Path) -> EvalManifest:
         prompt_version: <sha256 of the reasoner system prompt>
         model: <settings llm_model>
         grading_version: <grader GRADING_SCHEMA_VERSION>
+        rubric_version: <judge RUBRIC_VERSION>
 
     Raises:
         OSError: If the file cannot be read.
@@ -219,12 +221,20 @@ def load_manifest(path: str | Path) -> EvalManifest:
     if not grading_version_str:
         raise ValueError(f"{source}: manifest grading_version must be non-empty")
 
+    rubric_version = raw.get("rubric_version")
+    if isinstance(rubric_version, bool) or not isinstance(rubric_version, (str, int)):
+        raise ValueError(f"{source}: manifest rubric_version must be a string or int")
+    rubric_version_str = str(rubric_version)
+    if not rubric_version_str:
+        raise ValueError(f"{source}: manifest rubric_version must be non-empty")
+
     return EvalManifest(
         suite_name=name,
         suite_version=version,
         prompt_version=prompt_version,
         model=model,
         grading_version=grading_version_str,
+        rubric_version=rubric_version_str,
     )
 
 

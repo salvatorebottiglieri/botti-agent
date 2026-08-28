@@ -13,7 +13,7 @@ from cortex.agentic.events import LoopEvent, TextDeltaEvent
 from cortex.eval.baseline import load_baseline
 from cortex.eval.fixtures import EvalSuite, EvalTask, GoalFile, GoalState, SandboxFile
 from cortex.eval.runner import _drive_turn, run_suite
-from tests.eval.fakes import ScriptedLLMClient
+from tests.eval.fakes import ScriptedLLMClient, scripted_judge_client
 
 
 class TestRunSuite:
@@ -65,7 +65,7 @@ class TestRunSuite:
         client = ScriptedLLMClient()
         client.queue_text("I can't do that")
 
-        result = await run_suite(suite, client)
+        result = await run_suite(suite, client, judge_client=scripted_judge_client(1))
 
         task = result.results[0]
         assert task.passed is False
@@ -181,7 +181,9 @@ class TestRunSuite:
         client.queue_text("nope")
 
         baseline_path = tmp_path / "baselines" / "mix-v1.0.0.json"
-        result = await run_suite(suite, client, baseline_path=baseline_path)
+        result = await run_suite(
+            suite, client, baseline_path=baseline_path, judge_client=scripted_judge_client(1)
+        )
 
         assert result.metrics.task_count == 2
         assert result.metrics.pass_count == 1
@@ -212,7 +214,7 @@ class TestRunSuite:
         # leave-marker task: agent never creates the marker
         client.queue_text("I'm done")
 
-        result = await run_suite(sample_suite, client)
+        result = await run_suite(sample_suite, client, judge_client=scripted_judge_client(1))
 
         assert result.suite_name == "sample"
         assert result.metrics.task_count == 2
@@ -249,7 +251,9 @@ class TestRunSuite:
         # Turn 2 writes the goal file, then the loop hits the iteration cap.
         client.queue_tool_call("file_write", {"path": "answer.txt", "content": "42"})
 
-        result = await run_suite(suite, client, max_iterations=1)
+        result = await run_suite(
+            suite, client, max_iterations=1, judge_client=scripted_judge_client(1)
+        )
 
         task = result.results[0]
         assert task.passed is False

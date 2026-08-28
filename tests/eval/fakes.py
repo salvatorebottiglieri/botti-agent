@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from cortex.config.models import Settings
+from cortex.eval.judge import DEFAULT_DIMENSION_ORDER
 from cortex.llm.base import LLMClient
 from cortex.llm.config import GenerationConfig
 from cortex.llm.models import ChatMessage, ChatResult, Role, UsageStats
@@ -77,3 +78,22 @@ class ScriptedLLMClient(LLMClient):
     @classmethod
     def from_settings(cls, settings: Settings) -> LLMClient:
         return cls()
+
+
+def scripted_judge_client(
+    failed_task_count: int, scores: dict[str, int] | None = None
+) -> ScriptedLLMClient:
+    """A judge client serving consistent order-swap form-fill verdicts.
+
+    Each failed task consumes two responses — the forward and reversed
+    passes of ``TrajectoryJudge.judge_with_order_swap`` — with identical
+    scores, so every verdict is consistent. ``scores`` maps dimension names
+    to Likert scores (default: 3 on every dimension).
+    """
+    scores = scores or {dim.value: 3 for dim in DEFAULT_DIMENSION_ORDER}
+    form = "\n".join(f"{dim.value}: {scores[dim.value]}" for dim in DEFAULT_DIMENSION_ORDER)
+    client = ScriptedLLMClient()
+    for _ in range(failed_task_count):
+        client.queue_text(form)
+        client.queue_text(form)
+    return client
