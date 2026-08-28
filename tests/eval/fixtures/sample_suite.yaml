@@ -1,0 +1,27 @@
+# Sample eval suite exercising the YAML task schema end-to-end.
+suite:
+  name: sample
+  version: 1.0.0
+
+tasks:
+  - name: write-answer
+    description: Write the sum of the numbers in data/input.txt to answer.txt
+    sandbox:
+      files:
+        - path: data/input.txt
+          content: "40\n2"
+    turns:
+      - "Read data/input.txt and write the sum of the numbers to answer.txt"
+    goal:
+      files:
+        - path: answer.txt
+          contains: "42"
+
+  - name: leave-marker
+    description: Write marker.txt (the agent never does, so this task fails)
+    turns:
+      - "Create marker.txt with the content 'done'"
+    goal:
+      files:
+        - path: marker.txt
+          equals: "done"
