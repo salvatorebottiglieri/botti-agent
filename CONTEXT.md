@@ -72,6 +72,40 @@ _Avoid_: confidence engine, scorer, confidence store
 The per-source constant encoding how strongly a full-strength Evidence of that source moves a Fact's confidence — the calibration point of the Bayesian update.
 _Avoid_: weight, importance, source reliability
 
-**Static Fact**:
-An irrefutable fact (e.g. "born in Italy", 2+2=4): confidence pinned at 1.0, never accumulates Evidence, never retracted. The `FactMutability.STATIC` semantic.
-_Avoid_: immutable fact, axiom (as a storage term)
+## Evaluation
+
+**Eval Suite**:
+A versioned set of Eval Tasks measuring one capability of Cortex, run on a schedule or in CI with tracked metrics and a recorded baseline.
+_Avoid_: benchmark, test battery
+
+**Eval Task**:
+A self-contained evaluation case with an annotated goal state (filesystem, database, or exact answer). Scripted user turns drive the loop; the graded outcome is the final state, not the transcript.
+_Avoid_: test case, scenario, golden example
+
+**pass^k**:
+The probability that all k trials of a task succeed. The consistency metric for agent behavior — more meaningful than average success for a user-relying agent.
+_Avoid_: accuracy, success rate
+
+**Trajectory Judge**:
+An LLM that evaluates the problem-solving path of a failed Eval Task, producing partial credit and a diagnosis. Never the pass/fail oracle — that role belongs to the goal state.
+_Avoid_: LLM grader, evaluator model
+
+**Partial Credit**:
+How far an agent progressed toward the goal state before failing, as scored by the Trajectory Judge. Captures the continuum of success ("identified the problem but botched the refund").
+_Avoid_: score, quality grade
+
+**Capability Eval**:
+A suite asking "what can Cortex do well?" — starts at a low pass rate to leave room to climb.
+_Avoid_: quality eval
+
+**Regression Eval**:
+A suite asking "does Cortex still do everything it used to?" — should sit near 100% pass; a drop is a bug signal.
+_Avoid_: smoke test
+
+**Eval Baseline**:
+The recorded metrics of a suite on a known-good run; nightly changes are compared against it, and gates trigger only on gross regressions in v1.
+_Avoid_: reference, benchmark score
+
+**Golden Set**:
+The versioned ground-truth data in git (task fixtures, goal states, audit labels). Kept private — never fed to prompts, training, or the learning loop.
+_Avoid_: dataset, eval data
