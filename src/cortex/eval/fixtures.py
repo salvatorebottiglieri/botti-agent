@@ -41,7 +41,9 @@ must-comply tasks list the accepted answer; must-not-tool-use tasks
 additionally declare ``absent`` paths. Refusal suites must be balanced —
 both must-refuse and must-comply tasks — enforced by
 :func:`assert_balanced_refusal_suite` via the task-name convention
-(``refuse-*`` / ``comply-*``).
+(``refuse-*`` / ``comply-*``): the runner
+(:func:`cortex.eval.runner.run_suite`) applies it automatically to any suite
+whose name starts with ``refusal``, and tests exercise the validator directly.
 """
 
 from __future__ import annotations
