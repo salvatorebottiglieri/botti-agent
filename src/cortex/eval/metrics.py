@@ -92,3 +92,35 @@ def collect_metrics(events: list[LoopEvent], pricing: ModelPricing | None = None
                 if not success:
                     metrics.failed_calls += 1
     return metrics
+
+
+def compute_pass_k(results_by_task: dict[str, list[bool]], k: int) -> float:
+    """Fraction of tasks whose first k trials all passed (pass^k consistency).
+
+    pass^k is the probability that all k trials of a task succeed — the
+    consistency metric for loop tasks (CONTEXT.md: pass^k). v1 runs each
+    task once, so over a single-run result (one trial per task) pass^1
+    equals the suite pass rate; the k>=3 phase feeds repeated suite runs
+    into this helper. run_suite itself stays single-trial.
+
+    Args:
+        results_by_task: Task name to its per-trial pass/fail outcomes —
+            one entry per run, in run order.
+        k: Number of consecutive trials required for a task to pass (>= 1).
+
+    Returns:
+        Fraction of tasks whose first k trials all passed. A task with
+        fewer than k trials cannot demonstrate pass^k and counts as not
+        passing; an empty mapping yields 0.0 (mirroring ``pass_rate`` on
+        an empty suite).
+    """
+    if k < 1:
+        raise ValueError(f"k must be >= 1, got {k}")
+    if not results_by_task:
+        return 0.0
+    passing = sum(
+        1
+        for trials in results_by_task.values()
+        if len(trials) >= k and all(trials[:k])
+    )
+    return passing / len(results_by_task)

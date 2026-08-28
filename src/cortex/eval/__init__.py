@@ -34,7 +34,7 @@ from cortex.eval.fixtures import (
     validate_suite_balance,
 )
 from cortex.eval.grader import GradingResult, grade_goal
-from cortex.eval.metrics import SuiteMetrics, TaskMetrics, collect_metrics
+from cortex.eval.metrics import SuiteMetrics, TaskMetrics, collect_metrics, compute_pass_k
 from cortex.eval.runner import SuiteResult, TaskResult, run_suite
 from cortex.eval.sandbox import SandboxedTool, SandboxEscapeError, TaskSandbox
 
@@ -56,6 +56,7 @@ __all__ = [
     "TaskSandbox",
     "assert_balanced_refusal_suite",
     "collect_metrics",
+    "compute_pass_k",
     "grade_goal",
     "load_baseline",
     "load_manifest",
