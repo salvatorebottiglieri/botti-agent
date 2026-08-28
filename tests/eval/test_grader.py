@@ -70,6 +70,33 @@ class TestGradeGoal:
         goal = GoalState(answer="42")
         assert grade_goal(goal, sandbox, final_message="42").passed is True
         assert grade_goal(goal, sandbox, final_message="43").passed is False
+    def test_answer_variants_match_normalized(self, tmp_path):
+        """A list of accepted answers matches case/whitespace-insensitively."""
+        sandbox = self._sandbox(tmp_path, {})
+        goal = GoalState(answer=["William Shakespeare", "Shakespeare"])
+        assert (
+            grade_goal(goal, sandbox, final_message="  William   SHAKESPEARE ").passed
+            is True
+        )
+        assert grade_goal(goal, sandbox, final_message="Shakespeare").passed is True
+        assert grade_goal(goal, sandbox, final_message="W. Shakespeare").passed is False
+
+    def test_answer_variant_failure_names_accepted_set(self, tmp_path):
+        """A variant miss fails and names the accepted answers."""
+        sandbox = self._sandbox(tmp_path, {})
+        result = grade_goal(
+            GoalState(answer=["Paris", "paris"]), sandbox, final_message="London"
+        )
+        assert result.passed is False
+        assert "accepted" in result.failures[0]
+
+    def test_string_answer_stays_exact(self, tmp_path):
+        """A plain-string answer keeps exact matching — no normalization."""
+        sandbox = self._sandbox(tmp_path, {})
+        goal = GoalState(answer="Paris")
+        assert grade_goal(goal, sandbox, final_message="Paris").passed is True
+        assert grade_goal(goal, sandbox, final_message="paris").passed is False
+        assert grade_goal(goal, sandbox, final_message=" Paris ").passed is False
 
     def test_all_checks_must_pass(self, tmp_path):
         """Any single failure fails the whole goal."""

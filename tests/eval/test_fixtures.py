@@ -57,6 +57,36 @@ tasks:
         suite = load_suite(path)
         assert suite.tasks[0].goal.absent == ["tmp/scratch.txt"]
         assert suite.tasks[0].goal.answer == "42"
+    def test_goal_answer_accepts_variants_list(self, tmp_path):
+        """goal.answer may be a list of accepted answer strings."""
+        path = tmp_path / "suite.yaml"
+        path.write_text(
+            """
+suite:
+  name: s
+  version: 2.0.0
+tasks:
+  - name: t
+    turns: ["hello"]
+    goal:
+      answer: ["Paris", "paris"]
+""",
+            encoding="utf-8",
+        )
+        suite = load_suite(path)
+        assert suite.tasks[0].goal.answer == ["Paris", "paris"]
+
+    def test_goal_answer_rejects_invalid_variants(self, tmp_path):
+        """Non-string entries and empty variant lists are rejected."""
+        for bad in ("[1, 2]", "[]"):
+            path = tmp_path / "suite.yaml"
+            path.write_text(
+                "suite:\n  name: s\n  version: 1.0.0\n"
+                f"tasks:\n  - name: t\n    turns: ['hi']\n    goal:\n      answer: {bad}\n",
+                encoding="utf-8",
+            )
+            with pytest.raises(ValueError, match="answer"):
+                load_suite(path)
 
 
 class TestLoadSuiteErrors:

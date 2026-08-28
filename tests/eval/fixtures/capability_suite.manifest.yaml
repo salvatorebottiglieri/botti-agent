@@ -1,0 +1,20 @@
+# Manifest for the capability smoke suite (E3).
+#
+# Plain YAML the harness reads (load_manifest); pins every version that
+# determines what a pass/fail means, so baselines and nightly runs stay
+# comparable over time.
+suite:
+  name: capability
+  version: 1.0.0
+
+# SHA-256 of the reasoner default system prompt
+# (src/cortex/agentic/reasoner.py, Reasoner._default_system_prompt()).
+# Recompute and bump whenever the prompt text changes.
+prompt_version: a7e52a6d5839c8443e272e5cf57722ed6c4ae2062e31d60e1c996edcd5508021
+
+# The model this suite targets — settings llm_model (config.yaml: llm.model).
+model: deepseek-chat
+
+# Grading logic version — must equal GRADING_SCHEMA_VERSION in
+# src/cortex/eval/grader.py. Bump when grader semantics change.
+grading_version: 1

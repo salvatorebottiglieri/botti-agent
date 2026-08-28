@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 from cortex.agentic.events import (
     ErrorEvent,
     ResponseDoneEvent,
@@ -12,7 +14,53 @@ from cortex.agentic.events import (
     ToolResultEvent,
     ToolStartEvent,
 )
+from cortex.config.models import ModelPricing
 from cortex.eval.metrics import collect_metrics
+from cortex.llm.models import UsageStats
+
+
+class TestCostAndLatencyMetrics:
+    """Per-question cost and latency come from ResponseDoneEvent usage/timing."""
+
+    def test_cost_and_latency_accumulate_across_done_events(self):
+        """Cost (usage × pricing) and latency sum over a task's responses."""
+        sid = _sid()
+        usage = UsageStats(prompt_tokens=1_000_000, completion_tokens=500_000)
+        events = [
+            ResponseDoneEvent(
+                session_id=sid,
+                message="a",
+                iterations=1,
+                usage=usage,
+                latency_ms=150.0,
+            ),
+            ResponseDoneEvent(
+                session_id=sid,
+                message="b",
+                iterations=1,
+                usage=usage,
+                latency_ms=50.0,
+            ),
+        ]
+        pricing = ModelPricing(input_per_mtok=1.0, output_per_mtok=2.0)
+        metrics = collect_metrics(events, pricing=pricing)
+        assert metrics.cost == pytest.approx(4.0)
+        assert metrics.latency_ms == pytest.approx(200.0)
+
+    def test_no_pricing_means_zero_cost(self):
+        """Without pricing the transcript yields zero cost."""
+        sid = _sid()
+        usage = UsageStats(prompt_tokens=100, completion_tokens=50)
+        events = [ResponseDoneEvent(session_id=sid, message="a", usage=usage)]
+        assert collect_metrics(events).cost == 0.0
+
+    def test_missing_usage_and_latency_are_ignored(self):
+        """Done events without usage or latency contribute nothing."""
+        sid = _sid()
+        events = [ResponseDoneEvent(session_id=sid, message="a")]
+        metrics = collect_metrics(events)
+        assert metrics.cost == 0.0
+        assert metrics.latency_ms == 0.0
 
 
 def _sid() -> str:

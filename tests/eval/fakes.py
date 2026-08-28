@@ -12,7 +12,7 @@ from typing import Any
 from cortex.config.models import Settings
 from cortex.llm.base import LLMClient
 from cortex.llm.config import GenerationConfig
-from cortex.llm.models import ChatMessage, ChatResult, Role
+from cortex.llm.models import ChatMessage, ChatResult, Role, UsageStats
 from cortex.tools.interfaces import ToolCall, ToolDefinition
 
 
@@ -23,19 +23,29 @@ class ScriptedLLMClient(LLMClient):
         self._responses: list[ChatResult] = list(responses or [])
         self.calls: list[list[ChatMessage]] = []
 
-    def queue_tool_call(self, name: str, arguments: dict[str, Any]) -> None:
+    def queue_tool_call(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        usage: UsageStats | None = None,
+    ) -> None:
         """Queue a response that tells the loop to call a tool."""
         self._responses.append(
             ChatResult(
                 message=ChatMessage(role=Role.ASSISTANT, content=""),
                 tool_calls=[ToolCall(name=name, arguments=arguments)],
+                usage=usage,
             )
         )
 
-    def queue_text(self, text: str) -> None:
+    def queue_text(self, text: str, *, usage: UsageStats | None = None) -> None:
         """Queue a response that ends the loop with the given text."""
         self._responses.append(
-            ChatResult(message=ChatMessage(role=Role.ASSISTANT, content=text))
+            ChatResult(
+                message=ChatMessage(role=Role.ASSISTANT, content=text),
+                usage=usage,
+            )
         )
 
     @property

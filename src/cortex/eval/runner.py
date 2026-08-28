@@ -34,6 +34,7 @@ from cortex.tools.executor import DefaultToolExecutor
 from cortex.tools.registry import InMemoryToolRegistry
 
 if TYPE_CHECKING:
+    from cortex.config.models import ModelPricing
     from cortex.llm.base import LLMClient
     from cortex.memory.context_provider import ContextProvider
 
@@ -156,6 +157,7 @@ async def run_suite(
     *,
     max_iterations: int = 20,
     baseline_path: str | Path | None = None,
+    pricing: ModelPricing | None = None,
 ) -> SuiteResult:
     """Run every task in ``suite`` through the real AgentLoop.
 
@@ -167,13 +169,25 @@ async def run_suite(
         max_iterations: Per-turn iteration cap for the loop.
         baseline_path: When given, a versioned baseline JSON is recorded
             for the suite at this path.
+        pricing: Per-model token pricing used to estimate per-task LLM cost
+            from usage. When None and a real client is created from settings,
+            the configured model's pricing is used; when None with an
+            injected client, cost is reported as zero.
 
     Returns:
         A :class:`SuiteResult` with per-task results and suite metrics.
     """
-    client = llm_client if llm_client is not None else _default_llm_client()
+    client = llm_client
+    if client is None:
+        from cortex.config.loader import get_settings
+        from cortex.llm.factory import LLMClientFactory
+
+        settings = get_settings()
+        client = LLMClientFactory(settings).create()
+        if pricing is None:
+            pricing = settings.llm_pricing.get(settings.llm_model)
     results = [
-        await _run_task(task, client, max_iterations=max_iterations)
+        await _run_task(task, client, max_iterations=max_iterations, pricing=pricing)
         for task in suite.tasks
     ]
     metrics = _suite_metrics(results)
@@ -195,19 +209,12 @@ async def run_suite(
     return suite_result
 
 
-def _default_llm_client() -> LLMClient:
-    """Create a real LLM client from settings (requires LLM_API_KEY etc.)."""
-    from cortex.config.loader import get_settings
-    from cortex.llm.factory import LLMClientFactory
-
-    return LLMClientFactory(get_settings()).create()
-
-
 async def _run_task(
     task: EvalTask,
     llm_client: LLMClient,
     *,
     max_iterations: int,
+    pricing: ModelPricing | None,
 ) -> TaskResult:
     sandbox = TaskSandbox()
     events: list[LoopEvent] = []
@@ -238,7 +245,7 @@ async def _run_task(
         passed=grade.passed and error is None,
         message=error or final_message,
         failures=failures,
-        metrics=collect_metrics(events),
+        metrics=collect_metrics(events, pricing=pricing),
     )
 
 

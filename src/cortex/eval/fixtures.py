@@ -25,10 +25,16 @@ A fixture file is a YAML document with a ``suite`` header and a non-empty
               contains: "4" # substring match (optional, alternative to equals)
           absent:           # optional paths that must not exist
             - tmp/scratch.txt
-          answer: "42"      # optional exact final-response text match
+          answer: "42"      # optional final-response match: one exact string,
+                            # or a list of accepted strings matched
+                            # case/whitespace-insensitively (normalized)
 
 The goal state is graded deterministically against the sandbox directory
 after the run (and, for ``answer``, against the final response text).
+
+Suites may ship a sibling manifest (see :func:`load_manifest`) pinning the
+prompt, model, and grading versions the suite's baselines assume, and may be
+checked for golden-set balance with :func:`validate_suite_balance`.
 """
 
 from __future__ import annotations
@@ -59,11 +65,16 @@ class GoalFile:
 
 @dataclass
 class GoalState:
-    """Annotated goal state — the deterministic pass/fail oracle (ADR-0015)."""
+    """Annotated goal state — the deterministic pass/fail oracle (ADR-0015).
+
+    ``answer`` matches the final response text: either one exact string
+    (matched verbatim) or a list of accepted strings matched
+    case/whitespace-insensitively (graded by :mod:`cortex.eval.grader`).
+    """
 
     files: list[GoalFile] = field(default_factory=list)
     absent: list[str] = field(default_factory=list)
-    answer: str | None = None
+    answer: str | list[str] | None = None
 
 
 @dataclass
@@ -86,6 +97,21 @@ class EvalSuite:
     tasks: list[EvalTask]
 
 
+@dataclass
+class EvalManifest:
+    """Version pins for a suite: prompt, model, and grading versions.
+
+    Recorded in a plain YAML file beside the fixture so baselines and
+    nightly runs stay comparable over time (CONTEXT.md: Eval Baseline).
+    """
+
+    suite_name: str
+    suite_version: str
+    prompt_version: str
+    model: str
+    grading_version: str
+
+
 def load_suite(path: str | Path) -> EvalSuite:
     """Load an :class:`EvalSuite` from a YAML fixture file.
 
@@ -95,6 +121,89 @@ def load_suite(path: str | Path) -> EvalSuite:
     """
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     return _parse_suite(raw, str(path))
+
+
+def load_manifest(path: str | Path) -> EvalManifest:
+    """Load an :class:`EvalManifest` from a plain YAML manifest file.
+
+    Expected shape::
+
+        suite:
+          name: capability
+          version: 1.0.0
+        prompt_version: <sha256 of the reasoner system prompt>
+        model: <settings llm_model>
+        grading_version: <grader GRADING_SCHEMA_VERSION>
+
+    Raises:
+        OSError: If the file cannot be read.
+        ValueError: If the document does not match the manifest shape.
+    """
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    source = str(path)
+    if not isinstance(raw, dict) or not isinstance(raw.get("suite"), dict):
+        raise ValueError(f"{source}: manifest must have a 'suite' mapping")
+
+    suite = raw["suite"]
+    name = suite.get("name")
+    version = suite.get("version")
+    if not isinstance(name, str) or not name:
+        raise ValueError(f"{source}: manifest suite.name must be a non-empty string")
+    if not isinstance(version, str) or not version:
+        raise ValueError(f"{source}: manifest suite.version must be a non-empty string")
+
+    prompt_version = raw.get("prompt_version")
+    if not isinstance(prompt_version, str) or not prompt_version:
+        raise ValueError(
+            f"{source}: manifest prompt_version must be a non-empty string"
+        )
+
+    model = raw.get("model")
+    if not isinstance(model, str) or not model:
+        raise ValueError(f"{source}: manifest model must be a non-empty string")
+
+    grading_version = raw.get("grading_version")
+    if isinstance(grading_version, bool) or not isinstance(
+        grading_version, (str, int)
+    ):
+        raise ValueError(
+            f"{source}: manifest grading_version must be a string or int"
+        )
+    grading_version_str = str(grading_version)
+    if not grading_version_str:
+        raise ValueError(f"{source}: manifest grading_version must be non-empty")
+
+    return EvalManifest(
+        suite_name=name,
+        suite_version=version,
+        prompt_version=prompt_version,
+        model=model,
+        grading_version=grading_version_str,
+    )
+
+
+def validate_suite_balance(suite: EvalSuite) -> list[str]:
+    """Return balance violations for a golden set; an empty list means balanced.
+
+    The golden set must contain both kinds of cases (one-sided-optimization
+    guard, CONTEXT.md: Golden Set): positive cases whose goal declares
+    something that must happen (``files`` or ``answer``) and negative cases
+    whose goal declares something that must NOT happen (``absent``) — the
+    not-answer / must-not-tool-use tasks.
+    """
+    violations: list[str] = []
+    has_positive = any(t.goal.files or t.goal.answer is not None for t in suite.tasks)
+    has_negative = any(t.goal.absent for t in suite.tasks)
+    if not has_positive:
+        violations.append(
+            "suite has no positive cases (tasks whose goal requires files or an answer)"
+        )
+    if not has_negative:
+        violations.append(
+            "suite has no negative cases (tasks whose goal declares absent paths — "
+            "the not-answer / must-not-tool-use behavior)"
+        )
+    return violations
 
 
 def _parse_suite(raw: Any, source: str) -> EvalSuite:
@@ -152,9 +261,7 @@ def _parse_task(raw: Any, source: str, index: int) -> EvalTask:
     files_raw = sandbox_raw.get("files", [])
     if not isinstance(files_raw, list):
         raise ValueError(f"{where}: sandbox.files must be a list")
-    sandbox = [
-        _parse_sandbox_file(f, where) for f in files_raw
-    ]
+    sandbox = [_parse_sandbox_file(f, where) for f in files_raw]
 
     return EvalTask(
         name=name,
@@ -202,10 +309,20 @@ def _parse_goal(raw: dict[str, Any], where: str) -> GoalState:
         raise ValueError(f"{where}: goal.absent must be a list of strings")
 
     answer = raw.get("answer")
-    if answer is not None and not isinstance(answer, str):
-        raise ValueError(f"{where}: goal.answer must be a string")
+    if isinstance(answer, str):
+        parsed_answer: str | list[str] | None = answer
+    elif isinstance(answer, list) and answer and all(
+        isinstance(variant, str) and variant for variant in answer
+    ):
+        parsed_answer = [str(variant) for variant in answer]
+    elif answer is not None:
+        raise ValueError(
+            f"{where}: goal.answer must be a string or a non-empty list of strings"
+        )
+    else:
+        parsed_answer = None
 
-    goal = GoalState(files=files, absent=list(absent), answer=answer)
-    if not (files or absent or answer):
+    goal = GoalState(files=files, absent=list(absent), answer=parsed_answer)
+    if not (files or absent or parsed_answer):
         raise ValueError(f"{where}: goal must declare at least one check")
     return goal
