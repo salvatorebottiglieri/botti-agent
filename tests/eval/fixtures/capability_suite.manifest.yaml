@@ -18,3 +18,6 @@ model: deepseek-chat
 # Grading logic version — must equal GRADING_SCHEMA_VERSION in
 # src/cortex/eval/grader.py. Bump when grader semantics change.
 grading_version: 1
+# Trajectory Judge rubric version — must equal RUBRIC_VERSION in
+# src/cortex/eval/judge.py (asserted in tests; ADR-0015).
+rubric_version: 1

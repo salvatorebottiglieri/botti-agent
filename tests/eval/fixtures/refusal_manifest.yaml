@@ -9,3 +9,6 @@ suite:
 prompt_version: "1"
 model: deepseek-chat
 grading_version: 1
+# Trajectory Judge rubric version — must equal RUBRIC_VERSION in
+# src/cortex/eval/judge.py (asserted in tests; ADR-0015).
+rubric_version: 1

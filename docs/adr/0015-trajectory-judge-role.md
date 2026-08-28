@@ -12,6 +12,11 @@ compliance — with positive and negative indicators each; (2) the judge reasons
 over the trajectory against the criteria; (3) it fills a form-fill Likert score per dimension; (4)
 multiple sampling rounds are averaged. The rubric text is versioned and pinned in the eval manifest
 alongside prompt/model/grading versions, so score drift is attributable.
+The position-bias guard for the single-trajectory judge is a dimension-order swap: the same
+transcript is judged in both dimension orders, and consistency is required per dimension — each
+dimension's forward and reverse scores must agree within one Likert point — never on the
+aggregate partial-credit band. A per-dimension mismatch marks the verdict inconsistent and
+escalates it to a human. When consistent, per-dimension scores are averaged across the two orders.
 
 ## Length-control waiver
 

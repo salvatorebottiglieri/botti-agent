@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from cortex.eval.fixtures import GoalFile, load_suite
+from cortex.eval.fixtures import GoalFile, load_manifest, load_suite
 
 
 class TestLoadSuite:
@@ -160,3 +160,30 @@ class TestLoadSuiteErrors:
         )
         with pytest.raises(ValueError, match="path"):
             load_suite(path)
+
+class TestLoadManifest:
+    """The manifest pins prompt, model, grading, and rubric versions."""
+
+    def _write_manifest(self, tmp_path, body: str) -> str:
+        path = tmp_path / "manifest.yaml"
+        path.write_text(
+            "suite:\n  name: s\n  version: 1.0.0\n"
+            "prompt_version: p\nmodel: m\ngrading_version: 1\n" + body,
+            encoding="utf-8",
+        )
+        return str(path)
+
+    def test_rubric_version_is_required(self, tmp_path):
+        """F1: a manifest without rubric_version fails to load."""
+        with pytest.raises(ValueError, match="rubric_version"):
+            load_manifest(self._write_manifest(tmp_path, ""))
+
+    def test_rubric_version_loads_and_coerces_to_str(self, tmp_path):
+        """Like grading_version, an int rubric_version is accepted and
+        normalized to a string."""
+        manifest = load_manifest(self._write_manifest(tmp_path, "rubric_version: 1\n"))
+        assert manifest.rubric_version == "1"
+
+    def test_rubric_version_rejects_non_string_int(self, tmp_path):
+        with pytest.raises(ValueError, match="rubric_version"):
+            load_manifest(self._write_manifest(tmp_path, "rubric_version: []\n"))

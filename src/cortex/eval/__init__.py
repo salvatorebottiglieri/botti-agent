@@ -18,6 +18,11 @@ Public seam:
 * :class:`TaskSandbox` — per-task sandbox the tools execute against
 * :func:`assert_balanced_refusal_suite` — refusal suites must mix
   must-refuse (``refuse-*``) and must-comply (``comply-*``) tasks
+* :class:`TrajectoryJudge` — partial credit + diagnosis for FAILED tasks
+  (G-Eval rubric, order-swap consistency, never the pass/fail oracle);
+  :func:`measure_judge_agreement` — judge-vs-human agreement on the audit set;
+  :func:`judge_trust_gate` — trust gate over the audit set before judge
+  output is included in reports
 """
 
 from cortex.eval.baseline import EvalBaseline, load_baseline, record_baseline
@@ -34,11 +39,38 @@ from cortex.eval.fixtures import (
     validate_suite_balance,
 )
 from cortex.eval.grader import GradingResult, grade_goal
+from cortex.eval.judge import (
+    DEFAULT_DIMENSION_ORDER,
+    DEFAULT_RUBRIC,
+    INCONSISTENT_DIAGNOSIS,
+    JUDGE_TRUST_MIN_DIMENSION_AGREEMENT,
+    JUDGE_TRUST_MIN_VERDICT_QUALITY,
+    ORDER_SWAP_DIMENSION_TOLERANCE,
+    RUBRIC_VERSION,
+    HumanLabels,
+    JudgeAgreement,
+    JudgeAudit,
+    JudgeDimension,
+    JudgeParseError,
+    JudgeVerdict,
+    Rubric,
+    RubricCriterion,
+    TrajectoryJudge,
+    TrustGateResult,
+    build_judge_client,
+    judge_trust_gate,
+    load_judge_audit,
+    measure_judge_agreement,
+    partial_credit_band,
+    render_transcript,
+)
 from cortex.eval.metrics import SuiteMetrics, TaskMetrics, collect_metrics, compute_pass_k
 from cortex.eval.runner import SuiteResult, TaskResult, run_suite
 from cortex.eval.sandbox import SandboxedTool, SandboxEscapeError, TaskSandbox
 
 __all__ = [
+    "DEFAULT_DIMENSION_ORDER",
+    "DEFAULT_RUBRIC",
     "EvalBaseline",
     "EvalManifest",
     "EvalSuite",
@@ -46,6 +78,19 @@ __all__ = [
     "GradingResult",
     "GoalFile",
     "GoalState",
+    "HumanLabels",
+    "INCONSISTENT_DIAGNOSIS",
+    "JUDGE_TRUST_MIN_DIMENSION_AGREEMENT",
+    "JUDGE_TRUST_MIN_VERDICT_QUALITY",
+    "JudgeAgreement",
+    "JudgeAudit",
+    "JudgeDimension",
+    "JudgeParseError",
+    "JudgeVerdict",
+    "ORDER_SWAP_DIMENSION_TOLERANCE",
+    "RUBRIC_VERSION",
+    "Rubric",
+    "RubricCriterion",
     "SandboxEscapeError",
     "SandboxFile",
     "SandboxedTool",
@@ -54,14 +99,22 @@ __all__ = [
     "TaskMetrics",
     "TaskResult",
     "TaskSandbox",
+    "TrajectoryJudge",
+    "TrustGateResult",
     "assert_balanced_refusal_suite",
+    "build_judge_client",
     "collect_metrics",
     "compute_pass_k",
     "grade_goal",
+    "judge_trust_gate",
     "load_baseline",
+    "load_judge_audit",
     "load_manifest",
     "load_suite",
+    "measure_judge_agreement",
+    "partial_credit_band",
     "record_baseline",
+    "render_transcript",
     "run_suite",
     "validate_suite_balance",
 ]

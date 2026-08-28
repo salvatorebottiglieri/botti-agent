@@ -31,13 +31,14 @@ from cortex.eval.fixtures import (
     validate_suite_balance,
 )
 from cortex.eval.grader import GRADING_SCHEMA_VERSION
+from cortex.eval.judge import DEFAULT_DIMENSION_ORDER, RUBRIC_VERSION
 from cortex.eval.metrics import compute_pass_k
 from cortex.eval.runner import SuiteResult, run_suite
 from cortex.llm.config import GenerationConfig
 from cortex.llm.models import ChatMessage, ChatResult, UsageStats
 from cortex.tools.interfaces import ToolDefinition
 from cortex.tools.registry import InMemoryToolRegistry
-from tests.eval.fakes import ScriptedLLMClient
+from tests.eval.fakes import ScriptedLLMClient, scripted_judge_client
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SUITE_PATH = FIXTURES / "loop_suite.yaml"
@@ -388,6 +389,12 @@ class TestLoopManifest:
             GRADING_SCHEMA_VERSION
         )
 
+    def test_manifest_pins_rubric_version(self) -> None:
+        """ADR-0015: the judge rubric version is pinned in the manifest
+        alongside prompt/model/grading versions and must equal RUBRIC_VERSION
+        — a rubric change forces a manifest bump."""
+        assert load_manifest(MANIFEST_PATH).rubric_version == RUBRIC_VERSION
+
     def test_manifest_pins_model(self) -> None:
         """The model pin matches the live config source (F2).
 
@@ -510,17 +517,74 @@ class TestLoopSuiteEndToEnd:
             "file_write", {"path": "summary.txt", "content": "alpha"}, usage=USAGE
         )
         client.queue_text("Done", usage=USAGE)
+        judge_client = scripted_judge_client(1)
         result = await run_suite(
             EvalSuite(
                 name=loop_suite.name, version=loop_suite.version, tasks=[task]
             ),
             client,
             pricing=PRICING,
+            judge_client=judge_client,
         )
         task_result = result.results[0]
         assert client.exhausted, "tool-happy trajectory must be fully consumed"
         assert not task_result.passed, task_result.failures
         assert any("summary.txt" in failure for failure in task_result.failures)
+        # A3: the failed task is judged (scripted) — a verdict is attached.
+        assert judge_client.exhausted
+        assert task_result.judge_verdict is not None
+        assert task_result.judge_verdict.consistent is True
+        assert task_result.judge_verdict.rubric_version == RUBRIC_VERSION
+        assert len(task_result.judge_verdict.scores) == 4
+
+    async def test_failed_task_gets_judge_verdict_passed_task_none(
+        self, loop_suite: EvalSuite
+    ) -> None:
+        """A3: the judge runs only on FAILED tasks, via the runner seam.
+
+        A two-task run — one passing, one failing — produces a scripted
+        judge verdict on the failing TaskResult and none on the passing
+        one; the judge client is injected (never a real API) and serves
+        exactly the two order-swap passes of the failing task.
+        """
+        failing = next(
+            t for t in loop_suite.tasks if t.name == "neg-ambiguous-which-file"
+        )
+        passing = next(
+            t for t in loop_suite.tasks if t.name == "read-sum-numbers"
+        )
+        client = ScriptedLLMClient()
+        # Tool-happy trajectory: writes the absent-declared summary.txt
+        # instead of asking which file → the task FAILS.
+        client.queue_tool_call("file_read", {"path": "data/a.txt"}, usage=USAGE)
+        client.queue_tool_call(
+            "file_write", {"path": "summary.txt", "content": "alpha"}, usage=USAGE
+        )
+        client.queue_text("Done", usage=USAGE)
+        _queue_golden(client, GOLDEN["read-sum-numbers"], USAGE)
+        judge_client = scripted_judge_client(1)
+        result = await run_suite(
+            EvalSuite(
+                name=loop_suite.name,
+                version=loop_suite.version,
+                tasks=[failing, passing],
+            ),
+            client,
+            pricing=PRICING,
+            judge_client=judge_client,
+        )
+        assert client.exhausted, "golden scripts must consume every scripted response"
+        assert judge_client.exhausted, "judge client must serve exactly the failing pass"
+        by_name = {r.name: r for r in result.results}
+        failed = by_name["neg-ambiguous-which-file"]
+        passed = by_name["read-sum-numbers"]
+        assert not failed.passed
+        assert passed.passed
+        assert failed.judge_verdict is not None
+        assert failed.judge_verdict.consistent is True
+        assert failed.judge_verdict.rubric_version == RUBRIC_VERSION
+        assert set(failed.judge_verdict.scores) == set(DEFAULT_DIMENSION_ORDER)
+        assert passed.judge_verdict is None
 
     async def test_pass1_equals_pass_rate_on_single_run(
         self, loop_suite: EvalSuite, loop_result: SuiteResult
