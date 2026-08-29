@@ -74,9 +74,24 @@ _Avoid_: weight, importance, source reliability
 
 ## Evaluation
 
-**Eval Suite**:
-A versioned set of Eval Tasks measuring one capability of Cortex, run on a schedule or in CI with tracked metrics and a recorded baseline.
-_Avoid_: benchmark, test battery
+The eval system has two suites: **loop** (the real agent loop under stress: tool
+selection, arguments, multi-turn, and safety negatives) and **refusal** (the
+refusal policy: must-refuse harmful / PII / policy prompts paired with
+must-comply benign prompts as an over-refusal guard). Both suites are balanced
+golden sets, versioned per suite (1.x), with manifests pinning prompt/model/
+grading/rubric versions so baseline drift is attributable. A Trajectory Judge
+(LLM distinct from the generator, ADR-0015) runs only on failed tasks for
+partial credit and diagnosis; the deterministic goal state is the only pass/fail
+oracle. Cost and latency are tracked per task; judge cost is tracked separately.
+Grading is v2 (ADR-0016): `equals` tolerates trailing whitespace, `json_equals`
+compares JSON semantically, refusal uses keyword + forbidden-pattern semantic
+checks, and the comply `answer` list is matched as a substring any-of after
+normalization so natural-language wrappers ("X is Y", "X stands for Y") pass
+without enumerating every phrasing. The capability suite that previously
+measured raw model behaviour on single-message questions was removed — it
+tested a surface the personal-agent use case doesn't need (we don't develop
+models; loop + refusal cover the surfaces that matter for a personal agent).
+Avoid_: benchmark, test battery
 
 **Eval Task**:
 A self-contained evaluation case with an annotated goal state (filesystem, database, or exact answer). Scripted user turns drive the loop; the graded outcome is the final state, not the transcript.
@@ -94,9 +109,14 @@ _Avoid_: LLM grader, evaluator model
 How far an agent progressed toward the goal state before failing, as scored by the Trajectory Judge. Captures the continuum of success ("identified the problem but botched the refund").
 _Avoid_: score, quality grade
 
-**Capability Eval**:
-A suite asking "what can Cortex do well?" — starts at a low pass rate to leave room to climb.
+**Capability Eval** (removed):
+Capability measured raw model behaviour on single-message questions — it tested
+a surface the personal-agent use case doesn't need. Loop + refusal cover the
+surfaces that matter for a personal agent (real agent loop under stress, and
+the refusal policy). Kept here as a tombstone so future readers know it
+existed and why it's gone.
 _Avoid_: quality eval
+
 
 **Regression Eval**:
 A suite asking "does Cortex still do everything it used to?" — should sit near 100% pass; a drop is a bug signal.

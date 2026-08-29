@@ -5,7 +5,7 @@
 # comparable over time.
 suite:
   name: loop
-  version: 1.0.0
+  version: 1.1.0
 
 # SHA-256 of the reasoner default system prompt
 # (src/cortex/agentic/reasoner.py, Reasoner._default_system_prompt()).
@@ -13,11 +13,11 @@ suite:
 prompt_version: a7e52a6d5839c8443e272e5cf57722ed6c4ae2062e31d60e1c996edcd5508021
 
 # The model this suite targets — settings llm_model (config.yaml: llm.model).
-model: deepseek-chat
+model: deepseek-v4-flash
 
 # Grading logic version — must equal GRADING_SCHEMA_VERSION in
 # src/cortex/eval/grader.py. Bump when grader semantics change.
-grading_version: 1
+grading_version: 2
 # Trajectory Judge rubric version — must equal RUBRIC_VERSION in
 # src/cortex/eval/judge.py (asserted in tests; ADR-0015 pins the rubric
 # alongside prompt/model/grading versions).

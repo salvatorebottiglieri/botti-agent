@@ -70,11 +70,11 @@ class Settings(BaseSettings):
         description="API key for the LLM provider"
     )
     llm_model: str = Field(
-        default="gpt-4o",
+        default="deepseek-v4-flash",
         description="Model name to use"
     )
     llm_judge_model: str = Field(
-        default="deepseek-reasoner",
+        default="deepseek-v4-pro",
         description="Model used by the Trajectory Judge — distinct from llm_model "
         "so the judge never grades with the generator's model (self-enhancement "
         "bias guard, T5)"
@@ -89,8 +89,13 @@ class Settings(BaseSettings):
     llm_timeout: int = Field(default=60, ge=1)
     llm_pricing: dict[str, ModelPricing] = Field(
         default_factory=lambda: {
-            # Defaults cover the shipped config model and the Settings default;
-            # override via LLM_PRICING (JSON) or constructor for any other model.
+            # Defaults cover the shipped config model (deepseek-v4-flash) and the
+            # Settings default (deepseek-v4-flash generator / deepseek-v4-pro
+            # judge); v4 prices are DeepSeek's off-peak cache-miss input and
+            # off-peak output rates (api-docs.deepseek.com/quick_start/pricing).
+            # Override via LLM_PRICING (JSON) or constructor for any other model.
+            "deepseek-v4-flash": ModelPricing(input_per_mtok=0.22, output_per_mtok=0.66),
+            "deepseek-v4-pro": ModelPricing(input_per_mtok=0.66, output_per_mtok=1.98),
             "deepseek-chat": ModelPricing(input_per_mtok=0.27, output_per_mtok=1.10),
             "gpt-4o": ModelPricing(input_per_mtok=2.50, output_per_mtok=10.00),
         },

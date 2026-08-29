@@ -50,6 +50,8 @@ class SuiteMetrics:
     tools_used: list[str] = field(default_factory=list)
     total_latency_ms: float = 0.0
     total_cost_usd: float = 0.0
+    total_judge_cost_usd: float = 0.0
+
 
     @property
     def pass_rate(self) -> float:

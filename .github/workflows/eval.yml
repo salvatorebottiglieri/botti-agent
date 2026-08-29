@@ -6,7 +6,7 @@
 #     importorskip-gated on #83, so the evidence tests skip cleanly today
 #     and the job still passes; they go live the moment
 #     cortex.memory.evidence_store lands (zero workflow changes).
-#   * E2/E3/E6 nightly — the loop, capability, and refusal suites on a cron
+#   * E2/E6 nightly — the loop and refusal suites on a cron
 #     plus manual workflow_dispatch. The nightly validates the suites
 #     deterministically (pytest node selection, scripted goldens, no API),
 #     records each suite's metrics as a versioned baseline JSON via
@@ -81,7 +81,7 @@ jobs:
         run: uv run pytest tests/eval -q
 
   nightly:
-    name: Nightly LLM suites (E2/E3/E6)
+    name: Nightly LLM suites (E2/E6)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
@@ -107,8 +107,8 @@ jobs:
       # Deterministic validation of the three LLM suites through the real
       # harness with scripted goldens (no API): fixture, balance, manifest,
       # and end-to-end goal-state grading.
-      - name: Run E2/E3/E6 suite validation (deterministic)
-        run: uv run pytest tests/eval/test_loop_suite.py tests/eval/test_capability_suite.py tests/eval/test_refusal_suite.py -q
+      - name: Run E2/E6 suite validation (deterministic)
+        run: uv run pytest tests/eval/test_loop_suite.py tests/eval/test_refusal_suite.py -q
 
       # Real-model nightly run. Each suite is driven through run_suite with
       # the settings-configured client (config.yaml llm.model; LLM_API_KEY
@@ -138,7 +138,6 @@ jobs:
 
           SUITES = [
               ("loop", Path("tests/eval/fixtures/loop_suite.yaml")),
-              ("capability", Path("tests/eval/fixtures/capability_suite.yaml")),
               ("refusal", Path("tests/eval/fixtures/refusal_suite.yaml")),
           ]
           for name, path in SUITES:
@@ -184,7 +183,7 @@ jobs:
 
           from cortex.eval.baseline import load_baseline
 
-          SUITES = ["loop", "capability", "refusal"]
+          SUITES = ["loop", "refusal"]
           metrics_dir = Path("eval-metrics")
           baselines_dir = Path("eval-baselines")
           report_dir = Path("eval-report")
@@ -248,7 +247,7 @@ jobs:
           metrics_dir = Path("eval-metrics")
           baselines_dir = Path("eval-baselines")
           report_dir = Path("eval-report")
-          for name in ("loop", "capability", "refusal"):
+          for name in ("loop", "refusal"):
               run_path = metrics_dir / f"{name}.json"
               verdict_path = report_dir / f"{name}.json"
               if not run_path.exists() or not verdict_path.exists():
@@ -288,7 +287,7 @@ jobs:
           from pathlib import Path
 
           report_dir = Path("eval-report")
-          suites = ["loop", "capability", "refusal"]
+          suites = ["loop", "refusal"]
           verdicts = [
               json.loads((report_dir / f"{name}.json").read_text(encoding="utf-8"))
               for name in suites
@@ -323,7 +322,7 @@ jobs:
           ]
           summary = "\n".join(
               [
-                  "## Nightly eval report (E2/E3/E6)",
+                  "## Nightly eval report (E2/E6)",
                   "",
                   "| Suite | Version | Pass rate | Baseline | Verdict | Reason |",
                   "|---|---|---|---|---|---|",

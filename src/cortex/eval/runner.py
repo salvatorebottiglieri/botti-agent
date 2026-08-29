@@ -24,13 +24,14 @@ from cortex.agentic.events import LoopEvent, TextDeltaEvent
 from cortex.agentic.executor import LoopExecutor
 from cortex.agentic.loop import AgentLoop
 from cortex.agentic.reasoner import Reasoner
-from cortex.config.models import ModelPricing
+from cortex.config.models import ModelPricing, derive_cost
 from cortex.eval.baseline import record_baseline
 from cortex.eval.fixtures import EvalSuite, EvalTask, GoalState, assert_balanced_refusal_suite
 from cortex.eval.grader import GradingResult, grade_goal
 from cortex.eval.judge import TrajectoryJudge, build_judge_client
 from cortex.eval.metrics import SuiteMetrics, TaskMetrics, collect_metrics
 from cortex.eval.sandbox import TaskSandbox, build_sandboxed_tools
+from cortex.llm.models import UsageStats
 from cortex.sessions.interfaces import SessionRepository
 from cortex.sessions.models import Message, MessageRole, Session, SessionState
 from cortex.tools.executor import DefaultToolExecutor
@@ -56,8 +57,14 @@ class TaskResult:
     passed: bool
     message: str
     failures: list[str] = field(default_factory=list)
-    metrics: TaskMetrics = field(default_factory=TaskMetrics)
     judge_verdict: JudgeVerdict | None = None
+    judge_usage: UsageStats | None = None
+    judge_cost_usd: float = 0.0
+
+
+
+
+    metrics: TaskMetrics = field(default_factory=TaskMetrics)
 
 
 @dataclass
@@ -167,6 +174,7 @@ async def run_suite(
     baseline_path: str | Path | None = None,
     pricing: ModelPricing | None = None,
     judge_client: LLMClient | None = None,
+    judge_pricing: ModelPricing | None = None,
 ) -> SuiteResult:
     """Run every task in ``suite`` through the real AgentLoop.
 
@@ -208,6 +216,9 @@ async def run_suite(
         client = LLMClientFactory(settings).create()
         if pricing is None:
             pricing = settings.llm_pricing.get(settings.llm_model)
+        if judge_pricing is None:
+            judge_pricing = settings.llm_pricing.get(settings.llm_judge_model)
+
 
     judge: TrajectoryJudge | None = None
 
@@ -231,9 +242,11 @@ async def run_suite(
             max_iterations=max_iterations,
             pricing=pricing,
             judge=_ensure_judge,
+            judge_pricing=judge_pricing,
         )
         for task in suite.tasks
     ]
+
     metrics = _suite_metrics(results)
     suite_result = SuiteResult(
         suite_name=suite.name,
@@ -260,7 +273,9 @@ async def _run_task(
     max_iterations: int,
     pricing: ModelPricing | None,
     judge: Callable[[], TrajectoryJudge] | None = None,
+    judge_pricing: ModelPricing | None = None,
 ) -> TaskResult:
+
     sandbox = TaskSandbox()
     events: list[LoopEvent] = []
     error: str | None = None
@@ -287,6 +302,8 @@ async def _run_task(
         failures.append(f"loop error: {error}")
     passed = grade.passed and error is None
     judge_verdict: JudgeVerdict | None = None
+    judge_usage: UsageStats | None = None
+    judge_cost_usd: float = 0.0
     if not passed and judge is not None:
         # ADR-0015: the judge runs only on FAILED tasks — the goal state is
         # the only pass/fail oracle, so passed tasks are never judged here.
@@ -301,6 +318,10 @@ async def _run_task(
             )
         except Exception as exc:  # noqa: BLE001 - judging must not crash the suite
             logger.warning("Eval task %s judge failed: %s", task.name, exc)
+        finally:
+            judge_usage = judge().consume_usage()
+            if judge_pricing is not None:
+                judge_cost_usd = derive_cost(judge_usage, judge_pricing)
     return TaskResult(
         name=task.name,
         passed=passed,
@@ -308,7 +329,10 @@ async def _run_task(
         failures=failures,
         metrics=collect_metrics(events, pricing=pricing),
         judge_verdict=judge_verdict,
+        judge_usage=judge_usage,
+        judge_cost_usd=judge_cost_usd,
     )
+
 
 
 def _build_loop(
@@ -380,6 +404,7 @@ def _suite_metrics(results: list[TaskResult]) -> SuiteMetrics:
         tools_used=tools_used,
         total_latency_ms=sum(r.metrics.latency_ms or 0.0 for r in results),
         total_cost_usd=sum(r.metrics.cost_usd for r in results),
+        total_judge_cost_usd=sum(r.judge_cost_usd for r in results),
     )
 
 

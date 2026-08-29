@@ -81,19 +81,24 @@ class ScriptedLLMClient(LLMClient):
 
 
 def scripted_judge_client(
-    failed_task_count: int, scores: dict[str, int] | None = None
+    failed_task_count: int,
+    scores: dict[str, int] | None = None,
+    usage_per_call: UsageStats | None = None,
 ) -> ScriptedLLMClient:
     """A judge client serving consistent order-swap form-fill verdicts.
 
     Each failed task consumes two responses — the forward and reversed
     passes of ``TrajectoryJudge.judge_with_order_swap`` — with identical
     scores, so every verdict is consistent. ``scores`` maps dimension names
-    to Likert scores (default: 3 on every dimension).
+    to Likert scores (default: 3 on every dimension). ``usage_per_call``
+    attaches a :class:`UsageStats` payload to every queued response so
+    tests can assert judge cost accumulation.
     """
     scores = scores or {dim.value: 3 for dim in DEFAULT_DIMENSION_ORDER}
     form = "\n".join(f"{dim.value}: {scores[dim.value]}" for dim in DEFAULT_DIMENSION_ORDER)
+
     client = ScriptedLLMClient()
     for _ in range(failed_task_count):
-        client.queue_text(form)
-        client.queue_text(form)
+        client.queue_text(form, usage=usage_per_call)
+        client.queue_text(form, usage=usage_per_call)
     return client
