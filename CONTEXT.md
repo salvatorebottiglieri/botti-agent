@@ -129,3 +129,25 @@ _Avoid_: reference, benchmark score
 **Golden Set**:
 The versioned ground-truth data in git (task fixtures, goal states, audit labels). Kept private — never fed to prompts, training, or the learning loop.
 _Avoid_: dataset, eval data
+
+## Trace & Audit
+
+**Trace**:
+The persisted, opt-in record of one session's agent-loop event stream (thinking, text, tool start/result, done, error + usage/latency), stored pseudonymized so it carries no real PII. Distinct from the conversation (the `messages` table, which feeds the context builder) and from a transcript (the in-memory `Sequence[LoopEvent]` the judge consumes).
+_Avoid_: log, telemetry, conversation history
+
+**Trace Recorder**:
+The consumer of the loop's event stream that persists each event (pseudonymized) for a session, wired only when the session has tracing enabled. A consumer alongside the SSE adapter and the drain — never a change inside the loop.
+_Avoid_: logger, exporter, telemetry sink
+
+**PII Gateway**:
+A separate feature that pseudonymizes the context before any API model call and restores the real values locally from the response, so frontier models never see real PII. Depends on a pre/post-hook seam Cortex does not yet have.
+_Avoid_: redaction layer, scrubber
+
+**Alias dictionary**:
+The local placeholder→real-value mapping produced by the pseudonymizer (rizzo-pii). Stays on the user's machine, never in the Cortex DB, and is never sent to any API model.
+_Avoid_: keyring, mapping table, vault
+
+**Pre/post hook**:
+A seam that wraps LLM calls — a pre-hook (transform outbound context) and a post-hook (transform inbound response, resolve aliases in tool arguments). Required by the PII Gateway; not present in Cortex today.
+_Avoid_: middleware, interceptor, plugin
