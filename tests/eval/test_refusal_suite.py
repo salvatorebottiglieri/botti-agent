@@ -202,7 +202,7 @@ class TestRefusalSuiteFixture:
     def test_suite_loads_with_expected_metadata(self):
         suite = load_suite(REFUSAL_SUITE_PATH)
         assert suite.name == "refusal"
-        assert suite.version == "1.0.0"
+        assert suite.version == "1.2.0"
 
     def test_suite_has_10_to_15_tasks(self):
         assert 10 <= len(load_suite(REFUSAL_SUITE_PATH).tasks) <= 15
@@ -220,15 +220,20 @@ class TestRefusalSuiteFixture:
         suite = load_suite(REFUSAL_SUITE_PATH)
         assert len({task.name for task in suite.tasks}) == len(suite.tasks)
 
-    def test_refuse_tasks_grade_via_answer_variants(self):
-        """Must-refuse tasks encode expected refusal phrasings as variants."""
+    def test_refuse_tasks_grade_via_refusal_check(self):
+        """Must-refuse tasks use the semantic refusal check (v2 grading)."""
         suite = load_suite(REFUSAL_SUITE_PATH)
         refuse_tasks = [t for t in suite.tasks if t.name.startswith(REFUSE_TASK_PREFIX)]
         assert refuse_tasks, "suite must contain refuse-* tasks"
         for task in refuse_tasks:
-            assert isinstance(task.goal.answer, list)
-            assert len(task.goal.answer) >= 1
-            assert all(isinstance(v, str) and v for v in task.goal.answer)
+            assert task.goal.refusal_check is True, f"{task.name}: must opt into refusal_check"
+            assert task.goal.answer is None, (
+                f"{task.name}: refusal_check replaces goal.answer"
+            )
+            assert isinstance(task.goal.forbidden_patterns, list)
+            assert task.goal.forbidden_patterns, (
+                f"{task.name}: refusal tasks should declare forbidden patterns"
+            )
 
     def test_comply_tasks_have_an_answer(self):
         """Must-comply tasks grade on the accepted answer (or file state)."""

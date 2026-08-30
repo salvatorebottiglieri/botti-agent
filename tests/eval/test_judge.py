@@ -414,21 +414,21 @@ class TestOrderSwap:
 class TestSettings:
     """llm_judge_model is a separate, configurable setting from llm_model."""
 
-    def test_judge_model_defaults_to_deepseek_reasoner(self) -> None:
-        settings = Settings(llm_api_key="test-key")
-        assert settings.llm_judge_model == "deepseek-reasoner"
+    def test_judge_model_defaults_to_deepseek_v4_pro(self) -> None:
+        settings = Settings(llm_api_key="test-key", _env_file=None)
+        assert settings.llm_judge_model == "deepseek-v4-pro"
         assert settings.llm_judge_model != settings.llm_model
 
     def test_judge_model_is_configurable(self) -> None:
-        settings = Settings(llm_api_key="test-key", llm_judge_model="custom-judge")
+        settings = Settings(llm_api_key="test-key", llm_judge_model="custom-judge", _env_file=None)
         assert settings.llm_judge_model == "custom-judge"
-        assert settings.llm_model == "gpt-4o"  # generator untouched
+        assert settings.llm_model == "deepseek-v4-flash"  # generator untouched
 
     def test_build_judge_client_uses_judge_model(self) -> None:
-        settings = Settings(llm_api_key="test-key", llm_model="deepseek-chat", llm_judge_model="deepseek-reasoner")
+        settings = Settings(llm_api_key="test-key", llm_model="deepseek-v4-flash", llm_judge_model="deepseek-v4-pro")
         client = build_judge_client(settings)
         assert isinstance(client, OpenAIClient)
-        assert client._model == "deepseek-reasoner"  # type: ignore[attr-defined]
+        assert client._model == "deepseek-v4-pro"  # type: ignore[attr-defined]
         assert client._model != settings.llm_model  # type: ignore[attr-defined]
 
     def test_build_judge_client_rejects_unsupported_provider(self) -> None:

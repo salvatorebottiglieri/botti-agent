@@ -19,6 +19,13 @@ class TestModelPricing:
         settings = Settings(llm_api_key="test-key")
         assert "gpt-4o" in settings.llm_pricing
 
+    def test_defaults_cover_shipped_v4_models(self):
+        """The shipped generator (v4-flash) and judge (v4-pro) are priced so
+        eval cost tracking never reports zero for the default models."""
+        pricing = Settings(llm_api_key="test-key").llm_pricing
+        assert "deepseek-v4-flash" in pricing
+        assert "deepseek-v4-pro" in pricing
+
     def test_default_prices_are_positive(self):
         for pricing in Settings(llm_api_key="test-key").llm_pricing.values():
             assert pricing.input_per_mtok > 0

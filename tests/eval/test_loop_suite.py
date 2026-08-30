@@ -284,7 +284,7 @@ class TestLoopFixture:
 
     def test_loads_30_tasks(self, loop_suite: EvalSuite) -> None:
         assert loop_suite.name == "loop"
-        assert loop_suite.version == "1.0.0"
+        assert loop_suite.version == "1.1.0"
         assert len(loop_suite.tasks) == TASK_COUNT
 
     def test_task_names_are_unique(self, loop_suite: EvalSuite) -> None:
@@ -305,7 +305,7 @@ class TestLoopFixture:
         for task in _positives(loop_suite):
             assert task.goal.files, f"{task.name}: positive must declare goal files"
             for expected in task.goal.files:
-                assert expected.equals is not None or expected.contains is not None
+                assert expected.equals is not None or expected.contains is not None or expected.json_equals is not None
 
     def test_negative_tasks_declare_answer_variants_and_absent_paths(
         self, loop_suite: EvalSuite
@@ -370,7 +370,7 @@ class TestLoopManifest:
     def test_manifest_matches_fixture(self, loop_suite: EvalSuite) -> None:
         manifest = load_manifest(MANIFEST_PATH)
         assert manifest.suite_name == loop_suite.name == "loop"
-        assert manifest.suite_version == loop_suite.version == "1.0.0"
+        assert manifest.suite_version == loop_suite.version == "1.1.0"
 
     def test_manifest_pins_reasoner_prompt_hash(self) -> None:
         """prompt_version is the hash of the prompt the reasoner actually uses."""
@@ -420,7 +420,7 @@ class TestLoopSuiteEndToEnd:
     ) -> None:
         """Every reference solution reaches its annotated goal state: 100%."""
         assert loop_result.suite_name == "loop"
-        assert loop_result.suite_version == "1.0.0"
+        assert loop_result.suite_version == "1.1.0"
         assert len(loop_result.results) == TASK_COUNT
         assert [r.name for r in loop_result.results] == [
             t.name for t in loop_suite.tasks
@@ -595,3 +595,60 @@ class TestLoopSuiteEndToEnd:
         # A failing hypothetical run drops pass^1 exactly like pass_rate.
         by_task["read-sum-numbers"] = [False]
         assert compute_pass_k(by_task, 1) == pytest.approx(1 - 1 / TASK_COUNT)
+
+    async def test_judge_cost_is_tracked_per_task_and_summarized(
+        self, loop_suite: EvalSuite
+    ) -> None:
+        """T8: judge usage accrues during FAILED tasks and is summarized in SuiteMetrics.
+
+        Each judge call (forward + reverse order-swap) attaches a 100/50 token
+        UsageStats; the failing task incurs 2 judge calls and the passing task
+        incurs zero. Judge pricing $0.0005/Mtok in, $0.0015/Mtok out → cost
+        math is 200/1e6*0.0005 + 100/1e6*0.0015 = 0.00025 per failing task.
+        """
+        failing = next(
+            t for t in loop_suite.tasks if t.name == "neg-ambiguous-which-file"
+        )
+        passing = next(
+            t for t in loop_suite.tasks if t.name == "read-sum-numbers"
+        )
+        client = ScriptedLLMClient()
+        # Failing trajectory: write the absent file instead of asking.
+        client.queue_tool_call("file_read", {"path": "data/a.txt"}, usage=USAGE)
+        client.queue_tool_call(
+            "file_write", {"path": "summary.txt", "content": "alpha"}, usage=USAGE
+        )
+        client.queue_text("Done", usage=USAGE)
+        # Passing trajectory: golden read-sum-numbers.
+        _queue_golden(client, GOLDEN["read-sum-numbers"], USAGE)
+        judge_client = scripted_judge_client(
+            failed_task_count=1, usage_per_call=UsageStats(prompt_tokens=100, completion_tokens=50)
+        )
+        judge_pricing = PRICING  # reuses PRICING ($0.5/Mtok in, $1.5/Mtok out)
+        result = await run_suite(
+            EvalSuite(
+                name=loop_suite.name,
+                version=loop_suite.version,
+                tasks=[failing, passing],
+            ),
+            client,
+            pricing=PRICING,
+            judge_client=judge_client,
+            judge_pricing=judge_pricing,
+        )
+        assert judge_client.exhausted, "judge client must serve exactly the failing pass"
+        by_name = {r.name: r for r in result.results}
+        failed = by_name["neg-ambiguous-which-file"]
+        passed = by_name["read-sum-numbers"]
+        # Failed task: 2 judge calls × (100 in, 50 out) = (200 in, 100 out).
+        assert failed.judge_usage is not None
+        # 200/1e6 * 0.5 + 100/1e6 * 1.5 = 0.0001 + 0.00015 = 0.00025.
+        assert failed.judge_usage.completion_tokens == 100
+
+        assert failed.judge_cost_usd == pytest.approx(0.00025)
+        # Passed task: no judge ran.
+        assert passed.judge_usage is None
+        assert passed.judge_cost_usd == 0.0
+        # Suite total sums per-task judge cost.
+        assert result.metrics.total_judge_cost_usd == pytest.approx(0.00025)
+

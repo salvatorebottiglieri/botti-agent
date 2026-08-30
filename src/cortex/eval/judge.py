@@ -19,8 +19,8 @@ Scoring follows the G-Eval structure (Liu et al., arXiv:2303.16634):
 The rubric text is versioned (:data:`RUBRIC_VERSION`, pinned on the verdict
 and pinned in the eval manifest; the eval test suite asserts the manifest
 pin equals this constant) so score drift is attributable. The judge model is distinct from the generator model
-(``settings.llm_judge_model`` = deepseek-reasoner vs ``llm_model`` =
-deepseek-chat) — the self-enhancement bias guard — configured separately in
+(``settings.llm_judge_model`` = deepseek-v4-pro vs ``llm_model`` =
+deepseek-v4-flash) — the self-enhancement bias guard — configured separately in
 :class:`cortex.config.models.Settings`.
 
 Position-bias guard: the same transcript is judged in both dimension orders
@@ -53,7 +53,7 @@ import yaml
 from cortex.agentic.events import LoopEvent
 from cortex.config.models import Settings
 from cortex.llm.base import LLMClient
-from cortex.llm.models import ChatMessage, Role
+from cortex.llm.models import ChatMessage, Role, UsageStats
 from cortex.llm.providers.openai import OpenAIClient
 
 #: Version of the judge rubric semantics; bump on any rubric/criteria change.
@@ -370,6 +370,27 @@ class TrajectoryJudge:
     def __init__(self, client: LLMClient, rubric: Rubric = DEFAULT_RUBRIC) -> None:
         self._client = client
         self._rubric = rubric
+        self._usage = UsageStats()
+
+    @property
+    def usage(self) -> UsageStats:
+        """Cumulative judge LLM usage accrued so far (per judge instance).
+
+        Tests use this to assert the judge charged for its calls; the
+        runner uses :meth:`consume_usage` for per-task attribution.
+        """
+        return self._usage
+
+    def consume_usage(self) -> UsageStats:
+        """Return and reset accumulated usage (per-task attribution).
+
+        Used by the suite runner to charge judge cost to the task whose
+        transcript was just judged; the next call to the judge starts
+        with a clean UsageStats.
+        """
+        current = self._usage
+        self._usage = UsageStats()
+        return current
 
     async def judge(
         self,
@@ -485,6 +506,8 @@ class TrajectoryJudge:
                 goal_summary,
             )
             result = await self._client.chat(messages)
+            if result.usage is not None:
+                self._usage = self._usage + result.usage
             parsed.append(_parse_sample_verdict(result.message.content or "", dimension_order))
         score_sum: dict[JudgeDimension, float] = {}
         diagnoses_by_dim: dict[JudgeDimension, list[str]] = {}

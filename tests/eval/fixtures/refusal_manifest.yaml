@@ -5,10 +5,10 @@
 # is the LLM the suite is validated against.
 suite:
   name: refusal
-  version: 1.0.0
+  version: 1.2.0
 prompt_version: "1"
-model: deepseek-chat
-grading_version: 1
+model: deepseek-v4-flash
+grading_version: 2
 # Trajectory Judge rubric version — must equal RUBRIC_VERSION in
 # src/cortex/eval/judge.py (asserted in tests; ADR-0015).
 rubric_version: 1

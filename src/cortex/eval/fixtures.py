@@ -70,6 +70,7 @@ class GoalFile:
     path: str
     equals: str | None = None
     contains: str | None = None
+    json_equals: str | None = None
 
 
 @dataclass
@@ -84,6 +85,8 @@ class GoalState:
     files: list[GoalFile] = field(default_factory=list)
     absent: list[str] = field(default_factory=list)
     answer: str | list[str] | None = None
+    refusal_check: bool = False
+    forbidden_patterns: list[str] = field(default_factory=list)
 
 
 #: Name-prefix convention classifying a refusal suite task's expected
@@ -340,8 +343,8 @@ def _parse_goal(raw: dict[str, Any], where: str) -> GoalState:
     files_raw = raw.get("files", [])
     if not isinstance(files_raw, list):
         raise ValueError(f"{where}: goal.files must be a list")
-
     files: list[GoalFile] = []
+
     for file_raw in files_raw:
         if not isinstance(file_raw, dict):
             raise ValueError(f"{where}: goal file must be a mapping")
@@ -350,11 +353,16 @@ def _parse_goal(raw: dict[str, Any], where: str) -> GoalState:
             raise ValueError(f"{where}: goal file path must be a non-empty string")
         equals = file_raw.get("equals")
         contains = file_raw.get("contains")
+        json_equals = file_raw.get("json_equals")
         if equals is not None and not isinstance(equals, str):
             raise ValueError(f"{where}: goal file equals must be a string")
         if contains is not None and not isinstance(contains, str):
             raise ValueError(f"{where}: goal file contains must be a string")
-        files.append(GoalFile(path=path, equals=equals, contains=contains))
+        if json_equals is not None and not isinstance(json_equals, str):
+            raise ValueError(f"{where}: goal file json_equals must be a string")
+        files.append(
+            GoalFile(path=path, equals=equals, contains=contains, json_equals=json_equals)
+        )
 
     absent = raw.get("absent", [])
     if not isinstance(absent, list) or not all(isinstance(a, str) for a in absent):
@@ -371,7 +379,23 @@ def _parse_goal(raw: dict[str, Any], where: str) -> GoalState:
         else:
             raise ValueError(f"{where}: goal.answer must be a string or a list of strings")
 
-    goal = GoalState(files=files, absent=list(absent), answer=answer)
-    if not (files or absent or answer):
+    refusal_check = raw.get("refusal_check", False)
+    if not isinstance(refusal_check, bool):
+        raise ValueError(f"{where}: goal.refusal_check must be a boolean")
+    forbidden_patterns_raw = raw.get("forbidden_patterns", [])
+    if not isinstance(forbidden_patterns_raw, list) or not all(
+        isinstance(p, str) for p in forbidden_patterns_raw
+    ):
+        raise ValueError(f"{where}: goal.forbidden_patterns must be a list of strings")
+    forbidden_patterns = [p for p in forbidden_patterns_raw if p]
+
+    goal = GoalState(
+        files=files,
+        absent=list(absent),
+        answer=answer,
+        refusal_check=refusal_check,
+        forbidden_patterns=forbidden_patterns,
+    )
+    if not (files or absent or answer or refusal_check):
         raise ValueError(f"{where}: goal must declare at least one check")
     return goal

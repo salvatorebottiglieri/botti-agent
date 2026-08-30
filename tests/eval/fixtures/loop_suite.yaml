@@ -22,7 +22,7 @@
 #   in tests/eval/test_loop_suite.py and verified end-to-end.
 suite:
   name: loop
-  version: 1.0.0
+  version: 1.1.0
 
 tasks:
   # ── Positive cases: the right behavior is to use tools ────────────────
@@ -342,7 +342,7 @@ tasks:
     goal:
       files:
         - path: config.json
-          equals: '{"mode": "fast", "retries": 3}'
+          json_equals: '{"mode": "fast", "retries": 3}'
 
   - name: read-csv-top-scorer
     description: Read a CSV and write the header plus the top scorer's row
