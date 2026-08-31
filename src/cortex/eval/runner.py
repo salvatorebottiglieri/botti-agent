@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
 from cortex.agentic.context_builder import ContextBuilder
-from cortex.agentic.events import LoopEvent, TextDeltaEvent
+from cortex.agentic.events import AskUserEvent, LoopEvent, TextDeltaEvent
 from cortex.agentic.executor import LoopExecutor
 from cortex.agentic.loop import AgentLoop
 from cortex.agentic.reasoner import Reasoner
@@ -378,13 +378,16 @@ async def _drive_turn(
     """Run one scripted user turn, recording the transcript.
 
     Returns the final response text, accumulated from TextDeltaEvent deltas
-    in order — consumers must never assume chunk size.
+    in order — consumers must never assume chunk size. A clarifying
+    ``AskUserEvent`` (no text deltas) contributes its question as the response.
     """
     final_text = ""
     async for event in loop.stream_chat(session_id, turn):
         events.append(event)
         if isinstance(event, TextDeltaEvent):
             final_text += event.delta
+        elif isinstance(event, AskUserEvent):
+            final_text += event.question
     return final_text
 
 

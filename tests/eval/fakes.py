@@ -66,6 +66,24 @@ class ScriptedLLMClient(LLMClient):
             raise AssertionError("ScriptedLLMClient ran out of scripted responses")
         return self._responses.pop(0)
 
+    async def chat_stream(
+        self,
+        messages: list[ChatMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        generation_config: GenerationConfig | None = None,
+    ):
+        """Streaming mirror of ``chat``: emits the scripted response's text as a
+        single delta, then the ``ChatResult`` itself as the terminal item."""
+        self.calls.append(list(messages))
+        if not self._responses:
+            raise AssertionError("ScriptedLLMClient ran out of scripted responses")
+        result = self._responses.pop(0)
+        content = result.message.content if result.message else None
+        if content:
+            yield content
+        yield result
+
     def translate_tools(self, tools: list[ToolDefinition]) -> list[dict[str, Any]]:
         return [{"name": tool.name} for tool in tools]
 

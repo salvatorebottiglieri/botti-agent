@@ -378,7 +378,7 @@ class TestExecutionModuleStreamChat:
         ]
 
         class FakeLoop:
-            calls: list[tuple[UUID, str, int | None]] = []
+            calls: list[tuple[UUID, str, int | None, bool]] = []
 
             async def stream_chat(
                 self,
@@ -386,8 +386,9 @@ class TestExecutionModuleStreamChat:
                 user_message: str,
                 *,
                 max_iterations: int | None = None,
+                stream: bool = False,
             ):
-                FakeLoop.calls.append((session_id, user_message, max_iterations))
+                FakeLoop.calls.append((session_id, user_message, max_iterations, stream))
                 for event in scripted:
                     yield event
 
@@ -396,7 +397,34 @@ class TestExecutionModuleStreamChat:
         seen = [event async for event in module.stream_chat(session_id, "hello")]
 
         assert seen == scripted
-        assert FakeLoop.calls == [(session_id, "hello", None)]
+        assert FakeLoop.calls == [(session_id, "hello", None, False)]
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_forwards_stream_flag_to_loop(self):
+        """The `stream` flag is passed through to the agent loop unchanged."""
+        session_id = uuid4()
+
+        class FakeLoop:
+            calls: list[bool] = []
+
+            async def stream_chat(
+                self,
+                session_id: UUID,
+                user_message: str,
+                *,
+                max_iterations: int | None = None,
+                stream: bool = False,
+            ):
+                FakeLoop.calls.append(stream)
+                if False:
+                    yield  # make this an async generator
+
+        module = ExecutionModule(agent_loop=FakeLoop())
+
+        _ = [e async for e in module.stream_chat(session_id, "hi", stream=True)]
+        _ = [e async for e in module.stream_chat(session_id, "hi", stream=False)]
+
+        assert FakeLoop.calls == [True, False]
 
     @pytest.mark.asyncio
     async def test_stream_chat_reraises_max_iterations_after_error_event(self):
@@ -412,6 +440,7 @@ class TestExecutionModuleStreamChat:
                 user_message: str,
                 *,
                 max_iterations: int | None = None,
+                stream: bool = False,
             ):
                 yield ErrorEvent(
                     session_id=session_id,

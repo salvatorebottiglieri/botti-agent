@@ -1,6 +1,7 @@
 """OpenAI LLM client implementation."""
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 import openai
@@ -18,6 +19,26 @@ from cortex.llm.models import (
 from cortex.tools.interfaces import ToolCall, ToolDefinition
 
 logger = logging.getLogger(__name__)
+
+
+def _reasoning_delta(delta: Any) -> str | None:
+    """Extract a reasoning-token delta from a streaming chunk.
+
+    Reasoning models that deliver chain-of-thought out-of-band use a dedicated
+    field (``reasoning_content`` on DeepSeek-R1, ``reasoning`` on some others)
+    rather than inline ``<think>`` tags. The typed SDK delta may expose it as an
+    attribute or only via ``model_extra``; both are checked. Returns None for
+    models that put reasoning inline in ``content`` (nothing to normalize).
+    """
+    for name in ("reasoning_content", "reasoning"):
+        val = getattr(delta, name, None)
+        if val is None:
+            extra = getattr(delta, "model_extra", None)
+            if extra:
+                val = extra.get(name)
+        if val:
+            return val
+    return None
 
 
 class OpenAIClient(LLMClient):
@@ -110,6 +131,146 @@ class OpenAIClient(LLMClient):
         except openai.APIError as e:
             logger.error(f"OpenAI API error: {e}")
             raise
+
+    async def chat_stream(
+        self,
+        messages: list[ChatMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        generation_config: GenerationConfig | None = None,
+    ) -> AsyncIterator[str | ChatResult]:
+        """
+        Streaming variant of ``chat()``.
+
+        Yields text deltas (``str``) as they arrive from the provider, then
+        yields a single final ``ChatResult`` as the terminal item — content,
+        tool calls and usage assembled from the stream. Callers iterate and
+        collect the ``str`` deltas; the only non-``str`` item, yielded last,
+        is the complete ``ChatResult``.
+
+        The same request as ``chat()`` is sent with ``stream=True``; tool-call
+        fragments (spread across chunks by ``index``) are accumulated and
+        re-assembled into internal ``ToolCall`` objects at the end.
+
+        Out-of-band reasoning (a separate ``reasoning_content`` field, not inline
+        ``<think>`` tags) is normalized to the inline convention: it is wrapped in
+        a single ``<think>...</think>`` block and emitted as content deltas, so
+        every downstream consumer — and the UI's reasoning toggle — treats both
+        reasoning-delivery styles identically.
+        """
+        request_kwargs: dict[str, Any] = {
+            "model": self._model,
+            "messages": [self._to_openai_message(m) for m in messages],
+            "stream": True,
+            # Ask for usage on the final chunk (OpenAI-compatible providers).
+            "stream_options": {"include_usage": True},
+        }
+
+        if tools:
+            request_kwargs["tools"] = self.translate_tools(tools)
+
+        if generation_config:
+            request_kwargs.update(generation_config.model_dump(exclude_none=True))
+
+        logger.debug(
+            f"OpenAI stream request: {request_kwargs.get('model')}, {len(messages)} messages"
+        )
+
+        content_parts: list[str] = []
+        # index -> {"id", "name", "arguments"} accumulated across chunks
+        tool_fragments: dict[int, dict[str, str]] = {}
+        finish_reason: str | None = None
+        model_name: str | None = None
+        usage: UsageStats | None = None
+        think_open = False  # True while inside a synthesized <think> block
+
+        try:
+            stream = await self._client.chat.completions.create(**request_kwargs)
+
+            async for chunk in stream:
+                if chunk.model:
+                    model_name = chunk.model
+                if chunk.usage:
+                    usage = UsageStats(
+                        prompt_tokens=chunk.usage.prompt_tokens,
+                        completion_tokens=chunk.usage.completion_tokens,
+                        total_tokens=chunk.usage.total_tokens,
+                    )
+                # The usage-only final chunk carries no choices.
+                if not chunk.choices:
+                    continue
+
+                choice = chunk.choices[0]
+                if choice.finish_reason:
+                    finish_reason = choice.finish_reason
+
+                delta = choice.delta
+
+                # Out-of-band reasoning: open a <think> block on first token.
+                reasoning = _reasoning_delta(delta)
+                if reasoning:
+                    if not think_open:
+                        content_parts.append("<think>")
+                        yield "<think>"
+                        think_open = True
+                    content_parts.append(reasoning)
+                    yield reasoning
+
+                if delta.content:
+                    # Answer text has started — close any open reasoning block.
+                    if think_open:
+                        content_parts.append("</think>")
+                        yield "</think>"
+                        think_open = False
+                    content_parts.append(delta.content)
+                    yield delta.content
+
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        frag = tool_fragments.setdefault(
+                            tc.index, {"id": "", "name": "", "arguments": ""}
+                        )
+                        if tc.id:
+                            frag["id"] = tc.id
+                        if tc.function and tc.function.name:
+                            frag["name"] = tc.function.name
+                        if tc.function and tc.function.arguments:
+                            frag["arguments"] += tc.function.arguments
+
+        except openai.APIError as e:
+            logger.error(f"OpenAI streaming error: {e}")
+            raise
+
+        # Reasoning with no trailing content (e.g. reasoning then a tool call, or
+        # reasoning-only): close the block so the <think> tag is always balanced.
+        if think_open:
+            content_parts.append("</think>")
+            yield "</think>"
+            think_open = False
+
+        tool_calls = None
+        if tool_fragments:
+            tool_calls = [
+                self.translate_tool_call(
+                    {
+                        "id": frag["id"],
+                        "function": {
+                            "name": frag["name"],
+                            "arguments": frag["arguments"],
+                        },
+                    }
+                )
+                for _, frag in sorted(tool_fragments.items())
+            ]
+
+        content = "".join(content_parts) or None
+        yield ChatResult(
+            message=ChatMessage(role=Role.ASSISTANT, content=content),
+            tool_calls=tool_calls,
+            usage=usage,
+            model=model_name,
+            finish_reason=finish_reason,
+        )
 
     def translate_tools(self, tools: list[ToolDefinition]) -> list[dict[str, Any]]:
         """

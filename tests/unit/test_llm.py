@@ -1,5 +1,6 @@
 """Tests for the LLM Client."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,7 +13,55 @@ from cortex.llm import (
     ToolCall,
     ToolDefinition,
 )
+from cortex.llm.models import ChatResult
 from cortex.llm.providers import OpenAIClient
+
+
+# -- Streaming test helpers: mimic OpenAI ChatCompletionChunk shapes ----------
+
+
+def _usage(prompt, completion, total):
+    return SimpleNamespace(
+        prompt_tokens=prompt, completion_tokens=completion, total_tokens=total
+    )
+
+
+def _tc(index, id=None, name=None, args=None):
+    """A streaming tool-call fragment."""
+    return SimpleNamespace(
+        index=index, id=id, function=SimpleNamespace(name=name, arguments=args)
+    )
+
+
+def _chunk(
+    content=None, tool_calls=None, finish=None, usage=None, model="MiniMax-M3",
+    reasoning=None,
+):
+    """A ChatCompletionChunk; usage-only chunks carry no choices. `reasoning`
+    populates the out-of-band `reasoning_content` field on the delta."""
+    if (
+        content is None and tool_calls is None and finish is None
+        and reasoning is None and usage is not None
+    ):
+        choices = []
+    else:
+        delta = SimpleNamespace(
+            content=content, tool_calls=tool_calls, reasoning_content=reasoning
+        )
+        choices = [SimpleNamespace(delta=delta, finish_reason=finish)]
+    return SimpleNamespace(model=model, usage=usage, choices=choices)
+
+
+async def _drain_stream(agen):
+    """Collect str deltas and the terminal ChatResult from chat_stream()."""
+    deltas = []
+    final = None
+    async for item in agen:
+        if isinstance(item, ChatResult):
+            final = item
+        else:
+            deltas.append(item)
+    return deltas, final
 
 
 class TestChatMessage:
@@ -191,6 +240,139 @@ class TestOpenAIClient:
             "function": {"name": "shell", "arguments": json.dumps({"command": "echo hi"})},
         }]
         assert "content" not in assistant_msg  # falsy content omitted for tool-call turns
+
+    async def test_chat_stream_text_only(self):
+        """Text deltas are yielded in order, then a final ChatResult with the
+        joined content and stream usage."""
+        from unittest.mock import AsyncMock, patch
+
+        client = OpenAIClient(api_key="test", model="MiniMax-M3")
+
+        async def fake_stream():
+            yield _chunk(content="Ciao ")
+            yield _chunk(content="mondo", finish="stop")
+            yield _chunk(usage=_usage(4, 2, 6))  # usage-only final chunk, no choices
+
+        with patch.object(
+            client._client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=fake_stream()),
+        ):
+            deltas, final = await _drain_stream(
+                client.chat_stream([ChatMessage(role=Role.USER, content="hi")])
+            )
+
+        assert deltas == ["Ciao ", "mondo"]
+        assert final.message.content == "Ciao mondo"
+        assert final.tool_calls is None
+        assert final.finish_reason == "stop"
+        assert final.usage.total_tokens == 6
+
+    async def test_chat_stream_assembles_fragmented_tool_call(self):
+        """Tool-call fragments spread across chunks (by index) are re-assembled
+        into a single internal ToolCall with parsed arguments."""
+        from unittest.mock import AsyncMock, patch
+
+        client = OpenAIClient(api_key="test", model="MiniMax-M3")
+
+        async def fake_stream():
+            yield _chunk(tool_calls=[_tc(0, id="call_1", name="get_", args='{"a"')])
+            yield _chunk(tool_calls=[_tc(0, args=":1}")])
+            yield _chunk(finish="tool_calls")
+
+        with patch.object(
+            client._client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=fake_stream()),
+        ):
+            deltas, final = await _drain_stream(
+                client.chat_stream([ChatMessage(role=Role.USER, content="hi")])
+            )
+
+        assert deltas == []  # no text deltas on a pure tool-call turn
+        assert final.message.content is None
+        assert final.tool_calls is not None
+        assert len(final.tool_calls) == 1
+        assert final.tool_calls[0].name == "get_"
+        assert final.tool_calls[0].arguments == {"a": 1}
+        assert final.finish_reason == "tool_calls"
+
+    async def test_chat_stream_wraps_out_of_band_reasoning_in_think_tags(self):
+        """Reasoning delivered via reasoning_content is normalized to an inline
+        <think>...</think> block: opened on the first reasoning token, closed
+        when the answer content starts."""
+        from unittest.mock import AsyncMock, patch
+
+        client = OpenAIClient(api_key="test", model="MiniMax-M3")
+
+        async def fake_stream():
+            yield _chunk(reasoning="Let me ")
+            yield _chunk(reasoning="think.")
+            yield _chunk(content="Hello ")
+            yield _chunk(content="world", finish="stop")
+
+        with patch.object(
+            client._client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=fake_stream()),
+        ):
+            deltas, final = await _drain_stream(
+                client.chat_stream([ChatMessage(role=Role.USER, content="hi")])
+            )
+
+        # <think> opens, reasoning streams, </think> closes before the answer.
+        assert deltas == ["<think>", "Let me ", "think.", "</think>", "Hello ", "world"]
+        assert final.message.content == "<think>Let me think.</think>Hello world"
+        assert final.finish_reason == "stop"
+
+    async def test_chat_stream_closes_think_when_reasoning_has_no_content(self):
+        """Reasoning followed by a tool call (no answer text) still yields a
+        balanced <think>...</think> block, closed at end of stream."""
+        from unittest.mock import AsyncMock, patch
+
+        client = OpenAIClient(api_key="test", model="MiniMax-M3")
+
+        async def fake_stream():
+            yield _chunk(reasoning="I should call a tool.")
+            yield _chunk(tool_calls=[_tc(0, id="call_1", name="search", args="{}")])
+            yield _chunk(finish="tool_calls")
+
+        with patch.object(
+            client._client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=fake_stream()),
+        ):
+            deltas, final = await _drain_stream(
+                client.chat_stream([ChatMessage(role=Role.USER, content="hi")])
+            )
+
+        assert deltas == ["<think>", "I should call a tool.", "</think>"]
+        assert final.message.content == "<think>I should call a tool.</think>"
+        assert final.tool_calls is not None
+        assert final.tool_calls[0].name == "search"
+
+    async def test_chat_stream_leaves_inline_think_untouched(self):
+        """A model that already emits inline <think> in content is passed
+        through verbatim — no double-wrapping."""
+        from unittest.mock import AsyncMock, patch
+
+        client = OpenAIClient(api_key="test", model="MiniMax-M3")
+
+        async def fake_stream():
+            yield _chunk(content="<think>inline</think>")
+            yield _chunk(content="Answer", finish="stop")
+
+        with patch.object(
+            client._client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=fake_stream()),
+        ):
+            deltas, final = await _drain_stream(
+                client.chat_stream([ChatMessage(role=Role.USER, content="hi")])
+            )
+
+        assert deltas == ["<think>inline</think>", "Answer"]
+        assert final.message.content == "<think>inline</think>Answer"
 
 
 class TestLLMClientFactory:

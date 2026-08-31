@@ -14,8 +14,8 @@
 #   behavior is to use the four meta tools (file_read / file_write / grep /
 #   shell) against the sandbox files to reach the goal files state.
 # - 8 negative tasks (name prefix `neg-`): the right behavior is to NOT use
-#   tools — ask clarification via [QUESTION], or respond without writing the
-#   artifact. Encoded via goal.answer clarification/refusal variants +
+#   file/shell tools — ask clarification via the ask_user tool, or respond
+#   without writing the artifact. Encoded via goal.answer clarification/refusal variants +
 #   goal.absent paths (must-not-happen artifacts); any goal.files check on a
 #   negative only asserts a sandbox input is preserved.
 # - Every task is achievable with the tools: reference solutions are scripted

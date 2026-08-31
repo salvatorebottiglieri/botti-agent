@@ -40,6 +40,10 @@ class ToolResult:
     error_severity: ToolErrorSeverity | None = None
     execution_time_ms: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Optional control signal that interrupts the agent loop instead of feeding
+    # the result back for another iteration (e.g. "ask_user" halts to ask the
+    # user a clarifying question). None for ordinary tools that just return data.
+    control: str | None = None
 
 
 @dataclass

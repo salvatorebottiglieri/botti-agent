@@ -92,6 +92,22 @@ class TestToolResult:
         )
         assert result.error_severity == ToolErrorSeverity.WARNING
 
+    def test_control_defaults_to_none(self):
+        """Ordinary tool results carry no control signal."""
+        result = ToolResult(tool_call_id="call-123", tool_name="read", success=True)
+        assert result.control is None
+
+    def test_control_signal_can_be_set(self):
+        """A tool can flag a loop-interrupting control signal (e.g. ask_user)."""
+        result = ToolResult(
+            tool_call_id="call-123",
+            tool_name="ask_user",
+            success=True,
+            output="Which file?",
+            control="ask_user",
+        )
+        assert result.control == "ask_user"
+
 
 class TestToolDefinition:
     """Tests for ToolDefinition dataclass."""

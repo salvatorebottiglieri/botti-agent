@@ -1,12 +1,14 @@
 """Meta tools - built-in tools for the agent."""
 
 from cortex.tools.interfaces import Tool, ToolRegistry
+from cortex.tools.meta.ask_user import AskUserTool
 from cortex.tools.meta.file_read import FileReadTool
 from cortex.tools.meta.file_write import FileWriteTool
 from cortex.tools.meta.grep import GrepTool
 from cortex.tools.meta.shell import ShellTool
 
 __all__ = [
+    "AskUserTool",
     "FileReadTool",
     "FileWriteTool",
     "GrepTool",
@@ -24,6 +26,7 @@ def register_meta_tools(registry: ToolRegistry) -> list[str]:
         FileWriteTool(),
         GrepTool(),
         ShellTool(),
+        AskUserTool(),
     ])
 
     return registrar.registered
@@ -36,4 +39,5 @@ def get_meta_tools() -> list[Tool]:
         FileWriteTool(),
         GrepTool(),
         ShellTool(),
+        AskUserTool(),
     ]

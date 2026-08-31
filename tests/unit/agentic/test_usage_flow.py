@@ -76,13 +76,13 @@ class TestReasonerThreadsUsage:
         )
 
     @pytest.mark.asyncio
-    async def test_ask_question_decision_carries_usage(self, reasoner, client):
+    async def test_respond_decision_carries_usage(self, reasoner, client):
         client.chat = AsyncMock(return_value=_chat_result(
-            content="[QUESTION]Which file?[/QUESTION]",
+            content="Here is the answer.",
             usage=UsageStats(prompt_tokens=5, completion_tokens=1, total_tokens=6),
         ))
         decision = await reasoner.reason(Context(session_id=uuid4()))
-        assert decision.decision_type == DecisionType.ASK_QUESTION
+        assert decision.decision_type == DecisionType.RESPOND
         assert decision.usage == UsageStats(
             prompt_tokens=5, completion_tokens=1, total_tokens=6
         )
@@ -153,19 +153,6 @@ class TestLoopStreamsUsage:
         done = events[-1]
         assert done.usage == UsageStats(
             prompt_tokens=110, completion_tokens=55, total_tokens=165
-        )
-
-    @pytest.mark.asyncio
-    async def test_ask_question_done_event_carries_usage(self):
-        loop, _cb, reasoner, _ex = self._loop()
-        reasoner.reason = AsyncMock(return_value=Decision.ask_question(
-            "Which?",
-            usage=UsageStats(prompt_tokens=4, completion_tokens=2, total_tokens=6),
-        ))
-        events = [e async for e in loop.stream_chat(uuid4(), "Hmm")]
-        done = events[-1]
-        assert done.usage == UsageStats(
-            prompt_tokens=4, completion_tokens=2, total_tokens=6
         )
 
     @pytest.mark.asyncio

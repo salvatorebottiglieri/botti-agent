@@ -108,6 +108,7 @@ class ExecutionModule:
         user_message: str,
         *,
         max_iterations: int | None = None,
+        stream: bool = False,
     ) -> AsyncGenerator[LoopEvent, None]:
         """
         Stream chat progress events as a transparent passthrough.
@@ -121,6 +122,8 @@ class ExecutionModule:
             session_id: Current session
             user_message: User's message
             max_iterations: Optional iteration limit
+            stream: When True, the response text is emitted token-by-token
+                (one TextDeltaEvent per delta); forwarded to the agent loop.
 
         Yields:
             LoopEvent progress signals (thinking, tool_start, tool_done,
@@ -130,6 +133,7 @@ class ExecutionModule:
             session_id=session_id,
             user_message=user_message,
             max_iterations=max_iterations,
+            stream=stream,
         ):
             yield event
 

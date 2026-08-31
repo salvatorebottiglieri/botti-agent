@@ -19,7 +19,13 @@ from typing import Any
 
 from cortex.eval.fixtures import SandboxFile
 from cortex.tools.interfaces import Tool, ToolDefinition, ToolResult
-from cortex.tools.meta import FileReadTool, FileWriteTool, GrepTool, ShellTool
+from cortex.tools.meta import (
+    AskUserTool,
+    FileReadTool,
+    FileWriteTool,
+    GrepTool,
+    ShellTool,
+)
 
 
 class SandboxEscapeError(ValueError):
@@ -125,8 +131,12 @@ class SandboxedTool(Tool):
 
 
 def build_sandboxed_tools(sandbox: TaskSandbox) -> list[Tool]:
-    """The four meta tools (file_read, file_write, grep, shell), sandboxed."""
+    """The four file/shell meta tools, sandboxed, plus ask_user.
+
+    ``ask_user`` needs no sandboxing (it touches no filesystem or shell), so it
+    is added unwrapped — the agent can ask a clarifying question in any task.
+    """
     return [
         SandboxedTool(tool, sandbox)
         for tool in (FileReadTool(), FileWriteTool(), GrepTool(), ShellTool())
-    ]
+    ] + [AskUserTool()]

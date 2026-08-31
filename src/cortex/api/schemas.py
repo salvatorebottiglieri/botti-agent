@@ -43,6 +43,13 @@ class ChatRequest(BaseModel):
     session_id: UUID | None = Field(None, description="Existing session ID")
     mode: Literal["chat", "goal"] = Field("chat", description="Execution mode")
     max_iterations: int | None = Field(None, description="Max iterations (default: 20)")
+    stream: bool = Field(
+        True,
+        description=(
+            "Stream the response token-by-token (SSE endpoint only). When False, "
+            "the response text arrives as a single text event."
+        ),
+    )
 
 
 class ChatResponse(BaseModel):
