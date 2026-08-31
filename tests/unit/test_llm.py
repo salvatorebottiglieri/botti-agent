@@ -16,7 +16,6 @@ from cortex.llm import (
 from cortex.llm.models import ChatResult
 from cortex.llm.providers import OpenAIClient
 
-
 # -- Streaming test helpers: mimic OpenAI ChatCompletionChunk shapes ----------
 
 

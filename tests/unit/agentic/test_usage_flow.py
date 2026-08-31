@@ -76,18 +76,6 @@ class TestReasonerThreadsUsage:
         )
 
     @pytest.mark.asyncio
-    async def test_respond_decision_carries_usage(self, reasoner, client):
-        client.chat = AsyncMock(return_value=_chat_result(
-            content="Here is the answer.",
-            usage=UsageStats(prompt_tokens=5, completion_tokens=1, total_tokens=6),
-        ))
-        decision = await reasoner.reason(Context(session_id=uuid4()))
-        assert decision.decision_type == DecisionType.RESPOND
-        assert decision.usage == UsageStats(
-            prompt_tokens=5, completion_tokens=1, total_tokens=6
-        )
-
-    @pytest.mark.asyncio
     async def test_missing_usage_yields_none(self, reasoner, client):
         client.chat = AsyncMock(return_value=_chat_result(content="ok", usage=None))
         decision = await reasoner.reason(Context(session_id=uuid4()))

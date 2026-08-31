@@ -37,7 +37,7 @@ def _reasoning_delta(delta: Any) -> str | None:
             if extra:
                 val = extra.get(name)
         if val:
-            return val
+            return str(val)
     return None
 
 
