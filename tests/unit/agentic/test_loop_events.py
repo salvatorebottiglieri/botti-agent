@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from cortex.agentic.events import (
+    AskUserEvent,
     ErrorEvent,
     LoopEvent,
     ResponseDoneEvent,
@@ -23,6 +24,7 @@ WIRE_NAMES = {
     ToolStartEvent: "tool_start",
     ToolResultEvent: "tool_done",
     ResponseDoneEvent: "done",
+    AskUserEvent: "ask_user",
     ErrorEvent: "error",
 }
 
@@ -48,6 +50,11 @@ def _sample_events(session_id: UUID) -> list[LoopEvent]:
             message="All done",
             tools_used=["web_search", "calculator"],
             iterations=3,
+        ),
+        AskUserEvent(
+            session_id=session_id,
+            question="Which file did you mean?",
+            options=["a.txt", "b.txt"],
         ),
         ErrorEvent(session_id=session_id, error="boom", code="max_iterations"),
     ]
@@ -95,6 +102,7 @@ class TestEventContract:
             "tool_start",
             "tool_done",
             "done",
+            "ask_user",
             "error",
         }
         for cls, name in WIRE_NAMES.items():
@@ -335,6 +343,32 @@ class TestResponseDoneEvent:
         assert payload["usage"] is None
         assert payload["latency_ms"] is None
         json.dumps(payload)
+
+
+class TestAskUserEvent:
+    """Tests for AskUserEvent."""
+
+    def test_wire_name(self):
+        event = AskUserEvent(session_id=uuid4(), question="Which one?")
+        assert event.event_type == "ask_user"
+
+    def test_question_required(self):
+        with pytest.raises(TypeError):
+            AskUserEvent(session_id=uuid4())  # type: ignore[call-arg]
+
+    def test_options_default_empty(self):
+        event = AskUserEvent(session_id=uuid4(), question="Which one?")
+        assert event.options == []
+
+    def test_options_carried_in_payload(self):
+        event = AskUserEvent(
+            session_id=uuid4(), question="Which file?", options=["a.txt", "b.txt"]
+        )
+        payload = event.to_dict()
+        assert payload["event_type"] == "ask_user"
+        assert payload["question"] == "Which file?"
+        assert payload["options"] == ["a.txt", "b.txt"]
+        json.dumps(payload)  # JSON-ready
 
 
 class TestErrorEvent:

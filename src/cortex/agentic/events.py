@@ -11,6 +11,7 @@ table:
 * ``tool_start``  — a tool call is about to execute
 * ``tool_done``   — a tool call finished (success or failure)
 * ``done``        — the response is complete
+* ``ask_user``    — the loop paused to ask the user a clarifying question
 * ``error``       — the loop failed
 
 Instances are JSON-ready via :meth:`LoopEvent.to_dict`.
@@ -106,6 +107,21 @@ class ResponseDoneEvent(LoopEvent):
         if self.usage is not None:
             payload["usage"] = self.usage.model_dump()
         return payload
+
+
+@dataclass
+class AskUserEvent(LoopEvent):
+    """The loop is pausing to ask the user a clarifying question.
+
+    Emitted when the model calls the ``ask_user`` tool. `options`, when
+    non-empty, are model-suggested answers the UI can render as choices.
+    Terminal for the turn, like ``done`` — the loop stops and waits for the
+    user's next message.
+    """
+
+    event_type: ClassVar[str] = "ask_user"
+    question: str
+    options: list[str] = field(default_factory=list)
 
 
 @dataclass

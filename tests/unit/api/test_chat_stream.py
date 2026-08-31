@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cortex.agentic.events import (
+    AskUserEvent,
     ErrorEvent,
     ResponseDoneEvent,
     TextDeltaEvent,
@@ -59,7 +60,7 @@ class FakeExecutionModule:
     ):
         self._events = events or []
         self._exc = exc
-        self.calls: list[tuple[UUID, str, int | None]] = []
+        self.calls: list[tuple[UUID, str, int | None, bool]] = []
 
     async def stream_chat(
         self,
@@ -67,8 +68,9 @@ class FakeExecutionModule:
         user_message: str,
         *,
         max_iterations: int | None = None,
+        stream: bool = False,
     ):
-        self.calls.append((session_id, user_message, max_iterations))
+        self.calls.append((session_id, user_message, max_iterations, stream))
         if self._exc is not None:
             raise self._exc
         for event in self._events:
@@ -150,7 +152,40 @@ class TestChatStreamSSE:
             ("text", {"delta": "Hello there!"}),
             ("done", {"final_message": "Hello there!", "tool_calls": [], "iterations": 1}),
         ]
-        assert fake_exec.calls == [(session_id, "hi", 20)]
+        assert fake_exec.calls == [(session_id, "hi", 20, True)]
+
+    def test_stream_flag_defaults_true_and_honors_false(self):
+        """The `stream` flag reaches execution_module.stream_chat: defaults to
+        True, and a request setting it False is forwarded as False."""
+        session_id = uuid4()
+
+        # Default (omitted) -> True
+        fake_default = FakeExecutionModule([
+            ResponseDoneEvent(session_id=session_id, message="ok", tools_used=[], iterations=0),
+        ])
+        client = build_client(
+            fake_default, FakeInteractionService(existing_session=Session(id=session_id))
+        )
+        client.post(
+            "/chat/stream",
+            json={"message": "hi", "session_id": str(session_id)},
+            headers=AUTH_HEADERS,
+        )
+        assert fake_default.calls[0][3] is True
+
+        # Explicit stream=False -> False
+        fake_off = FakeExecutionModule([
+            ResponseDoneEvent(session_id=session_id, message="ok", tools_used=[], iterations=0),
+        ])
+        client = build_client(
+            fake_off, FakeInteractionService(existing_session=Session(id=session_id))
+        )
+        client.post(
+            "/chat/stream",
+            json={"message": "hi", "session_id": str(session_id), "stream": False},
+            headers=AUTH_HEADERS,
+        )
+        assert fake_off.calls[0][3] is False
 
     def test_multiple_text_deltas_yield_one_frame_each_in_order(self):
         """Two TextDeltaEvents produce two text frames in order — text
@@ -180,6 +215,67 @@ class TestChatStreamSSE:
             ("text", {"delta": "world!"}),
             ("done", {"final_message": "Hello world!", "tool_calls": [], "iterations": 1}),
         ]
+
+    def test_ask_user_frame_carries_question_and_options(self):
+        """An AskUserEvent maps to an `ask_user` frame with question + options,
+        followed by the terminal `done` frame."""
+        session_id = uuid4()
+        fake_exec = FakeExecutionModule([
+            ThinkingEvent(session_id=session_id, message="Need info."),
+            AskUserEvent(
+                session_id=session_id,
+                question="Which file did you mean?",
+                options=["a.txt", "b.txt"],
+            ),
+            ResponseDoneEvent(
+                session_id=session_id,
+                message="Which file did you mean?",
+                tools_used=[],
+                iterations=0,
+            ),
+        ])
+        fake_interaction = FakeInteractionService(existing_session=Session(id=session_id))
+        client = build_client(fake_exec, fake_interaction)
+
+        response = client.post(
+            "/chat/stream",
+            json={"message": "open the file", "session_id": str(session_id)},
+            headers=AUTH_HEADERS,
+        )
+
+        assert parse_sse(response.text) == [
+            ("thinking", {"message": "Need info."}),
+            ("ask_user", {
+                "question": "Which file did you mean?",
+                "options": ["a.txt", "b.txt"],
+            }),
+            ("done", {
+                "final_message": "Which file did you mean?",
+                "tool_calls": [],
+                "iterations": 0,
+            }),
+        ]
+
+    def test_ask_user_frame_options_default_empty(self):
+        """An ask_user with no options serializes options as an empty list."""
+        session_id = uuid4()
+        fake_exec = FakeExecutionModule([
+            AskUserEvent(session_id=session_id, question="A or B?"),
+            ResponseDoneEvent(
+                session_id=session_id, message="A or B?", tools_used=[], iterations=0
+            ),
+        ])
+        fake_interaction = FakeInteractionService(existing_session=Session(id=session_id))
+        client = build_client(fake_exec, fake_interaction)
+
+        response = client.post(
+            "/chat/stream",
+            json={"message": "pick", "session_id": str(session_id)},
+            headers=AUTH_HEADERS,
+        )
+
+        frames = parse_sse(response.text)
+        assert frames[0] == ("ask_user", {"question": "A or B?", "options": []})
 
     def test_tool_round_interleaves_start_done_pairs(self):
         """ToolStartEvent/ToolResultEvent interleave as paired frames carrying

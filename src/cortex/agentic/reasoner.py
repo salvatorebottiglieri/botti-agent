@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import re
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 from cortex.agentic.models import (
@@ -20,8 +20,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-QUESTION_PATTERN = re.compile(r"\[QUESTION\](.*?)\[/QUESTION\]", re.DOTALL)
-
 
 _MESSAGE_ROLE_TO_LLM_ROLE: dict[str, Role] = {
     MessageRole.SYSTEM.value: Role.SYSTEM,
@@ -37,8 +35,8 @@ class Reasoner:
 
     Given context, decides what to do next:
     - RESPOND: Done, return text to user
-    - EXECUTE_TOOLS: Execute tools, continue loop
-    - ASK_QUESTION: Need clarification
+    - EXECUTE_TOOLS: Execute tools, continue loop (clarifying questions are one
+      such tool — ask_user)
     """
 
     def __init__(
@@ -57,8 +55,8 @@ class Reasoner:
             "You are Cortex, an intelligent AI assistant. "
             "When a tool fits the user's request, call it; otherwise respond directly. "
             "Always be helpful, concise, and precise. "
-            "If you need clarification from the user, respond with "
-            "[QUESTION]your question here[/QUESTION] and nothing else."
+            "When you lack the information to proceed, call the ask_user tool to "
+            "ask a clarifying question instead of guessing."
         )
 
     async def reason(self, context: Context) -> Decision:
@@ -82,6 +80,43 @@ class Reasoner:
             return Decision.respond(
                 text="I encountered an error. Please try again.",
                 reasoning=f"LLM error: {str(e)}"
+            )
+
+    async def reason_stream(
+        self, context: Context
+    ) -> AsyncIterator[str | Decision]:
+        """
+        Streaming variant of ``reason()``.
+
+        Yields text deltas (``str``) as the LLM produces them, then yields the
+        final ``Decision`` as the terminal item — the same decision ``reason()``
+        would return, built by ``_parse_response`` on the assembled result.
+
+        Only a plain text answer streams token-by-token. Tool-call turns carry
+        no assistant text, so they surface solely through the final Decision —
+        this includes clarifying questions, which the model asks by calling the
+        ``ask_user`` tool (no text is streamed for them).
+        """
+        messages = self._build_prompt(context)
+        tools = context.tools if context.tools else None
+
+        try:
+            final_result: ChatResult | None = None
+
+            async for item in self._llm.chat_stream(messages, tools=tools):
+                if isinstance(item, ChatResult):
+                    final_result = item
+                else:
+                    yield item
+
+            if final_result is None:
+                raise ValueError("Stream ended without a final result")
+            yield self._parse_response(final_result, context)
+        except Exception as e:
+            logger.error(f"Reasoner streaming error: {e}")
+            yield Decision.respond(
+                text="I encountered an error. Please try again.",
+                reasoning=f"LLM error: {str(e)}",
             )
 
     def _build_prompt(self, context: Context) -> list[ChatMessage]:
@@ -176,17 +211,8 @@ class Reasoner:
                 usage=result.usage,
             )
 
-        match = QUESTION_PATTERN.search(content)
-        if match:
-            question = match.group(1).strip()
-            if not question:
-                raise ValueError("LLM signaled clarification with no question")
-            return Decision.ask_question(
-                question=question,
-                reasoning="LLM signaled need for clarification",
-                usage=result.usage,
-            )
-
+        # Clarifying questions are no longer parsed from text markers — the model
+        # asks via the ask_user tool, handled as a tool call above.
         return Decision.respond(
             text=content,
             reasoning="Direct response to user",

@@ -6,8 +6,9 @@ goal state (expected sandbox filesystem state). Pass/fail is the
 deterministic goal-state comparison (ADR-0015) — no LLM judge. The golden
 set is balanced: 22 positive tool-using tasks (file_read / file_write /
 grep / shell) and 8 negative tasks whose correct behavior is to NOT use
-tools — ask clarification via [QUESTION] or respond without writing the
-artifact (goal.answer clarification variants + goal.absent).
+file/shell tools — ask clarification via the ask_user tool or respond
+without writing the artifact (goal.answer clarification variants +
+goal.absent).
 
 All tests run through the real harness with the scripted LLM client —
 never a real API.
@@ -58,8 +59,8 @@ COST_PER_CALL = 0.000325
 #: reach the goal state through the real loop, in order. Each step is one
 #: chat call: ("tool", name, arguments) executes a real tool call,
 #: ("text", ...) ends the turn with a response, ("question", ...) ends the
-#: turn via the [QUESTION] clarification path. Reference solutions are
-#: verified end-to-end by TestLoopSuiteEndToEnd.
+#: turn by calling the ask_user tool to ask for clarification. Reference
+#: solutions are verified end-to-end by TestLoopSuiteEndToEnd.
 GOLDEN: dict[str, list[tuple[str, ...]]] = {
     # ── Positive: tool-using tasks (file_read / file_write / grep / shell) ──
     "read-sum-numbers": [
@@ -214,7 +215,7 @@ def _queue_golden(client: ScriptedLLMClient, steps: list[tuple[str, ...]], usage
         elif kind == "text":
             client.queue_text(step[1], usage=usage)
         elif kind == "question":
-            client.queue_text(f"[QUESTION]{step[1]}[/QUESTION]", usage=usage)
+            client.queue_tool_call("ask_user", {"question": step[1]}, usage=usage)
         else:
             raise AssertionError(f"unknown golden step kind: {kind!r}")
 

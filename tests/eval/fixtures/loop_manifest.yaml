@@ -10,7 +10,7 @@ suite:
 # SHA-256 of the reasoner default system prompt
 # (src/cortex/agentic/reasoner.py, Reasoner._default_system_prompt()).
 # Recompute and bump whenever the prompt text changes.
-prompt_version: a7e52a6d5839c8443e272e5cf57722ed6c4ae2062e31d60e1c996edcd5508021
+prompt_version: fb36a12b6618b91717d4dc8526321f018219488cc9e7d58ea5461d3d9a8dd7eb
 
 # The model this suite targets — settings llm_model (config.yaml: llm.model).
 model: deepseek-v4-flash

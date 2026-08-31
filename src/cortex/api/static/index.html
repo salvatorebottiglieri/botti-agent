@@ -127,7 +127,22 @@
   }
   .tool.ok { color: var(--accent); border-color: rgba(94,234,212,.3); }
   .tool.fail { color: var(--danger); border-color: rgba(248,113,113,.3); }
-  .tool pre { display: none; }
+  .tool { cursor: default; }
+  .tool.expandable { cursor: pointer; border-radius: 8px; }
+  .tool pre { display: none; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 6px; background: rgba(0,0,0,.4); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 11px; line-height: 1.4; max-width: 520px; }
+  .tool.expanded { border-radius: 8px; }
+  .tool.expanded pre { display: block; }
+  .options { align-self: flex-start; display: flex; flex-wrap: wrap; gap: 8px; max-width: 82%; }
+  .option {
+    font-size: 13px; color: var(--accent); background: var(--accent-dim);
+    border: 1px solid rgba(94,234,212,.35); border-radius: 999px; padding: 6px 14px;
+    cursor: pointer; transition: background .15s, color .15s;
+  }
+  .option:hover { background: #17483f; color: #d9fbf3; }
+  .think-toggle { align-self: flex-start; background: none; border: none; color: var(--muted); font-size: 12px; cursor: pointer; padding: 0; display: flex; align-items: center; gap: 4px; }
+  .think-toggle:hover { color: var(--text); }
+  .think-block { display: none; align-self: flex-start; max-width: 82%; background: rgba(255,255,255,.02); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 12px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; font-style: italic; line-height: 1.5; }
+  .think-block.visible { display: block; }
   footer { border-top: 1px solid var(--border); background: var(--surface); padding: 12px 20px 16px; }
   .bar { max-width: 760px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; }
   textarea {
@@ -184,7 +199,16 @@ const LS = {
 
 const inner = $("inner"), input = $("input"), sendBtn = $("send"), banner = $("banner");
 let busy = false;
-let toolChips = []; // {el, count} current turn's tool chips
+// Streaming render state for the current assistant turn. Text runs and tool
+// output interleave in DOM order: each text run is its own bubble, opened
+// lazily when text arrives, and closed when a tool (or ask_user) interrupts —
+// so the next text lands *below* the tools, chronologically.
+let curTextEl = null;   // open assistant text bubble, or null
+let curRaw = "";        // raw text accumulated into curTextEl
+let curToggle = null;   // <think> toggle button for the current bubble
+let curThink = null;    // <think> content block for the current bubble
+let toolGroup = null;   // current tools row wrap, or null
+let thinkingEl = null;  // transient "sto pensando…" indicator, or null
 
 function setStatus(on, text) { $("dot").classList.toggle("on", on); $("stext").textContent = text; }
 function showBanner(msg) { if (!msg) { banner.style.display = "none"; return; } banner.textContent = msg; banner.style.display = "block"; }
@@ -298,6 +322,50 @@ function renderMarkdown(text) {
   return out.join("").replace(/\u0000B(\d+)\u0000/g, (m, n) => blocks[+n]);
 }
 
+function extractThink(text) {
+  const parts = [];
+  let clean = text.replace(/<think>([\s\S]*?)<\/think>/g, (_, c) => { parts.push(c); return ""; });
+  clean = clean.replace(/<think>([\s\S]*)$/, (_, c) => { parts.push(c); return ""; });
+  return { clean: clean.replace(/^\s+/, ""), think: parts.join("\n\n") };
+}
+
+// Text-segment lifecycle: open a fresh assistant bubble lazily, close it so a
+// following tool round (or the next text run) lands below it in DOM order.
+function openText() {
+  if (curTextEl) return curTextEl;
+  curTextEl = addMsg("assistant", "");
+  curRaw = ""; curToggle = null; curThink = null;
+  toolGroup = null;  // tools after this text start a new row below it
+  return curTextEl;
+}
+function closeText() { curTextEl = null; }
+
+// Render the current segment's raw text, splitting off any <think> block into a
+// collapsible toggle attached to the current bubble.
+function renderCurrent() {
+  const { clean, think } = extractThink(curRaw);
+  if (think) { ensureThink(); curThink.textContent = think; }
+  curTextEl.dataset.raw = clean;
+  curTextEl.innerHTML = renderMarkdown(clean);
+}
+
+function ensureThink() {
+  if (curToggle) return;
+  curToggle = document.createElement("button");
+  curToggle.className = "think-toggle";
+  curToggle.textContent = "▸ mostra ragionamento";
+  curThink = document.createElement("div");
+  curThink.className = "think-block";
+  curTextEl.after(curToggle);
+  curToggle.after(curThink);
+  curToggle.addEventListener("click", () => {
+    const vis = curThink.classList.toggle("visible");
+    curToggle.textContent = (vis ? "▾ nascondi" : "▸ mostra") + " ragionamento";
+  });
+}
+
+function dropThinking() { if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; } }
+
 function addMsg(cls, text) {
   const el = document.createElement("div");
   el.className = "msg " + cls;
@@ -317,12 +385,40 @@ function addThinking() {
 }
 
 function addTool(name, ok, out) {
-  const wrap = toolChips.length ? toolChips[toolChips.length - 1].wrap : null;
   const chip = document.createElement("span");
   chip.className = "tool " + (ok ? "ok" : "fail");
   chip.textContent = (ok ? "✓ " : "✗ ") + name;
-  if (out) { const pre = document.createElement("pre"); pre.textContent = out; chip.appendChild(pre); chip.title = out.slice(0, 300); }
-  if (wrap) wrap.appendChild(chip); else { const w = document.createElement("div"); w.className = "tools"; w.appendChild(chip); inner.appendChild(w); toolChips.push({ wrap: w }); }
+  if (out) {
+    chip.classList.add("expandable");
+    chip.classList.add("expanded");  // output visible by default; click to collapse
+    const pre = document.createElement("pre");
+    pre.textContent = out;
+    chip.appendChild(pre);
+    chip.addEventListener("click", () => chip.classList.toggle("expanded"));
+  }
+  // Consecutive tool results (same iteration) share a row; a text run in
+  // between resets toolGroup, so the next round opens a fresh row below it.
+  if (!toolGroup) { toolGroup = document.createElement("div"); toolGroup.className = "tools"; inner.appendChild(toolGroup); }
+  toolGroup.appendChild(chip);
+  scroll();
+}
+
+function renderOptions(options) {
+  const wrap = document.createElement("div");
+  wrap.className = "options";
+  for (const opt of options) {
+    const btn = document.createElement("button");
+    btn.className = "option";
+    btn.textContent = opt;
+    btn.addEventListener("click", () => {
+      if (busy) return;              // wait until the turn finished
+      wrap.remove();                 // consume the choices once one is picked
+      input.value = opt;
+      send();
+    });
+    wrap.appendChild(btn);
+  }
+  inner.appendChild(wrap);
   scroll();
 }
 
@@ -336,7 +432,7 @@ function renderHistory(messages) {
   }
 }
 
-function handleFrame(frame, assistantEl, thinkingEl, onDone) {
+function handleFrame(frame, onDone) {
   const ev = /^event: (.*)$/m.exec(frame)?.[1];
   const dl = frame.split("\n").find((l) => l.startsWith("data: "));
   if (!ev || !dl) return;
@@ -346,27 +442,51 @@ function handleFrame(frame, assistantEl, thinkingEl, onDone) {
       if (thinkingEl) thinkingEl.textContent = data.message || "sto pensando…";
       break;
     case "text":
-      if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
-      assistantEl.classList.add("streaming");
-      assistantEl.dataset.raw = (assistantEl.dataset.raw || "") + (data.delta || "");
-      assistantEl.innerHTML = renderMarkdown(assistantEl.dataset.raw);
+      dropThinking();
+      openText();                       // lazily create the bubble (below any tools)
+      curTextEl.classList.add("streaming");
+      curRaw += data.delta || "";
+      renderCurrent();
       scroll();
       break;
     case "tool_start":
-      if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
+      dropThinking();
+      closeText();                      // next text run opens a fresh bubble below
       break;
     case "tool_done":
-      addTool(data.tool_name, !!data.success, data.error || (data.success ? "" : ""));
+      dropThinking();
+      closeText();
+      addTool(data.tool_name, !!data.success, data.output || data.error || "");
+      break;
+    case "ask_user":
+      dropThinking();
+      closeText();
+      openText();                       // question in its own bubble, below tools
+      curRaw = data.question || "";
+      renderCurrent();
+      if (Array.isArray(data.options) && data.options.length) {
+        renderOptions(data.options);    // separate sibling; survives re-render
+      }
+      closeText();
+      scroll();
       break;
     case "done":
-      if (assistantEl.classList.contains("streaming")) assistantEl.classList.remove("streaming");
-      if (!assistantEl.dataset.raw && data.final_message) assistantEl.dataset.raw = data.final_message;
-      assistantEl.innerHTML = renderMarkdown(assistantEl.dataset.raw || data.final_message || "");
+      if (curTextEl) {
+        curTextEl.classList.remove("streaming");
+        renderCurrent();
+      } else if (data.final_message) {
+        // No text streamed this turn — render the final message as a bubble.
+        openText();
+        curRaw = data.final_message;
+        renderCurrent();
+      }
+      closeText();
       onDone();
       break;
     case "error":
-      if (thinkingEl) thinkingEl.remove();
-      assistantEl.remove();
+      dropThinking();
+      if (curTextEl && !curTextEl.dataset.raw && !curTextEl.textContent) curTextEl.remove();
+      closeText();
       addMsg("error", data.error || "Errore sconosciuto");
       onDone();
       break;
@@ -401,9 +521,9 @@ async function send() {
   showBanner("");
   input.value = ""; autoSize();
   addMsg("user", text);
-  const assistantEl = addMsg("assistant", "");
-  const thinkingEl = addThinking();
-  toolChips = [];
+  // Reset the streaming render state for this turn; bubbles are created lazily.
+  curTextEl = null; curRaw = ""; curToggle = null; curThink = null; toolGroup = null;
+  thinkingEl = addThinking();
   busy = true; setBusy(true);
 
   try {
@@ -421,15 +541,15 @@ async function send() {
       buf += decoder.decode(value, { stream: true });
       let idx;
       while ((idx = buf.indexOf("\n\n")) >= 0) {
-        handleFrame(buf.slice(0, idx), assistantEl, thinkingEl, () => {});
+        handleFrame(buf.slice(0, idx), () => {});
         buf = buf.slice(idx + 2);
       }
     }
-    if (thinkingEl) thinkingEl.remove();
-    if (!assistantEl.dataset.raw && !assistantEl.textContent) assistantEl.remove();
+    dropThinking();
+    if (curTextEl && !curTextEl.dataset.raw && !curTextEl.textContent) curTextEl.remove();
   } catch (e) {
-    if (thinkingEl) thinkingEl.remove();
-    assistantEl.remove();
+    dropThinking();
+    if (curTextEl && !curTextEl.dataset.raw && !curTextEl.textContent) curTextEl.remove();
     if (e.status === 404) { LS.session = ""; addMsg("error", "Sessione scaduta — riprova."); }
     else addMsg("error", String(e.message || e));
   } finally {

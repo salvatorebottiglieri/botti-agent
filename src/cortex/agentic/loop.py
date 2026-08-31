@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from cortex.agentic.events import (
+    AskUserEvent,
     ErrorEvent,
     LoopEvent,
     ResponseDoneEvent,
@@ -19,6 +20,7 @@ from cortex.agentic.events import (
 )
 from cortex.agentic.models import (
     ChatResponse,
+    Decision,
     DecisionType,
     GoalResult,
     MaxIterationsError,
@@ -26,6 +28,7 @@ from cortex.agentic.models import (
 )
 from cortex.events import EventEmitter
 from cortex.sessions.models import Message, MessageRole, SessionState
+from cortex.tools.meta.ask_user import ASK_USER_CONTROL, ASK_USER_TOOL_NAME
 
 if TYPE_CHECKING:
     from cortex.agentic.context_builder import ContextBuilder
@@ -115,6 +118,10 @@ class AgentLoop:
             match event:
                 case TextDeltaEvent(delta=delta):
                     response_text += delta
+                case AskUserEvent(question=question):
+                    # A clarifying question is the turn's response text — no
+                    # TextDeltaEvent is emitted for it, so pick it up here.
+                    response_text += question
                 case ResponseDoneEvent(tools_used=used, iterations=iters):
                     tools_used, iterations = used, iters
                     usage, latency_ms = event.usage, event.latency_ms
@@ -136,9 +143,17 @@ class AgentLoop:
         user_message: str,
         *,
         max_iterations: int | None = None,
+        stream: bool = False,
     ) -> AsyncGenerator[LoopEvent, None]:
         """
         Run loop for chat mode, streaming progress events.
+
+        Args:
+            stream: When True, the response is produced token-by-token via
+                ``reasoner.reason_stream`` — each text delta is yielded as its
+                own ``TextDeltaEvent`` as it arrives. When False (default) the
+                whole response is emitted as a single ``TextDeltaEvent``, and
+                the event ordering is unchanged (``thinking`` before ``text``).
 
         Yields:
             LoopEvent progress signals as the loop runs: a ThinkingEvent per
@@ -194,8 +209,24 @@ class AgentLoop:
                 # Inject current messages into context
                 context.conversation = messages
 
-                # 2. Think - reason about what to do
-                decision = await self._reasoner.reason(context)
+                # 2. Think - reason about what to do.
+                # In stream mode the response text arrives as deltas before the
+                # final Decision; each delta is emitted as it lands. Tool-call
+                # turns carry no text, so `streamed_parts` stays empty there.
+                streamed_parts: list[str] = []
+                if stream:
+                    decision = None
+                    async for item in self._reasoner.reason_stream(context):
+                        if isinstance(item, Decision):
+                            decision = item
+                        else:
+                            streamed_parts.append(item)
+                            yield TextDeltaEvent(session_id, delta=item)
+                    if decision is None:
+                        raise ValueError("reason_stream ended without a Decision")
+                else:
+                    decision = await self._reasoner.reason(context)
+
                 # Accumulate per-call usage so the final done event carries
                 # the whole task's token spend (prompt/completion/total).
                 if decision.usage is not None:
@@ -205,37 +236,29 @@ class AgentLoop:
                         else decision.usage
                     )
 
-                # Emit the reasoning step for this iteration
+                # Emit the reasoning step for this iteration. In stream mode the
+                # response deltas have already been yielded, so this lands after
+                # them — harmless (consumers ignore it or no-op once the thinking
+                # placeholder is gone), and it keeps tool turns' ordering intact.
                 yield ThinkingEvent(session_id, message=decision.reasoning)
 
                 # Handle decision
                 match decision.decision_type:
                     case DecisionType.RESPOND:
-                        # Done! Stream the response
-                        text = decision.text or "I'm not sure how to respond."
-                        if self._session_repository is not None:
-                            await self._session_repository.add_message(
-                                session_id, MessageRole.ASSISTANT, text
-                            )
-                        yield TextDeltaEvent(session_id, delta=text)
-                        yield self._done_event(
-                            session_id,
-                            text,
-                            tools_used,
-                            iterations,
-                            total_usage=total_usage,
-                            started_at=started_at,
+                        # Prefer the streamed text; fall back to decision.text.
+                        text = (
+                            "".join(streamed_parts)
+                            if streamed_parts
+                            else (decision.text or "I'm not sure how to respond.")
                         )
-                        return
-
-                    case DecisionType.ASK_QUESTION:
-                        # Return the question
-                        text = decision.text or "Could you clarify?"
                         if self._session_repository is not None:
                             await self._session_repository.add_message(
                                 session_id, MessageRole.ASSISTANT, text
                             )
-                        yield TextDeltaEvent(session_id, delta=text)
+                        # Emit the full text as one delta unless it already
+                        # streamed out piece by piece.
+                        if not streamed_parts:
+                            yield TextDeltaEvent(session_id, delta=text)
                         yield self._done_event(
                             session_id,
                             text,
@@ -247,6 +270,61 @@ class AgentLoop:
                         return
 
                     case DecisionType.EXECUTE_TOOLS:
+                        # ask_user short-circuit (B2): a clarifying question is
+                        # not an executable tool round. If the model called
+                        # ask_user, halt and surface the question — persisting it
+                        # as a normal assistant message, with NO tool_call/
+                        # tool_result stored, so a provider never sees a dangling
+                        # tool call. Asking supersedes any other call this turn.
+                        ask_call = next(
+                            (
+                                c for c in (decision.tool_calls or [])
+                                if c.name == ASK_USER_TOOL_NAME
+                            ),
+                            None,
+                        )
+                        if ask_call is not None:
+                            # Executed once; the turn always halts here (never
+                            # falls through to the normal path, which would
+                            # re-execute the same call).
+                            result = await self._executor.execute_single(ask_call)
+                            if result.control == ASK_USER_CONTROL:
+                                question = result.output or "Could you clarify?"
+                                options = list(
+                                    (result.metadata or {}).get("options", [])
+                                )
+                                if self._session_repository is not None:
+                                    await self._session_repository.add_message(
+                                        session_id, MessageRole.ASSISTANT, question
+                                    )
+                                yield AskUserEvent(
+                                    session_id,
+                                    question=question,
+                                    options=options,
+                                )
+                            else:
+                                # Malformed ask_user (e.g. blank question): surface
+                                # the tool error as the turn's response instead of
+                                # asking, and stop.
+                                question = (
+                                    result.error
+                                    or "I couldn't ask a clarifying question."
+                                )
+                                if self._session_repository is not None:
+                                    await self._session_repository.add_message(
+                                        session_id, MessageRole.ASSISTANT, question
+                                    )
+                                yield TextDeltaEvent(session_id, delta=question)
+                            yield self._done_event(
+                                session_id,
+                                question,
+                                tools_used,
+                                iterations,
+                                total_usage=total_usage,
+                                started_at=started_at,
+                            )
+                            return
+
                         # 3. Act - execute tools
                         if decision.tool_calls:
                             # Record the assistant's tool-call decision in the
@@ -433,22 +511,6 @@ class AgentLoop:
                         message=decision.text or "Goal completed",
                         iterations=iterations,
                         steps_completed=steps_completed,
-                    )
-
-                case DecisionType.ASK_QUESTION:
-                    # Need clarification for goal
-                    await self._emit_goal_event(goal_id, "needs_input", {
-                        "question": decision.text,
-                        "timestamp": time.time(),
-                    })
-
-                    return GoalResult(
-                        goal_id=goal_id,
-                        success=False,
-                        message=decision.text or "Need more information",
-                        iterations=iterations,
-                        steps_completed=steps_completed,
-                        error="Needs clarification",
                     )
 
                 case DecisionType.EXECUTE_TOOLS:

@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from cortex.agentic.events import (
+    AskUserEvent,
     ErrorEvent,
     LoopEvent,
     ResponseDoneEvent,
@@ -160,26 +161,6 @@ class TestAgentLoop:
 
         assert isinstance(response, ChatResponse)
         assert response.message == "Hello!"
-        assert response.iterations == 0
-        assert response.tools_used == []
-        assert response.session_id == session_id
-
-    @pytest.mark.asyncio
-    async def test_run_chat_ask_question_returns_complete_response(
-        self, loop, mock_context_builder, mock_reasoner
-    ) -> None:
-        """ASK_QUESTION path returns a complete ChatResponse with the question."""
-        session_id = uuid4()
-
-        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
-        mock_reasoner.reason = AsyncMock(return_value=Decision.ask_question(
-            "Did you mean file A or file B?"
-        ))
-
-        response = await loop.run_chat(session_id, "Open the file")
-
-        assert isinstance(response, ChatResponse)
-        assert response.message == "Did you mean file A or file B?"
         assert response.iterations == 0
         assert response.tools_used == []
         assert response.session_id == session_id
@@ -519,29 +500,6 @@ class TestAgentLoopEdgeCases:
             await loop.run_chat(uuid4(), "Hello")
 
     @pytest.mark.asyncio
-    async def test_run_chat_with_ask_question(self):
-        """Run chat handles ask_question decision."""
-        mock_context_builder = MagicMock()
-        mock_context_builder.build = AsyncMock(return_value=Context(session_id=uuid4()))
-
-        mock_reasoner = MagicMock()
-        mock_reasoner.reason = AsyncMock(return_value=Decision.ask_question(
-            "Did you mean file A or file B?"
-        ))
-
-        loop = AgentLoop(
-            context_builder=mock_context_builder,
-            reasoner=mock_reasoner,
-            executor=MagicMock(),
-            event_bus=MagicMock(),
-        )
-
-        response = await loop.run_chat(uuid4(), "Open the file")
-
-        # Should return the question
-        assert "file A or file B" in response.message or response.message is not None
-
-    @pytest.mark.asyncio
     async def test_run_chat_preserves_conversation(self):
         """Run chat should preserve conversation for context."""
         mock_context_builder = MagicMock()
@@ -635,28 +593,6 @@ class TestStreamChat:
         assert events[2].iterations == 0
         assert events[2].tools_used == []
         assert all(e.session_id == session_id for e in events)
-
-    @pytest.mark.asyncio
-    async def test_ask_question_event_sequence(
-        self, loop, mock_context_builder, mock_reasoner
-    ) -> None:
-        """ASK_QUESTION yields thinking -> text -> done with the question."""
-        session_id = uuid4()
-
-        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
-        mock_reasoner.reason = AsyncMock(return_value=Decision.ask_question(
-            "Did you mean file A or file B?", reasoning="need clarification",
-        ))
-
-        events = [e async for e in loop.stream_chat(session_id, "Open the file")]
-
-        assert [e.event_type for e in events] == ["thinking", "text", "done"]
-        assert isinstance(events[1], TextDeltaEvent)
-        assert events[1].delta == "Did you mean file A or file B?"
-        assert isinstance(events[2], ResponseDoneEvent)
-        assert events[2].message == "Did you mean file A or file B?"
-        assert events[2].iterations == 0
-        assert events[2].tools_used == []
 
     @pytest.mark.asyncio
     async def test_tool_round_interleaves_start_result(
@@ -907,6 +843,209 @@ class TestStreamChat:
         assert done_event.iterations == 1
         assert done_event.tools_used == ["search", "read"]
 
+    # -- stream=True: token-by-token response via reason_stream ---------------
+
+    @staticmethod
+    def _reason_stream(*items):
+        """Build an async generator over `items` (str deltas + terminal Decision),
+        mimicking Reasoner.reason_stream(context)."""
+        async def gen(_context):
+            for it in items:
+                yield it
+        return gen
+
+    @pytest.mark.asyncio
+    async def test_stream_respond_emits_one_delta_per_token(
+        self, loop, mock_context_builder, mock_reasoner
+    ) -> None:
+        """stream=True yields a TextDeltaEvent per delta (no duplicate full-text
+        delta); done carries the joined text. Thinking lands after the deltas."""
+        session_id = uuid4()
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason_stream = self._reason_stream(
+            "Hello", " ", "world",
+            Decision.respond("Hello world", reasoning="direct"),
+        )
+
+        events = [e async for e in loop.stream_chat(session_id, "Hi", stream=True)]
+
+        assert [e.event_type for e in events] == [
+            "text", "text", "text", "thinking", "done",
+        ]
+        deltas = [e.delta for e in events if isinstance(e, TextDeltaEvent)]
+        assert deltas == ["Hello", " ", "world"]  # exactly the streamed pieces
+        done = events[-1]
+        assert isinstance(done, ResponseDoneEvent)
+        assert done.message == "Hello world"  # accumulated, not duplicated
+
+    @pytest.mark.asyncio
+    async def test_stream_respond_no_deltas_falls_back_to_decision_text(
+        self, loop, mock_context_builder, mock_reasoner
+    ) -> None:
+        """A RESPOND stream with no content deltas emits the decision text once,
+        keeping the non-stream ordering (thinking -> text -> done)."""
+        session_id = uuid4()
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason_stream = self._reason_stream(
+            Decision.respond("Fallback text", reasoning="direct"),
+        )
+
+        events = [e async for e in loop.stream_chat(session_id, "Hi", stream=True)]
+
+        assert [e.event_type for e in events] == ["thinking", "text", "done"]
+        deltas = [e.delta for e in events if isinstance(e, TextDeltaEvent)]
+        assert deltas == ["Fallback text"]
+        assert events[-1].message == "Fallback text"
+
+    @pytest.mark.asyncio
+    async def test_stream_tool_turn_carries_no_premature_text(
+        self, loop, mock_context_builder, mock_reasoner, mock_executor
+    ) -> None:
+        """A tool-call turn streams no text; the shared EXECUTE_TOOLS path runs,
+        then the follow-up turn streams the response deltas."""
+        from unittest.mock import MagicMock as _MagicMock
+
+        session_id = uuid4()
+        call_a = ToolCall(id="call_a", name="tool_a", arguments={"x": 1})
+
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        # First call: only a tool Decision (no deltas). Second: text deltas + respond.
+        mock_reasoner.reason_stream = _MagicMock(side_effect=[
+            self._reason_stream(
+                Decision.execute_tools([call_a], reasoning="need tools"),
+            )(None),
+            self._reason_stream(
+                "All ", "done.",
+                Decision.respond("All done.", reasoning="finished"),
+            )(None),
+        ])
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="call_a", tool_name="tool_a", success=True, output="out_a",
+        ))
+
+        events = [e async for e in loop.stream_chat(session_id, "Run tools", stream=True)]
+
+        assert [e.event_type for e in events] == [
+            "thinking", "tool_start", "tool_done",
+            "text", "text", "thinking", "done",
+        ]
+        done = events[-1]
+        assert isinstance(done, ResponseDoneEvent)
+        assert done.message == "All done."
+        assert done.iterations == 1
+        assert done.tools_used == ["tool_a"]
+
+    @pytest.mark.asyncio
+    async def test_stream_matches_run_chat_message(
+        self, loop, mock_context_builder, mock_reasoner
+    ) -> None:
+        """Draining the stream deltas reconstructs the same text run_chat would
+        return for the equivalent non-stream decision."""
+        session_id = uuid4()
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+
+        mock_reasoner.reason_stream = self._reason_stream(
+            "The ", "answer ", "is ", "42.",
+            Decision.respond("The answer is 42.", reasoning="direct"),
+        )
+        stream_events = [
+            e async for e in loop.stream_chat(session_id, "Q", stream=True)
+        ]
+        joined = "".join(
+            e.delta for e in stream_events if isinstance(e, TextDeltaEvent)
+        )
+
+        mock_reasoner.reason = AsyncMock(return_value=Decision.respond(
+            "The answer is 42.", reasoning="direct",
+        ))
+        response = await loop.run_chat(session_id, "Q")
+
+        assert joined == response.message == "The answer is 42."
+
+    # -- ask_user tool (B2): clarifying question halts the turn ---------------
+
+    @pytest.mark.asyncio
+    async def test_ask_user_halts_and_emits_ask_user_event(
+        self, loop, mock_context_builder, mock_reasoner, mock_executor
+    ) -> None:
+        """An ask_user tool call yields thinking -> ask_user -> done, carrying
+        the question and options; no tool_start/tool_done, and ask_user is not
+        counted among tools_used."""
+        session_id = uuid4()
+        ask_call = ToolCall(
+            id="call_1", name="ask_user",
+            arguments={"question": "Which file?", "options": ["a.txt", "b.txt"]},
+        )
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.execute_tools(
+            [ask_call], reasoning="need info",
+        ))
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="call_1", tool_name="ask_user", success=True,
+            output="Which file?", control="ask_user",
+            metadata={"options": ["a.txt", "b.txt"]},
+        ))
+
+        events = [e async for e in loop.stream_chat(session_id, "Open the file")]
+
+        assert [e.event_type for e in events] == ["thinking", "ask_user", "done"]
+        ask = events[1]
+        assert isinstance(ask, AskUserEvent)
+        assert ask.question == "Which file?"
+        assert ask.options == ["a.txt", "b.txt"]
+        done = events[-1]
+        assert isinstance(done, ResponseDoneEvent)
+        assert done.message == "Which file?"
+        assert done.tools_used == []  # ask_user is a control signal, not a tool
+
+    @pytest.mark.asyncio
+    async def test_ask_user_malformed_falls_back_to_error_text(
+        self, loop, mock_context_builder, mock_reasoner, mock_executor
+    ) -> None:
+        """A failed ask_user (no control signal) surfaces the tool error as the
+        turn's response and halts — without re-executing the call."""
+        session_id = uuid4()
+        ask_call = ToolCall(id="call_1", name="ask_user", arguments={"question": "  "})
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.execute_tools(
+            [ask_call], reasoning="need info",
+        ))
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="call_1", tool_name="ask_user", success=False,
+            error="`question` is required and must be a non-empty string.",
+            control=None,
+        ))
+
+        events = [e async for e in loop.stream_chat(session_id, "Open the file")]
+
+        assert [e.event_type for e in events] == ["thinking", "text", "done"]
+        assert "question" in events[1].delta
+        # Executed exactly once (no fall-through re-execution).
+        assert mock_executor.execute_single.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_run_chat_returns_ask_user_question(
+        self, loop, mock_context_builder, mock_reasoner, mock_executor
+    ) -> None:
+        """The drain (run_chat) picks up the ask_user question as the message,
+        even though it arrives as an AskUserEvent, not a TextDeltaEvent."""
+        session_id = uuid4()
+        ask_call = ToolCall(
+            id="call_1", name="ask_user", arguments={"question": "A or B?"},
+        )
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.execute_tools(
+            [ask_call], reasoning="need info",
+        ))
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="call_1", tool_name="ask_user", success=True,
+            output="A or B?", control="ask_user", metadata={"options": []},
+        ))
+
+        response = await loop.run_chat(session_id, "Pick")
+
+        assert response.message == "A or B?"
+
 
 class TestStreamChatPersistence:
     """Tests for AgentLoop.stream_chat message persistence."""
@@ -1086,29 +1225,6 @@ class TestStreamChatPersistence:
         assert len(conv) == 3
 
     @pytest.mark.asyncio
-    async def test_ask_question_persists_as_assistant(
-        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
-    ) -> None:
-        """ASK_QUESTION persists the question text as an ASSISTANT message."""
-        session_id = uuid4()
-
-        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
-        mock_reasoner.reason = AsyncMock(return_value=Decision.ask_question(
-            "Did you mean file A or file B?", reasoning="need clarification",
-        ))
-
-        loop = self.make_loop(
-            mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
-        )
-
-        events = [e async for e in loop.stream_chat(session_id, "Open the file")]
-
-        assert [e.event_type for e in events] == ["thinking", "text", "done"]
-        calls = repo.add_message.await_args_list
-        assert [c.args[1] for c in calls] == [MessageRole.USER, MessageRole.ASSISTANT]
-        assert calls[1].args[2] == "Did you mean file A or file B?"
-
-    @pytest.mark.asyncio
     async def test_without_repository_skips_persistence(
         self, loop, mock_context_builder, mock_reasoner
     ) -> None:
@@ -1125,3 +1241,36 @@ class TestStreamChatPersistence:
 
         assert [e.event_type for e in events] == ["thinking", "text", "done"]
         assert loop._session_repository is None
+
+    @pytest.mark.asyncio
+    async def test_ask_user_persists_question_as_assistant_no_tool_call(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
+    ) -> None:
+        """B2: the ask_user question is persisted as a plain ASSISTANT message —
+        USER then ASSISTANT — with NO tool_call/tool_result stored, so providers
+        never see a dangling tool call."""
+        session_id = uuid4()
+        ask_call = ToolCall(
+            id="call_1", name="ask_user", arguments={"question": "A or B?"},
+        )
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.execute_tools(
+            [ask_call], reasoning="need info",
+        ))
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="call_1", tool_name="ask_user", success=True,
+            output="A or B?", control="ask_user", metadata={"options": []},
+        ))
+
+        loop = self.make_loop(
+            mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
+        )
+
+        _ = [e async for e in loop.stream_chat(session_id, "Pick")]
+
+        calls = repo.add_message.await_args_list
+        # Exactly USER then ASSISTANT — no TOOL_RESULT round.
+        assert [c.args[1] for c in calls] == [MessageRole.USER, MessageRole.ASSISTANT]
+        assert calls[1].args[2] == "A or B?"
+        # No persisted message carries tool_calls (no dangling assistant call).
+        assert all(c.kwargs.get("tool_calls") is None for c in calls)

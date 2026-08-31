@@ -7,6 +7,7 @@ import tempfile
 import pytest
 
 from cortex.tools.meta import (
+    AskUserTool,
     FileReadTool,
     FileWriteTool,
     GrepTool,
@@ -22,6 +23,13 @@ class TestFileReadTool:
     @pytest.fixture
     def tool(self):
         return FileReadTool()
+
+    def test_schema_property_names_have_no_whitespace(self, tool):
+        """Schema keys must match the names execute() reads — a stray space
+        (e.g. ' max_lines') would silently break the argument (regression)."""
+        for name in tool.input_schema["properties"]:
+            assert name == name.strip(), f"schema key has whitespace: {name!r}"
+        assert "max_lines" in tool.input_schema["properties"]
 
     @pytest.mark.asyncio
     async def test_read_file(self, tool):
@@ -272,6 +280,49 @@ class TestGrepTool:
             assert result.metadata["files_searched"] == 1
 
 
+class TestAskUserTool:
+    """Tests for AskUserTool."""
+
+    @pytest.fixture
+    def tool(self):
+        return AskUserTool()
+
+    def test_schema_requires_question_and_allows_options(self, tool):
+        schema = tool.input_schema
+        assert schema["required"] == ["question"]
+        assert schema["properties"]["options"]["type"] == "array"
+
+    @pytest.mark.asyncio
+    async def test_returns_control_signal_and_question(self, tool):
+        """A valid call returns success with control='ask_user' and the
+        question echoed as output."""
+        result = await tool.execute({"question": "Which file did you mean?"})
+
+        assert result.success is True
+        assert result.control == "ask_user"
+        assert result.output == "Which file did you mean?"
+        assert result.metadata["options"] == []
+
+    @pytest.mark.asyncio
+    async def test_normalizes_options(self, tool):
+        """Options are carried in metadata; blanks/non-strings are dropped."""
+        result = await tool.execute({
+            "question": "Pick one",
+            "options": ["a.txt", "", "b.txt", None, 42],
+        })
+
+        assert result.metadata["options"] == ["a.txt", "b.txt"]
+
+    @pytest.mark.asyncio
+    async def test_empty_question_fails_without_control(self, tool):
+        """A blank question is an error and carries no control signal."""
+        result = await tool.execute({"question": "   "})
+
+        assert result.success is False
+        assert result.control is None
+        assert "question" in result.error
+
+
 class TestRegisterMetaTools:
     """Tests for registering meta tools."""
 
@@ -280,11 +331,12 @@ class TestRegisterMetaTools:
         registry = InMemoryToolRegistry()
         registered = register_meta_tools(registry)
 
-        assert len(registered) == 4
+        assert len(registered) == 5
         assert "file_read" in registered
         assert "file_write" in registered
         assert "shell" in registered
         assert "grep" in registered
+        assert "ask_user" in registered
 
     def test_all_tools_work(self):
         """All registered meta tools execute successfully."""
@@ -292,8 +344,8 @@ class TestRegisterMetaTools:
         register_meta_tools(registry)
 
         tools = registry.list_all()
-        assert len(tools) == 4
+        assert len(tools) == 5
 
         # Check all can be retrieved
-        for name in ["file_read", "file_write", "shell", "grep"]:
+        for name in ["file_read", "file_write", "shell", "grep", "ask_user"]:
             assert registry.get(name) is not None

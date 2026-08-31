@@ -51,6 +51,7 @@ services:
       LOG_FORMAT: console
     volumes:
       - mosquitto_config:/mosquitto/config:rw
+      - ./src/cortex/api/static:/app/src/cortex/api/static:ro
     ports:
       - "8000:8000"
     depends_on:

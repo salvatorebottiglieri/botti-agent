@@ -41,9 +41,6 @@ class TestDecisionType:
     def test_execute_tools_type_exists(self):
         assert DecisionType.EXECUTE_TOOLS == DecisionType.EXECUTE_TOOLS
 
-    def test_ask_question_type_exists(self):
-        assert DecisionType.ASK_QUESTION == DecisionType.ASK_QUESTION
-
 
 class TestDecision:
     """Tests for Decision dataclass."""
@@ -80,18 +77,6 @@ class TestDecision:
         assert len(decision.tool_calls) == 1
         assert decision.tool_calls[0].name == "file_read"
 
-    def test_ask_question_decision(self):
-        """Decision to ask for clarification."""
-        decision = Decision(
-            decision_type=DecisionType.ASK_QUESTION,
-            text="Did you mean the project in /home or /work?",
-            tool_calls=None,
-            reasoning="Ambiguous request needs clarification",
-        )
-
-        assert decision.decision_type == DecisionType.ASK_QUESTION
-        assert "Ambiguous" in decision.reasoning
-
     def test_respond_factory(self):
         """Factory method for RESPOND decisions."""
         decision = Decision.respond("Simple response")
@@ -109,12 +94,6 @@ class TestDecision:
 
         assert decision.decision_type == DecisionType.EXECUTE_TOOLS
         assert decision.tool_calls == calls
-
-    def test_ask_question_factory(self):
-        """Factory method for ASK_QUESTION decisions."""
-        decision = Decision.ask_question("Which file did you mean?")
-
-        assert decision.decision_type == DecisionType.ASK_QUESTION
 
 
 class TestContext:

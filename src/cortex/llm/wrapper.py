@@ -8,6 +8,7 @@ via ``__getattr__`` pass-through.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from cortex.llm.base import LLMClient
@@ -69,6 +70,27 @@ class CircuitBreakerLLMClient(LLMClient):
                 "Circuit breaker failure for module '%s'", self._module,
             )
             raise
+
+    async def chat_stream(
+        self,
+        messages: list[ChatMessage],
+        *,
+        tools: list[ToolDefinition] | None = None,
+        generation_config: GenerationConfig | None = None,
+    ) -> AsyncIterator[str | ChatResult]:
+        """Forwards streaming directly to the underlying client.
+
+        Streaming is NOT routed through the circuit breaker: the breaker's
+        ``call()`` guards a single awaitable resolving to one value, whereas a
+        stream is a long-lived async generator. Wrapping it there would give no
+        meaningful success/failure signal, so deltas pass straight through.
+        """
+        async for item in self._client.chat_stream(
+            messages,
+            tools=tools,
+            generation_config=generation_config,
+        ):
+            yield item
 
     # -- Explicit pass-through for abstract methods ---------------------------
 

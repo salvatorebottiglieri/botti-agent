@@ -18,7 +18,8 @@ class DecisionType(Enum):
     """Types of decisions the agent can make."""
     RESPOND = "respond"           # Done, return text to user
     EXECUTE_TOOLS = "execute_tools"  # Execute tools, continue loop
-    ASK_QUESTION = "ask_question"    # Need clarification
+    # Clarification is no longer a decision type — the model asks the user by
+    # calling the ask_user tool, handled as an EXECUTE_TOOLS turn.
 
 
 class Mode(Enum):
@@ -43,7 +44,7 @@ class Decision:
 
     Attributes:
         decision_type: What type of decision was made
-        text: Text response (for RESPOND or ASK_QUESTION)
+        text: Text response (for RESPOND)
         tool_calls: Tools to execute (for EXECUTE_TOOLS)
         reasoning: Explanation of why this decision was made
         usage: Token usage of the reasoning call that produced this decision
@@ -70,16 +71,6 @@ class Decision:
         return cls(
             decision_type=DecisionType.EXECUTE_TOOLS,
             tool_calls=tool_calls,
-            reasoning=reasoning,
-            usage=usage,
-        )
-
-    @classmethod
-    def ask_question(cls, question: str, reasoning: str = "", usage: UsageStats | None = None) -> Decision:
-        """Create an ASK_QUESTION decision."""
-        return cls(
-            decision_type=DecisionType.ASK_QUESTION,
-            text=question,
             reasoning=reasoning,
             usage=usage,
         )

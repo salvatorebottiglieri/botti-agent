@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from cortex.agentic.events import (
+    AskUserEvent,
     ErrorEvent,
     ResponseDoneEvent,
     TextDeltaEvent,
@@ -149,6 +150,7 @@ async def chat_stream(
                 session_id=session_id,
                 user_message=request.message,
                 max_iterations=max_iterations,
+                stream=request.stream,
             ):
                 match event:
                     case ThinkingEvent():
@@ -173,6 +175,17 @@ async def chat_stream(
                                 "output": event.output,
                                 "error": event.error,
                                 "execution_time_ms": event.execution_time_ms,
+                            },
+                        )
+                    case AskUserEvent():
+                        # The loop paused to ask the user; carry the question and
+                        # any model-suggested options for the UI to render as
+                        # choices. A `done` frame still follows to close the turn.
+                        yield _sse_event(
+                            "ask_user",
+                            {
+                                "question": event.question,
+                                "options": event.options,
                             },
                         )
                     case ResponseDoneEvent():

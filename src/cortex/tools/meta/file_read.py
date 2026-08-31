@@ -41,7 +41,7 @@ class FileReadTool(BaseMetaTool, FileToolMixin):
                     "description": "Text encoding to use (default: utf-8).",
                     "default": "utf-8",
                 },
-                " max_lines": {
+                "max_lines": {
                     "type": "integer",
                     "description": "Maximum number of lines to read (default: all).",
                     "default": 0,

@@ -26,6 +26,27 @@ def _chat_result(content: str | None = None, tool_calls=None) -> ChatResult:
     )
 
 
+def _chat_stream(*items):
+    """Return a callable mimicking llm.chat_stream: an async generator over
+    `items` (str deltas, then a terminal ChatResult)."""
+    async def gen(messages, *, tools=None, generation_config=None):
+        for it in items:
+            yield it
+    return gen
+
+
+async def _drain_reason_stream(agen):
+    """Split reason_stream output into (text deltas, terminal Decision)."""
+    deltas: list[str] = []
+    decision = None
+    async for item in agen:
+        if isinstance(item, Decision):
+            decision = item
+        else:
+            deltas.append(item)
+    return deltas, decision
+
+
 class TestReasoner:
     """Tests for Reasoner."""
 
@@ -369,6 +390,135 @@ class TestReasonerEdgeCases:
         assert len(decision.tool_calls) == 2
 
 
+class TestReasonerStream:
+    """Tests for Reasoner.reason_stream (streaming variant of reason)."""
+
+    @pytest.fixture
+    def mock_llm_client(self):
+        client = MagicMock()
+        client.chat_stream = MagicMock()
+        return client
+
+    @pytest.fixture
+    def reasoner(self, mock_llm_client):
+        return Reasoner(
+            llm_client=mock_llm_client,
+            tool_registry=MagicMock(),
+            system_prompt="You are a helpful assistant.",
+        )
+
+    @pytest.mark.asyncio
+    async def test_yields_deltas_then_respond_decision(self, reasoner, mock_llm_client):
+        """Text deltas are yielded in order, then a RESPOND Decision built from
+        the assembled ChatResult."""
+        mock_llm_client.chat_stream = _chat_stream(
+            "Hello", " world", _chat_result(content="Hello world", tool_calls=[]),
+        )
+
+        deltas, decision = await _drain_reason_stream(
+            reasoner.reason_stream(Context(session_id=uuid4()))
+        )
+
+        assert deltas == ["Hello", " world"]
+        assert decision is not None
+        assert decision.decision_type == DecisionType.RESPOND
+        assert decision.text == "Hello world"
+
+    @pytest.mark.asyncio
+    async def test_tool_call_turn_yields_no_deltas(self, reasoner, mock_llm_client):
+        """A tool-call turn carries no assistant text: no str deltas, only the
+        final EXECUTE_TOOLS Decision."""
+        from cortex.tools.interfaces import ToolCall
+
+        tc = ToolCall(id="call_1", name="file_read", arguments={"path": "/x"})
+        mock_llm_client.chat_stream = _chat_stream(
+            _chat_result(content=None, tool_calls=[tc]),
+        )
+
+        deltas, decision = await _drain_reason_stream(
+            reasoner.reason_stream(Context(session_id=uuid4()))
+        )
+
+        assert deltas == []
+        assert decision.decision_type == DecisionType.EXECUTE_TOOLS
+        assert decision.tool_calls[0] is tc
+
+    @pytest.mark.asyncio
+    async def test_streamed_text_with_marker_like_content_is_plain_respond(
+        self, reasoner, mock_llm_client
+    ):
+        """[QUESTION] markers are obsolete: text that happens to contain them
+        streams verbatim and yields a plain RESPOND (clarification is a tool)."""
+        mock_llm_client.chat_stream = _chat_stream(
+            "[QUESTION]", "Quale budget?", "[/QUESTION]",
+            _chat_result(content="[QUESTION]Quale budget?[/QUESTION]", tool_calls=[]),
+        )
+
+        deltas, decision = await _drain_reason_stream(
+            reasoner.reason_stream(Context(session_id=uuid4()))
+        )
+
+        assert "".join(deltas) == "[QUESTION]Quale budget?[/QUESTION]"
+        assert decision.decision_type == DecisionType.RESPOND
+        assert decision.text == "[QUESTION]Quale budget?[/QUESTION]"
+
+    @pytest.mark.asyncio
+    async def test_stream_without_final_result_yields_error_decision(
+        self, reasoner, mock_llm_client
+    ):
+        """If the stream ends without a terminal ChatResult, reason_stream does
+        not raise — it yields a fallback RESPOND Decision after the deltas."""
+        mock_llm_client.chat_stream = _chat_stream("partial")  # no ChatResult
+
+        deltas, decision = await _drain_reason_stream(
+            reasoner.reason_stream(Context(session_id=uuid4()))
+        )
+
+        assert deltas == ["partial"]
+        assert decision.decision_type == DecisionType.RESPOND
+        assert "try again" in decision.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_stream_error_yields_error_decision(self, reasoner, mock_llm_client):
+        """An exception raised while streaming is caught and surfaced as a
+        fallback RESPOND Decision, mirroring reason()'s error handling."""
+        async def boom(messages, *, tools=None, generation_config=None):
+            raise RuntimeError("stream exploded")
+            yield  # pragma: no cover - marks this a generator
+
+        mock_llm_client.chat_stream = boom
+
+        deltas, decision = await _drain_reason_stream(
+            reasoner.reason_stream(Context(session_id=uuid4()))
+        )
+
+        assert deltas == []
+        assert decision.decision_type == DecisionType.RESPOND
+        assert "try again" in decision.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_stream_passes_tools_via_structured_argument(self, reasoner, mock_llm_client):
+        """Tools are advertised via llm.chat_stream(tools=...), same as reason()."""
+        from cortex.tools.interfaces import ToolDefinition
+
+        mock_llm_client.chat_stream = MagicMock(
+            side_effect=_chat_stream(_chat_result(content="ok", tool_calls=[]))
+        )
+        tool_def = ToolDefinition(
+            name="file_read",
+            description="Read a file",
+            input_schema={"type": "object", "properties": {}},
+        )
+        context = Context(session_id=uuid4(), tools=[tool_def])
+
+        await _drain_reason_stream(reasoner.reason_stream(context))
+
+        call_kwargs = mock_llm_client.chat_stream.call_args.kwargs
+        assert call_kwargs.get("tools") is not None
+        assert len(call_kwargs["tools"]) == 1
+        assert call_kwargs["tools"][0].name == "file_read"
+
+
 class TestReasonerParseResponse:
     """Tests for Reasoner._parse_response parsing rules (issues #24, #25)."""
 
@@ -414,57 +564,34 @@ class TestReasonerParseResponse:
         source = inspect.getsource(Reasoner._parse_response)
         assert "getattr(" not in source
 
-    def test_question_marker_routes_to_ask_question(self, reasoner, context):
-        """[QUESTION] marker routes to Decision.ask_question (#25)."""
-        result = _chat_result("What budget? [QUESTION]Quale budget?[/QUESTION]")
-
-        decision = reasoner._parse_response(result, context)
-
-        assert decision.decision_type == DecisionType.ASK_QUESTION
-        assert decision.text == "Quale budget?"
-
-    def test_multiline_question_captured_fully_and_stripped(self, reasoner, context):
-        """Multi-line questions inside markers are captured fully and stripped (#25)."""
-        result = _chat_result("[QUESTION]\nWhat budget\nshould we use?\n[/QUESTION]")
-
-        decision = reasoner._parse_response(result, context)
-
-        assert decision.decision_type == DecisionType.ASK_QUESTION
-        assert decision.text == "What budget\nshould we use?"
-
-    def test_tool_calls_take_priority_over_question_marker(self, reasoner, context):
-        """Tool calls win over [QUESTION] markers (#25, note 3)."""
+    def test_tool_calls_take_priority_over_content(self, reasoner, context):
+        """Tool calls win over any assistant content."""
         from cortex.tools.interfaces import ToolCall
 
         tool_call = ToolCall(id="call-1", name="file_read", arguments={"path": "/x"})
-        result = _chat_result(
-            content="[QUESTION]Should I?[/QUESTION]",
-            tool_calls=[tool_call],
-        )
+        result = _chat_result(content="Some text", tool_calls=[tool_call])
 
         decision = reasoner._parse_response(result, context)
 
         assert decision.decision_type == DecisionType.EXECUTE_TOOLS
 
-    def test_empty_question_marker_raises_value_error(self, reasoner, context):
-        """[QUESTION][/QUESTION] with no question raises ValueError (#25)."""
-        result = _chat_result("[QUESTION][/QUESTION]")
+    def test_question_markers_are_no_longer_parsed(self, reasoner, context):
+        """[QUESTION] markers are obsolete: text that contains them is a plain
+        RESPOND now (clarification goes through the ask_user tool)."""
+        result = _chat_result("[QUESTION]Quale budget?[/QUESTION]")
 
-        with pytest.raises(ValueError, match="LLM signaled clarification with no question"):
-            reasoner._parse_response(result, context)
+        decision = reasoner._parse_response(result, context)
 
-    def test_whitespace_only_question_marker_raises_value_error(self, reasoner, context):
-        """Whitespace-only [QUESTION] marker raises ValueError (#25)."""
-        result = _chat_result("[QUESTION]   [/QUESTION]")
+        assert decision.decision_type == DecisionType.RESPOND
+        assert decision.text == "[QUESTION]Quale budget?[/QUESTION]"
 
-        with pytest.raises(ValueError, match="LLM signaled clarification with no question"):
-            reasoner._parse_response(result, context)
-
-    def test_default_system_prompt_includes_question_convention(self):
-        """Default system prompt teaches the [QUESTION] convention (#25)."""
+    def test_default_system_prompt_points_to_ask_user_tool(self):
+        """The default prompt steers clarification to the ask_user tool and no
+        longer teaches the old [QUESTION] marker convention."""
         reasoner = Reasoner(
             llm_client=MagicMock(),
             tool_registry=MagicMock(),
         )
 
-        assert "[QUESTION]your question here[/QUESTION]" in reasoner._system_prompt
+        assert "ask_user" in reasoner._system_prompt
+        assert "[QUESTION]" not in reasoner._system_prompt
