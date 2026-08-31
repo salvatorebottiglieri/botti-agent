@@ -1,5 +1,11 @@
 # Async generator as the AgentLoop streaming seam
 
+> **Partially superseded by [ADR-0018](0018-ask-user-tool-and-token-streaming.md).**
+> The async-generator seam and error contract below stand. But token streaming is
+> now real (one `TextDeltaEvent` per delta, not one per RESPOND), the event
+> vocabulary gained `ask_user`, and the `ASK_QUESTION` decision type referenced in
+> the #15 consequences was removed.
+
 The AgentLoop needs to be observable in real time so SSE, CLI, and future consumers can stream
 thought → tool_start → tool_result → response → done events. We chose an async generator
 (`async def stream_chat(...) -> AsyncGenerator[LoopEvent, None]`) over injecting an observer

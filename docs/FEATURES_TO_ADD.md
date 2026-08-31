@@ -6,7 +6,7 @@
 
 ## Reservoir Computing in the Learning Module
 
-**Status:** ✅ promoted to **Wave 7.1** (2026-05-05). See [`IMPLEMENTATION_PLAN.md`](./IMPLEMENTATION_PLAN.md) and [`docs/adr/0001-reservoir-computing-for-learning-module.md`](./adr/0001-reservoir-computing-for-learning-module.md).
+**Status:** ✅ promoted to **Wave 7.1** (2026-05-05). See [`docs/adr/0001-reservoir-computing-for-learning-module.md`](./adr/0001-reservoir-computing-for-learning-module.md).
 
 **Hypothesis:** A small Echo State Network (ESN) / Liquid State Machine (LSM) inside the Learning Module is a good fit for processing the minion event streams, with a secondary use as a salience estimator on the event bus.
 

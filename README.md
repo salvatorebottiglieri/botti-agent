@@ -97,8 +97,9 @@ Every non-obvious call is written down with its rationale in
 | [0010](docs/adr/0010-per-module-config.md) | Per-module configuration |
 | [0011](docs/adr/0011-public-get-or-create-session.md) | Public get_or_create_session on InteractionService |
 | [0012](docs/adr/0012-system-invariants.md) | System invariants — CircuitBreaker + SessionPolicy |
+| [0018](docs/adr/0018-ask-user-tool-and-token-streaming.md) | ask_user tool + token streaming (refines 0002, supersedes 0005's `[QUESTION]`) |
 
-(Full list, 0001–0012, in the folder.)
+(Full list, 0001–0018, in the folder.)
 
 ## Architecture at a glance
 
