@@ -1,5 +1,9 @@
 # Cortex (`botti-agent`)
 
+<p align="center">
+  <img src="assets/cortex-mascot-thinking.png" alt="Cortex — the proactive agent mascot" width="340">
+</p>
+
 **A from-scratch agent harness in Python** — an agent runtime with an explicit
 plan → act → verify loop, a decoupled event bus, trustworthy memory, an
 extensible tool registry, and distributed sensor agents. Not a prompt-chaining
