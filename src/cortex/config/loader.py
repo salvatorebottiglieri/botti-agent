@@ -120,6 +120,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
         "llm": {},
         "mqtt": {},
         "app": {},
+        "trace": {},
         "log_level": None,
         "log_format": None,
         "log_include_trace_id": None,
@@ -171,6 +172,13 @@ def load_settings(config_path: Path | None = None) -> Settings:
             settings_data["app_reload"] = app["reload"]
         if "workers" in app:
             settings_data["app_workers"] = app["workers"]
+
+    if "trace" in yaml_config:
+        trace = yaml_config["trace"]
+        if "sidecar_url" in trace:
+            settings_data["trace_sidecar_url"] = trace["sidecar_url"]
+        if "sidecar_timeout_s" in trace:
+            settings_data["trace_sidecar_timeout_s"] = trace["sidecar_timeout_s"]
 
     if "logging" in yaml_config:
         log = yaml_config["logging"]

@@ -155,6 +155,22 @@ async def initialize_app() -> CortexApp:
 
     goal_repo: GoalRepository = PostgresGoalRepository()
 
+    # 5b'. Create the loop-trace recorder (issue #112 T2). It is injected here
+    # at the composition root — ExecutionModule never constructs trace
+    # machinery itself. Recorder/HTTP-client ctors do no I/O, so wiring this
+    # adds no startup dependency on the rizzo-pii sidecar.
+    from cortex.trace.pseudonymizer import RizzoPseudonymizer
+    from cortex.trace.recorder import TraceRecorder
+    from cortex.trace.repository import PostgresTraceRepository
+
+    trace_recorder = TraceRecorder(
+        repository=PostgresTraceRepository(),
+        pseudonymizer=RizzoPseudonymizer(
+            base_url=settings.trace_sidecar_url,
+            timeout=settings.trace_sidecar_timeout_s,
+        ),
+    )
+
     # 5c. Create memory repositories
     from cortex.memory.interfaces import ConceptRepository, FactRepository
     from cortex.memory.repository import PostgresConceptRepository, PostgresFactRepository
@@ -237,6 +253,7 @@ async def initialize_app() -> CortexApp:
         agent_loop=agent_loop,
         event_bus=cortex.event_bus,
         goal_repository=goal_repo,
+        trace_recorder=trace_recorder,
     )
 
     # Resume goals left running at a previous shutdown. Startup concern —

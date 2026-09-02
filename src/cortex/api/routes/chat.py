@@ -151,6 +151,9 @@ async def chat_stream(
                 user_message=request.message,
                 max_iterations=max_iterations,
                 stream=request.stream,
+                # The session is resolved before the stream starts; its opt-in
+                # trace flag gates loop-event capture for this turn (#112 T2).
+                trace_enabled=session.trace_enabled,
             ):
                 match event:
                     case ThinkingEvent():

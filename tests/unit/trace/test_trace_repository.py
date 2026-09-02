@@ -33,7 +33,7 @@ class TestTraceRepositoryInterface:
 
     def test_repository_has_required_methods(self):
         """All required persistence primitives are declared."""
-        for method in ("insert_event", "list_events", "delete_older_than"):
+        for method in ("insert_event", "list_events", "delete_older_than", "max_seq"):
             assert hasattr(TraceRepository, method)
             assert callable(getattr(TraceRepository, method))
 
@@ -205,3 +205,30 @@ class TestPostgresTraceRepository:
         deleted = await repo.delete_older_than(datetime.now(UTC))
 
         assert deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_max_seq_returns_highest_persisted_seq(self, repo_with_mock):
+        """A session with rows reports the maximum persisted seq."""
+        repo, mock_db_session = repo_with_mock
+        session_id = uuid4()
+        mock_db_session.fetchrow.return_value = {"max_seq": 12}
+
+        result = await repo.max_seq(session_id)
+
+        assert result == 12
+        sql = mock_db_session.fetchrow.call_args.args[0]
+        assert "SELECT MAX(seq)" in sql
+        assert "FROM loop_events" in sql
+        assert "WHERE session_id = $1" in sql
+        # The session is the only bound parameter.
+        assert mock_db_session.fetchrow.call_args.args[1:] == (session_id,)
+
+    @pytest.mark.asyncio
+    async def test_max_seq_is_none_for_session_without_rows(self, repo_with_mock):
+        """An aggregate MAX over zero rows yields SQL NULL - mapped to None."""
+        repo, mock_db_session = repo_with_mock
+        mock_db_session.fetchrow.return_value = {"max_seq": None}
+
+        result = await repo.max_seq(uuid4())
+
+        assert result is None

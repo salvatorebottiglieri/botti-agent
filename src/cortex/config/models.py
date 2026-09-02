@@ -119,6 +119,20 @@ class Settings(BaseSettings):
     app_reload: bool = Field(default=False)
     app_workers: int = Field(default=1, ge=1)
 
+    # ─── Trace capture ─────────────────────────────────────────
+    # Local rizzo-pii pseudonymization sidecar for loop-trace capture (issue
+    # #112 T2). Flat, env-overridable (TRACE_SIDECAR_URL / TRACE_SIDECAR_TIMEOUT_S)
+    # like LLM_PRICING. Capture fails closed when the sidecar is unreachable.
+    trace_sidecar_url: str = Field(
+        default="http://127.0.0.1:5005",
+        description="Base URL of the rizzo-pii pseudonymization sidecar",
+    )
+    trace_sidecar_timeout_s: float = Field(
+        default=10.0,
+        gt=0,
+        description="Per-request timeout in seconds for sidecar /analyze calls",
+    )
+
     # ─── Logging ──────────────────────────────────────────────
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
         default="INFO"

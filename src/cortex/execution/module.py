@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -23,6 +23,7 @@ from cortex.goals.interfaces import GoalRepository
 if TYPE_CHECKING:
     from cortex.agentic.events import LoopEvent
     from cortex.events import EventBus
+    from cortex.trace.recorder import TraceRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class ExecutionModule:
         agent_loop: AgentLoop,
         event_bus: EventBus | None = None,
         goal_repository: GoalRepository | None = None,
+        trace_recorder: TraceRecorder | None = None,
     ):
         # Imported lazily so importers of execution.module do not pull in
         # the in-memory implementation (and its asyncpg dependency chain)
@@ -67,6 +69,11 @@ class ExecutionModule:
         self._emitter = EventEmitter(event_bus, source_module="execution_module")
         self._goal_repository = goal_repository or InMemoryGoalRepository()
         self._goal_results: dict[UUID, GoalResult] = {}
+        # Trace capture (issue #112 T2): the recorder is injected by the
+        # composition root (src/cortex/main.py) — the module never constructs
+        # trace machinery itself. None means capture is disabled even when a
+        # session's trace flag is on.
+        self._trace_recorder = trace_recorder
         # Strong references to background goal tasks so they are never
         # garbage-collected before running (the dropped-task anti-pattern);
         # each task removes itself once it finishes.
@@ -109,6 +116,7 @@ class ExecutionModule:
         *,
         max_iterations: int | None = None,
         stream: bool = False,
+        trace_enabled: bool = False,
     ) -> AsyncGenerator[LoopEvent, None]:
         """
         Stream chat progress events as a transparent passthrough.
@@ -118,23 +126,44 @@ class ExecutionModule:
         contract: ``MaxIterationsError`` (and any other exception) is NOT
         swallowed, unlike ``run_chat()``'s fallback.
 
+        When ``trace_enabled`` (the resolved session opted into loop-trace
+        capture, issue #111/#112) AND a ``trace_recorder`` was injected at the
+        composition root, each yielded event is handed to the TraceRecorder:
+        PII-bearing fields are pseudonymized via the rizzo-pii sidecar and the
+        event is persisted to ``loop_events`` in seq order before being
+        yielded. Capture is fail-closed — pseudonymizer or persistence
+        failures never alter or interrupt the stream delivered to the caller.
+        Without an injected recorder, trace-enabled turns run untraced (pure
+        passthrough); untraced sessions always persist nothing.
+
         Args:
             session_id: Current session
             user_message: User's message
             max_iterations: Optional iteration limit
             stream: When True, the response text is emitted token-by-token
                 (one TextDeltaEvent per delta); forwarded to the agent loop.
+            trace_enabled: Forwarded from the resolved session; gates trace
+                capture for this turn (capture additionally requires an
+                injected recorder). Goal-mode and drain paths are out of
+                scope in v1.
 
         Yields:
             LoopEvent progress signals (thinking, tool_start, tool_done,
             text, done, error).
         """
-        async for event in self._agent_loop.stream_chat(
+        loop_stream: AsyncIterable[LoopEvent] = self._agent_loop.stream_chat(
             session_id=session_id,
             user_message=user_message,
             max_iterations=max_iterations,
             stream=stream,
-        ):
+        )
+        recorder = self._trace_recorder
+        events: AsyncIterable[LoopEvent] = (
+            recorder.capture(session_id, loop_stream)
+            if trace_enabled and recorder is not None
+            else loop_stream
+        )
+        async for event in events:
             yield event
 
     async def create_goal(
