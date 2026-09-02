@@ -14,6 +14,12 @@ llm:
   model: "deepseek-v4-flash"
   timeout: 60
 
+trace:
+  # Local rizzo-pii instance used to pseudonymize captured traces
+  # (docker compose --profile trace)
+  sidecar_url: "http://127.0.0.1:5005"
+  sidecar_timeout_s: 10.0
+
 mqtt:
   broker_url: "mqtt://localhost:1883"
   keepalive: 60
