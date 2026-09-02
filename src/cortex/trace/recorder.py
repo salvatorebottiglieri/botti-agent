@@ -153,7 +153,8 @@ class TraceRecorder:
         payload = event.to_dict()
         for field in _PII_FIELDS.get(type(event), ()):
             value = payload.get(field)
-            # Empty/None values carry nothing to pseudonymize — skip the call.
-            if isinstance(value, str) and value:
+            # Empty/None/whitespace-only values carry nothing to pseudonymize
+            # — skip the call (the sidecar 400s on whitespace-only text).
+            if isinstance(value, str) and value.strip():
                 payload[field] = await self._pseudonymizer.anonymize(value)
         return payload
