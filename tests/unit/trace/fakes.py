@@ -10,6 +10,10 @@ against one repository fake and one pseudonymizer fake.
 * ``FakePseudonymizer`` — deterministic sidecar stand-in: swaps each PII seed
   for a stable ``[TAG_N]`` placeholder and records every call.
 * ``FailingPseudonymizer`` — raises on every call, modeling a down sidecar.
+* ``InMemorySessionRepository`` — in-memory conversation store for the
+  trace-audit tests: ``add_message`` seeds raw turns and ``get_messages``
+  follows the same ordering convention as the Postgres implementation
+  (newest ``limit`` kept, oldest-first in the window).
 
 ``EMAIL_SEED``/``CF_SEED`` are the PII seeds planted in scripted event text
 (I1: email + codice fiscale): a stored payload containing either seed verbatim
@@ -20,6 +24,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from cortex.sessions.models import Message, MessageRole
 from cortex.trace.interfaces import TraceRepository
 from cortex.trace.models import TraceEvent
 from cortex.trace.pseudonymizer import Pseudonymizer
@@ -99,3 +104,46 @@ class FailingPseudonymizer(Pseudonymizer):
     async def anonymize(self, text: str) -> str:
         self.calls.append(text)
         raise self._error
+
+
+class InMemorySessionRepository:
+    """In-memory conversation store for trace-audit tests.
+
+    Audit tests seed raw user turns here with ``add_message``; the audit
+    itself only ever calls ``get_messages``. ``get_messages`` models the
+    Postgres implementation's shared semantics: the newest ``limit`` messages
+    are kept and returned oldest-first inside that window; ``before`` pages
+    to strictly older messages.
+    """
+
+    def __init__(self) -> None:
+        self._messages: dict[UUID, list[Message]] = {}
+
+    async def add_message(
+        self,
+        session_id: UUID,
+        role: MessageRole,
+        content: str,
+        tool_calls: list[dict[str, Any]] | None = None,
+        tool_call_id: str | None = None,
+    ) -> Message:
+        message = Message(
+            session_id=session_id,
+            role=role,
+            content=content,
+            tool_calls=tool_calls,
+            tool_call_id=tool_call_id,
+        )
+        self._messages.setdefault(session_id, []).append(message)
+        return message
+
+    async def get_messages(
+        self,
+        session_id: UUID,
+        limit: int = 50,
+        before: datetime | None = None,
+    ) -> list[Message]:
+        messages = self._messages.get(session_id, [])
+        if before is not None:
+            messages = [m for m in messages if m.created_at < before]
+        return messages[-limit:]
