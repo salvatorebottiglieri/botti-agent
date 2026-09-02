@@ -179,6 +179,8 @@ def load_settings(config_path: Path | None = None) -> Settings:
             settings_data["trace_sidecar_url"] = trace["sidecar_url"]
         if "sidecar_timeout_s" in trace:
             settings_data["trace_sidecar_timeout_s"] = trace["sidecar_timeout_s"]
+        if "retention_days" in trace:
+            settings_data["trace_retention_days"] = trace["retention_days"]
 
     if "logging" in yaml_config:
         log = yaml_config["logging"]

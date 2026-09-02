@@ -266,7 +266,7 @@ laptop-minion/ (separate package, own pyproject.toml)
 
 | Entry Point | File | Description |
 |-------------|------|-------------|
-| `cortex` (CLI) | `src/cortex/cli.py` | `cortex token:create`, `cortex version` |
+| `cortex` (CLI) | `src/cortex/cli.py` | `cortex token:create`, `cortex traces:cleanup`, `cortex version` |
 | `cortex.main` | `src/cortex/main.py` | `initialize_app()` → `CortexApp` |
 | `cortex.__main__` | `src/cortex/__main__.py` | `python -m cortex` |
 | FastAPI app | `src/cortex/api/main.py` | `create_api_app()` — mounted by bootstrap |
@@ -281,7 +281,7 @@ src/cortex/
 ├── __init__.py
 ├── __main__.py              # python -m cortex
 ├── main.py                  # initialize_app() — wires everything
-├── cli.py                   # Typer CLI (token:create, version)
+├── cli.py                   # Typer CLI (token:create, traces:cleanup, version)
 │
 ├── agentic/                 # Wave 4 — Agentic Core
 │   ├── __init__.py
