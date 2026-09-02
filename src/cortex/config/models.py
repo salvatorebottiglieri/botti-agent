@@ -121,8 +121,9 @@ class Settings(BaseSettings):
 
     # ─── Trace capture ─────────────────────────────────────────
     # Local rizzo-pii pseudonymization sidecar for loop-trace capture (issue
-    # #112 T2). Flat, env-overridable (TRACE_SIDECAR_URL / TRACE_SIDECAR_TIMEOUT_S)
-    # like LLM_PRICING. Capture fails closed when the sidecar is unreachable.
+    # #112 T2). Flat, env-overridable (TRACE_SIDECAR_URL /
+    # TRACE_SIDECAR_TIMEOUT_S / TRACE_RETENTION_DAYS) like LLM_PRICING.
+    # Capture fails closed when the sidecar is unreachable.
     trace_sidecar_url: str = Field(
         default="http://127.0.0.1:5005",
         description="Base URL of the rizzo-pii pseudonymization sidecar",
@@ -131,6 +132,14 @@ class Settings(BaseSettings):
         default=10.0,
         gt=0,
         description="Per-request timeout in seconds for sidecar /analyze calls",
+    )
+    # Loop-event rows older than this many days are eligible for deletion by
+    # `cortex traces:cleanup` (issue #114 T4).
+    trace_retention_days: int = Field(
+        default=30,
+        ge=1,
+        description="Days of loop_events history to keep; older rows are "
+        "deleted by `cortex traces:cleanup`",
     )
 
     # ─── Logging ──────────────────────────────────────────────

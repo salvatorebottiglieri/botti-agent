@@ -19,6 +19,8 @@ trace:
   # (docker compose --profile trace)
   sidecar_url: "http://127.0.0.1:5005"
   sidecar_timeout_s: 10.0
+  # Loop events older than this many days are deleted by `cortex traces:cleanup`
+  retention_days: 30
 
 mqtt:
   broker_url: "mqtt://localhost:1883"
