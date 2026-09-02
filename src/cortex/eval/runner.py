@@ -85,8 +85,8 @@ class _InMemorySessionRepository(SessionRepository):
         self._sessions: dict[UUID, Session] = {}
         self._messages: dict[UUID, list[Message]] = {}
 
-    async def create(self) -> Session:
-        session = Session()
+    async def create(self, trace_enabled: bool = False) -> Session:
+        session = Session(trace_enabled=trace_enabled)
         self._sessions[session.id] = session
         self._messages[session.id] = []
         return session

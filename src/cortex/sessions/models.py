@@ -45,6 +45,9 @@ class Session(BaseModel):
     last_activity_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     ended_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Opt-in loop-trace capture (issue #111). Default false keeps sessions
+    # created before/without the flag untraced.
+    trace_enabled: bool = False
 
     model_config = ConfigDict(use_enum_values=True)
 

@@ -10,7 +10,13 @@ from fastapi.params import Path
 
 from cortex.api.auth import get_api_key
 from cortex.api.dependencies import get_session_repository
-from cortex.api.schemas import MessageCreate, MessageResponse, SessionResponse, SessionWithMessages
+from cortex.api.schemas import (
+    MessageCreate,
+    MessageResponse,
+    SessionCreateRequest,
+    SessionResponse,
+    SessionWithMessages,
+)
 from cortex.sessions import policy
 from cortex.sessions.models import MessageRole, SessionState
 
@@ -40,6 +46,7 @@ async def list_sessions(
             last_activity_at=s.last_activity_at,
             ended_at=s.ended_at,
             metadata=s.metadata or {},
+            trace_enabled=s.trace_enabled,
         )
         for s in sessions
     ]
@@ -53,9 +60,16 @@ async def list_sessions(
 async def create_session(
     key: str = Depends(get_api_key),
     session_repo: SessionRepository = Depends(get_session_repository),
+    request: SessionCreateRequest | None = None,
 ) -> SessionResponse:
-    """Create a new session."""
-    session = await policy.create_session(session_repo)
+    """Create a new session.
+
+    Accepts an optional body with trace_enabled so callers can start a traced
+    session explicitly; a bare POST (no body) creates an untraced session.
+    """
+    session = await policy.create_session(
+        session_repo, trace_enabled=request.trace_enabled if request else False
+    )
     return SessionResponse(
         id=session.id,
         state=session.state,
@@ -63,6 +77,7 @@ async def create_session(
         last_activity_at=session.last_activity_at,
         ended_at=session.ended_at,
         metadata=session.metadata or {},
+        trace_enabled=session.trace_enabled,
     )
 
 
@@ -94,6 +109,7 @@ async def get_session(
             last_activity_at=result.session.last_activity_at,
             ended_at=result.session.ended_at,
             metadata=result.session.metadata or {},
+            trace_enabled=result.session.trace_enabled,
         ),
         messages=[
             MessageResponse(
@@ -186,6 +202,7 @@ async def end_session(
         last_activity_at=session.last_activity_at,
         ended_at=session.ended_at,
         metadata=session.metadata or {},
+        trace_enabled=session.trace_enabled,
     )
 
 
@@ -215,4 +232,5 @@ async def resume_session(
         last_activity_at=session.last_activity_at,
         ended_at=session.ended_at,
         metadata=session.metadata or {},
+        trace_enabled=session.trace_enabled,
     )

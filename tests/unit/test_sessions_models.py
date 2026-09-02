@@ -36,6 +36,15 @@ class TestSession:
         assert session.state == SessionState.ACTIVE
         assert session.metadata == {"source": "api"}
 
+    def test_session_trace_enabled_defaults_false(self):
+        """Sessions are not traced unless explicitly opted in (issue #111)."""
+        assert Session().trace_enabled is False
+
+    def test_session_trace_enabled_explicit_true(self):
+        """trace_enabled=True persists on the model and serializes."""
+        assert Session(trace_enabled=True).trace_enabled is True
+        assert Session(trace_enabled=True).model_dump()["trace_enabled"] is True
+
     def test_session_state_enum_values(self):
         """Test session state enum string values."""
         assert SessionState.CREATED.value == "created"

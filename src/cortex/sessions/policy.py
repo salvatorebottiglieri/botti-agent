@@ -19,9 +19,14 @@ from cortex.sessions.models import (
 )
 
 
-async def create_session(repo: SessionRepository) -> Session:
-    """Create a new session and immediately mark it ACTIVE."""
-    session = await repo.create()
+async def create_session(
+    repo: SessionRepository, trace_enabled: bool = False
+) -> Session:
+    """Create a new session and immediately mark it ACTIVE.
+
+    trace_enabled opts the session into loop-trace capture (default off).
+    """
+    session = await repo.create(trace_enabled=trace_enabled)
     updated = await repo.update_state(session.id, SessionState.ACTIVE)
     if updated is None:
         return session

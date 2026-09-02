@@ -32,7 +32,35 @@ class TestCreateSession:
         result = await policy.create_session(mock_repo)
 
         assert result.state == SessionState.ACTIVE
-        mock_repo.create.assert_called_once()
+        mock_repo.create.assert_called_once_with(trace_enabled=False)
+        mock_repo.update_state.assert_called_once_with(session_id, SessionState.ACTIVE)
+
+    @pytest.mark.asyncio
+    async def test_default_session_is_not_traced(self, mock_repo):
+        """create_session without the flag keeps trace_enabled False (issue #111)."""
+        session_id = uuid4()
+        mock_repo.create.return_value = Session(id=session_id, state=SessionState.CREATED)
+        mock_repo.update_state.return_value = Session(id=session_id, state=SessionState.ACTIVE)
+
+        result = await policy.create_session(mock_repo)
+
+        assert result.trace_enabled is False
+
+    @pytest.mark.asyncio
+    async def test_trace_enabled_flag_is_threaded_to_repo(self, mock_repo):
+        """create_session(trace_enabled=True) asks the repo for a traced session."""
+        session_id = uuid4()
+        mock_repo.create.return_value = Session(
+            id=session_id, state=SessionState.CREATED, trace_enabled=True
+        )
+        mock_repo.update_state.return_value = Session(
+            id=session_id, state=SessionState.ACTIVE, trace_enabled=True
+        )
+
+        result = await policy.create_session(mock_repo, trace_enabled=True)
+
+        assert result.trace_enabled is True
+        mock_repo.create.assert_called_once_with(trace_enabled=True)
         mock_repo.update_state.assert_called_once_with(session_id, SessionState.ACTIVE)
 
 

@@ -72,6 +72,14 @@ class MessageCreate(BaseModel):
     tool_calls: list[dict[str, Any]] | None = Field(None, description="Tool calls if any")
 
 
+class SessionCreateRequest(BaseModel):
+    """Request to create a session."""
+
+    trace_enabled: bool = Field(
+        False, description="Enable loop-trace capture for this session"
+    )
+
+
 class SessionResponse(BaseModel):
     """Session with its messages."""
 
@@ -81,6 +89,9 @@ class SessionResponse(BaseModel):
     last_activity_at: datetime
     ended_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    trace_enabled: bool = Field(
+        False, description="Whether loop-trace capture is enabled"
+    )
 
 
 class SessionWithMessages(BaseModel):
