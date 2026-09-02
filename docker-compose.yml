@@ -66,6 +66,36 @@ services:
       retries: 3
       start_period: 30s
 
+  # rizzo-pii pseudonymization sidecar (issue #112 T2) — trace capture only.
+  # Loop-trace capture pseudonymizes PII before storing loop_events, so traced
+  # sessions need this sidecar reachable at the configured TRACE_SIDECAR_URL
+  # (default http://127.0.0.1:5005). Opt-in via the "trace" compose profile so
+  # the default `docker compose up` is unaffected:
+  #
+  #   docker compose --profile trace up -d rizzo-pii
+  #   curl http://127.0.0.1:5005/health     # 200 = model ready (503 until then)
+  #
+  # Built from the pinned upstream repo (Rizzo-AI-Academy/rizzo-pii @ v2.0.0):
+  # the image bakes the CPU-only model at build time and serves POST /analyze;
+  # the client always sends include_mapping=false, so real values never leave
+  # the sidecar. Run cortex on the host (or point TRACE_SIDECAR_URL at this
+  # service) to verify trace capture end to end.
+  rizzo-pii:
+    profiles: ["trace"]
+    build:
+      context: https://github.com/Rizzo-AI-Academy/rizzo-pii.git#v2.0.0
+    container_name: cortex-rizzo-pii
+    ports:
+      - "127.0.0.1:5005:5005"
+    healthcheck:
+      # Same readiness probe as the upstream image: /health is 503 until the
+      # model is loaded (model load can take 1-2 minutes on CPU).
+      test: ["CMD", "python", "-c", 'import urllib.request, sys; sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:5005/health", timeout=4).status == 200 else 1)']
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
+
 volumes:
   postgres_data:
   mosquitto_data:

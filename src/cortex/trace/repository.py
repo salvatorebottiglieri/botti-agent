@@ -56,6 +56,24 @@ class PostgresTraceRepository(TraceRepository):
             )
             return [self._row_to_event(row) for row in rows]
 
+    async def max_seq(self, session_id: UUID) -> int | None:
+        """Return the highest seq persisted for a session, or None when the
+        session has no ``loop_events`` rows yet (issue #112 T2)."""
+        async with DbSession() as db:
+            row = await db.fetchrow(
+                """
+                SELECT MAX(seq) AS max_seq
+                FROM loop_events
+                WHERE session_id = $1
+                """,
+                session_id,
+            )
+            # A bare aggregate always returns one row (NULL when the session
+            # has no rows); the None guard narrows the Record | None type.
+            if row is None or row["max_seq"] is None:
+                return None
+            return int(row["max_seq"])
+
     async def delete_older_than(self, cutoff: datetime) -> int:
         """Delete loop-event rows strictly older than the cutoff.
 

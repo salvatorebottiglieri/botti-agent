@@ -60,7 +60,7 @@ class FakeExecutionModule:
     ):
         self._events = events or []
         self._exc = exc
-        self.calls: list[tuple[UUID, str, int | None, bool]] = []
+        self.calls: list[tuple[UUID, str, int | None, bool, bool]] = []
 
     async def stream_chat(
         self,
@@ -69,8 +69,9 @@ class FakeExecutionModule:
         *,
         max_iterations: int | None = None,
         stream: bool = False,
+        trace_enabled: bool = False,
     ):
-        self.calls.append((session_id, user_message, max_iterations, stream))
+        self.calls.append((session_id, user_message, max_iterations, stream, trace_enabled))
         if self._exc is not None:
             raise self._exc
         for event in self._events:
@@ -152,7 +153,7 @@ class TestChatStreamSSE:
             ("text", {"delta": "Hello there!"}),
             ("done", {"final_message": "Hello there!", "tool_calls": [], "iterations": 1}),
         ]
-        assert fake_exec.calls == [(session_id, "hi", 20, True)]
+        assert fake_exec.calls == [(session_id, "hi", 20, True, False)]
 
     def test_stream_flag_defaults_true_and_honors_false(self):
         """The `stream` flag reaches execution_module.stream_chat: defaults to
@@ -586,3 +587,40 @@ class TestChatStreamSSE:
                 "POST", "/chat/stream", json=payload, headers=AUTH_HEADERS
             ):
                 pass
+
+    def test_trace_enabled_session_flag_reaches_stream_chat(self):
+        """The resolved session's trace_enabled is forwarded to
+        execution_module.stream_chat: True for a traced session, False by
+        default — capture only ever starts for opted-in sessions."""
+        traced_id = uuid4()
+        fake_traced = FakeExecutionModule([
+            ResponseDoneEvent(session_id=traced_id, message="ok", tools_used=[], iterations=0),
+        ])
+        client = build_client(
+            fake_traced,
+            FakeInteractionService(
+                existing_session=Session(id=traced_id, trace_enabled=True)
+            ),
+        )
+        client.post(
+            "/chat/stream",
+            json={"message": "hi", "session_id": str(traced_id)},
+            headers=AUTH_HEADERS,
+        )
+        assert fake_traced.calls[0][4] is True
+
+        # Default (untraced) session -> False, and the stream still runs.
+        plain_id = uuid4()
+        fake_plain = FakeExecutionModule([
+            ResponseDoneEvent(session_id=plain_id, message="ok", tools_used=[], iterations=0),
+        ])
+        client = build_client(
+            fake_plain,
+            FakeInteractionService(existing_session=Session(id=plain_id)),
+        )
+        client.post(
+            "/chat/stream",
+            json={"message": "hi", "session_id": str(plain_id)},
+            headers=AUTH_HEADERS,
+        )
+        assert fake_plain.calls[0][4] is False

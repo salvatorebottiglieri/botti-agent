@@ -12,10 +12,13 @@ class TraceRepository(ABC):
     """
     Abstract interface for loop-trace persistence.
 
-    Persistence primitives for the ``loop_events`` table. Capture wiring
-    (turning AgentLoop events into insert_event calls) lands in a later
-    ticket. ``payload`` is an event's self-describing ``to_dict()`` JSON and
-    is treated as opaque — implementations must not inspect its fields.
+    Persistence primitives for the ``loop_events`` table. ``payload`` is an
+    event's self-describing ``to_dict()`` JSON and is treated as opaque —
+    implementations must not inspect its fields.
+
+    ``max_seq`` is the cross-turn seq-continuity primitive (issue #112 T2):
+    the recorder starts each capture at ``max_seq + 1`` so seq stays monotonic
+    per session across turns under ``UNIQUE(session_id, seq)``.
     """
 
     @abstractmethod
@@ -32,6 +35,12 @@ class TraceRepository(ABC):
     @abstractmethod
     async def list_events(self, session_id: UUID) -> list[TraceEvent]:
         """List a session's loop events in seq order (oldest first)."""
+        ...
+
+    @abstractmethod
+    async def max_seq(self, session_id: UUID) -> int | None:
+        """Return the highest seq persisted for a session, or None when the
+        session has no ``loop_events`` rows yet."""
         ...
 
     @abstractmethod
