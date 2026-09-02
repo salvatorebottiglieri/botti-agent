@@ -301,6 +301,44 @@ class TestTraceRecorderCapture:
         assert rows[1].payload["output"] == ""
         assert rows[1].payload["error"] is None
 
+    @pytest.mark.asyncio
+    async def test_whitespace_only_delta_skips_sidecar_and_rest_of_turn_persists(self, recorder):
+        """A whitespace-only text delta (e.g. ``" "`` between streamed tokens)
+        carries no PII: no /analyze call is made for it, it is stored verbatim,
+        and the later events of the turn still persist pseudonymized — the
+        400/latch drop path is never triggered."""
+        trace_recorder, repo, pseudonymizer = recorder
+        session_id = uuid4()
+        scripted = [
+            TextDeltaEvent(session_id, delta="Hi "),
+            TextDeltaEvent(session_id, delta=" "),  # whitespace-only token boundary
+            TextDeltaEvent(session_id, delta=f"there {EMAIL_SEED}"),
+            ResponseDoneEvent(session_id, message="done"),
+        ]
+
+        await _drain(trace_recorder, session_id, scripted)
+
+        # One /analyze call per non-empty PII field; the whitespace-only delta
+        # never reaches the pseudonymizer.
+        assert pseudonymizer.calls == [
+            "Hi ",
+            f"there {EMAIL_SEED}",
+            "done",
+        ]
+        assert " " not in pseudonymizer.calls
+
+        # Every event of the turn persisted, in order — whitespace included.
+        rows = await repo.list_events(session_id)
+        assert [r.event_type for r in rows] == ["text", "text", "text", "done"]
+        assert [r.seq for r in rows] == [0, 1, 2, 3]
+        # The whitespace delta is stored verbatim; later PII still pseudonymized.
+        assert [r.payload["delta"] for r in rows[:3]] == [
+            "Hi ",
+            " ",
+            "there [TAG_1]",
+        ]
+        assert EMAIL_SEED not in payloads_json(rows)
+
 
 class TestTraceRecorderFailClosed:
     """Every failure mode logs a warning and never alters the stream."""
