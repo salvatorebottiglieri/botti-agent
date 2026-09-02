@@ -1,5 +1,6 @@
 """Tests for session repository interface."""
 
+import inspect
 from abc import ABC
 
 import pytest
@@ -34,3 +35,13 @@ class TestSessionRepositoryIsAbstract:
         """Test that we cannot create a repository directly."""
         with pytest.raises(TypeError, match="abstract"):
             SessionRepository()
+
+    def test_create_accepts_optional_trace_enabled(self):
+        """create(trace_enabled=False) is part of the public contract (issue #111).
+
+        The parameter has a default so existing implementors and callers stay
+        source-compatible — the flag threading is opt-in and non-breaking.
+        """
+        params = inspect.signature(SessionRepository.create).parameters
+        assert "trace_enabled" in params
+        assert params["trace_enabled"].default is False

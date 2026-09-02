@@ -40,6 +40,7 @@ class TestPostgresSessionRepository:
         mock_db_session.fetchrow.return_value = {
             "id": session_id,
             "state": "created",
+            "trace_enabled": False,
             "created_at": now,
             "last_activity_at": now,
             "ended_at": None,
@@ -50,7 +51,33 @@ class TestPostgresSessionRepository:
 
         assert result.id == session_id
         assert result.state == SessionState.CREATED
+        assert result.trace_enabled is False
         mock_db_session.fetchrow.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_session_with_trace_enabled(self, repo_with_mock):
+        """A traced session persists trace_enabled=true on the row (issue #111)."""
+        repo, mock_db_session = repo_with_mock
+        session_id = uuid4()
+        now = datetime.now(UTC)
+        mock_db_session.fetchrow.return_value = {
+            "id": session_id,
+            "state": "created",
+            "trace_enabled": True,
+            "created_at": now,
+            "last_activity_at": now,
+            "ended_at": None,
+            "metadata": {},
+        }
+
+        result = await repo.create(trace_enabled=True)
+
+        assert result.trace_enabled is True
+        # INSERT binds (state, trace_enabled) after the SQL text.
+        assert mock_db_session.fetchrow.call_args.args[1:] == (
+            SessionState.CREATED.value,
+            True,
+        )
 
     @pytest.mark.asyncio
     async def test_get_session_found(self, repo_with_mock):
@@ -61,6 +88,7 @@ class TestPostgresSessionRepository:
         mock_db_session.fetchrow.return_value = {
             "id": session_id,
             "state": "active",
+            "trace_enabled": False,
             "created_at": now,
             "last_activity_at": now,
             "ended_at": None,
@@ -72,6 +100,9 @@ class TestPostgresSessionRepository:
         assert result is not None
         assert result.id == session_id
         assert result.state == SessionState.ACTIVE
+        # Sessions created before the flag read back as trace_enabled=false
+        # (the migration backfills the column with DEFAULT false).
+        assert result.trace_enabled is False
 
     @pytest.mark.asyncio
     async def test_get_session_not_found(self, repo_with_mock):
@@ -92,6 +123,7 @@ class TestPostgresSessionRepository:
         mock_db_session.fetchrow.return_value = {
             "id": session_id,
             "state": "ended",
+            "trace_enabled": False,
             "created_at": now,
             "last_activity_at": now,
             "ended_at": now,
@@ -103,6 +135,7 @@ class TestPostgresSessionRepository:
         assert result is not None
         assert result.state == SessionState.ENDED
         assert result.ended_at is not None
+        assert result.trace_enabled is False
 
     @pytest.mark.asyncio
     async def test_add_message(self, repo_with_mock):
@@ -229,6 +262,7 @@ class TestPostgresSessionRepository:
             {
                 "id": uuid4(),
                 "state": "active",
+                "trace_enabled": False,
                 "created_at": now,
                 "last_activity_at": now,
                 "ended_at": None,
@@ -240,3 +274,4 @@ class TestPostgresSessionRepository:
 
         assert len(result) == 1
         assert result[0].state == SessionState.ACTIVE
+        assert result[0].trace_enabled is False

@@ -16,16 +16,20 @@ class PostgresSessionRepository(SessionRepository):
     Uses the shared db session for connection pooling.
     """
 
-    async def create(self) -> Session:
-        """Create a new session in the database."""
+    async def create(self, trace_enabled: bool = False) -> Session:
+        """Create a new session in the database.
+
+        trace_enabled opts the session into loop-trace capture (default off).
+        """
         async with DbSession() as db:
             row = await db.fetchrow(
                 """
-                INSERT INTO sessions (state)
-                VALUES ($1)
-                RETURNING id, state, created_at, last_activity_at, ended_at, metadata
+                INSERT INTO sessions (state, trace_enabled)
+                VALUES ($1, $2)
+                RETURNING id, state, trace_enabled, created_at, last_activity_at, ended_at, metadata
                 """,
                 SessionState.CREATED.value,
+                trace_enabled,
             )
             return self._row_to_session(row)
 
@@ -34,7 +38,7 @@ class PostgresSessionRepository(SessionRepository):
         async with DbSession() as db:
             row = await db.fetchrow(
                 """
-                SELECT id, state, created_at, last_activity_at, ended_at, metadata
+                SELECT id, state, trace_enabled, created_at, last_activity_at, ended_at, metadata
                 FROM sessions
                 WHERE id = $1
                 """,
@@ -57,7 +61,7 @@ class PostgresSessionRepository(SessionRepository):
                 UPDATE sessions
                 SET state = $1, ended_at = $2
                 WHERE id = $3
-                RETURNING id, state, created_at, last_activity_at, ended_at, metadata
+                RETURNING id, state, trace_enabled, created_at, last_activity_at, ended_at, metadata
                 """,
                 state.value,
                 ended_at,
@@ -151,7 +155,7 @@ class PostgresSessionRepository(SessionRepository):
         async with DbSession() as db:
             rows = await db.fetch(
                 """
-                SELECT id, state, created_at, last_activity_at, ended_at, metadata
+                SELECT id, state, trace_enabled, created_at, last_activity_at, ended_at, metadata
                 FROM sessions
                 WHERE state IN ('created', 'active', 'idle')
                 ORDER BY last_activity_at DESC
@@ -166,6 +170,7 @@ class PostgresSessionRepository(SessionRepository):
         return Session(
             id=row["id"],
             state=row["state"],
+            trace_enabled=row["trace_enabled"],
             created_at=row["created_at"],
             last_activity_at=row["last_activity_at"],
             ended_at=row["ended_at"],

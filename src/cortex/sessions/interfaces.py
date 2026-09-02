@@ -16,8 +16,12 @@ class SessionRepository(ABC):
     """
 
     @abstractmethod
-    async def create(self) -> Session:
-        """Create a new session."""
+    async def create(self, trace_enabled: bool = False) -> Session:
+        """Create a new session.
+
+        trace_enabled opts the session into loop-trace capture (default off);
+        the flag persists on the session and round-trips on reads.
+        """
         ...
 
     @abstractmethod
