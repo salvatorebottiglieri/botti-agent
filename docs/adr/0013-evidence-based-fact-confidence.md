@@ -50,4 +50,4 @@ LogicEngine territory, ADR-0007 (issue #27). The producer for STATIC facts (an L
 extraction flag, wired together with conversation extraction) is tracked as issue #82 and
 blocks the evidence engine, issue #83. The LR and window constants are the only magic
 numbers in the system; they are isolated and documented as the calibration point for the
-future Bayesian network proposed in `docs/FEATURES_TO_ADD.md`.
+future Bayesian network proposed in `docs/research/neurosymbolic-ideas.md` (issue #121).

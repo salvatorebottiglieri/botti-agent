@@ -4,6 +4,11 @@
 > **Update this document whenever the evidence system changes.**
 > Rationale: `docs/adr/0013-evidence-based-fact-confidence.md`. Vocabulary: `CONTEXT.md` (`## Memory`).
 > Work items: issues #82 (conversation extraction + STATIC producer) and #83 (evidence engine).
+>
+> **Status: designed, not yet implemented.** There is no `evidence` table in
+> `migrations/` and no `EvidenceStore` in `src/cortex/`; `facts.confidence` is not
+> yet recomputed by the rule below. E1 (evidence invariants) is `importorskip`-gated on
+> issue #83. This document is the implementation contract for that issue.
 
 ## Purpose
 
@@ -71,7 +76,7 @@ logit(p') = logit(p) + (2·strength − 1) · ln(LR_base(source_type))
 | sweep interval | hourly (default) |
 
 The constants are the calibration point for the future Bayesian network proposed in
-`docs/FEATURES_TO_ADD.md` — change them only with that path in mind.
+`docs/research/neurosymbolic-ideas.md` — change them only with that path in mind.
 
 ## Evidence lifecycle
 
