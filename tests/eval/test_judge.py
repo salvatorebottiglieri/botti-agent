@@ -23,7 +23,6 @@ from cortex.agentic.events import (
     ToolResultEvent,
     ToolStartEvent,
 )
-from cortex.config.models import Settings
 from cortex.eval.judge import (
     DEFAULT_DIMENSION_ORDER,
     DEFAULT_RUBRIC,
@@ -45,6 +44,7 @@ from cortex.eval.judge import (
     partial_credit_band,
     render_transcript,
 )
+from cortex.llm.config import LLMSettings
 from cortex.llm.models import ChatMessage, ChatResult, Role
 from cortex.llm.providers.openai import OpenAIClient
 from tests.eval.fakes import ScriptedLLMClient
@@ -412,29 +412,34 @@ class TestOrderSwap:
 
 
 class TestSettings:
-    """llm_judge_model is a separate, configurable setting from llm_model."""
+    """judge_model is a separate, configurable setting from model."""
 
     def test_judge_model_defaults_to_deepseek_v4_pro(self) -> None:
-        settings = Settings(llm_api_key="test-key", _env_file=None)
-        assert settings.llm_judge_model == "deepseek-v4-pro"
-        assert settings.llm_judge_model != settings.llm_model
+        llm = LLMSettings(api_key="test-key", _env_file=None)
+        assert llm.judge_model == "deepseek-v4-pro"
+        assert llm.judge_model != llm.model
 
     def test_judge_model_is_configurable(self) -> None:
-        settings = Settings(llm_api_key="test-key", llm_judge_model="custom-judge", _env_file=None)
-        assert settings.llm_judge_model == "custom-judge"
-        assert settings.llm_model == "deepseek-v4-flash"  # generator untouched
+        llm = LLMSettings(api_key="test-key", judge_model="custom-judge", _env_file=None)
+        assert llm.judge_model == "custom-judge"
+        assert llm.model == "deepseek-v4-flash"  # generator untouched
 
     def test_build_judge_client_uses_judge_model(self) -> None:
-        settings = Settings(llm_api_key="test-key", llm_model="deepseek-v4-flash", llm_judge_model="deepseek-v4-pro")
-        client = build_judge_client(settings)
+        llm = LLMSettings(
+            api_key="test-key",
+            model="deepseek-v4-flash",
+            judge_model="deepseek-v4-pro",
+            _env_file=None,
+        )
+        client = build_judge_client(llm)
         assert isinstance(client, OpenAIClient)
         assert client._model == "deepseek-v4-pro"  # type: ignore[attr-defined]
-        assert client._model != settings.llm_model  # type: ignore[attr-defined]
+        assert client._model != llm.model  # type: ignore[attr-defined]
 
     def test_build_judge_client_rejects_unsupported_provider(self) -> None:
-        settings = Settings(llm_api_key="test-key", llm_provider="anthropic")
+        llm = LLMSettings(api_key="test-key", provider="anthropic", _env_file=None)
         with pytest.raises(ValueError):
-            build_judge_client(settings)
+            build_judge_client(llm)
 
 
 class TestAuditAgreement:

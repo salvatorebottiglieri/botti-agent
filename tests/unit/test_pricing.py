@@ -4,7 +4,8 @@ import json
 
 import pytest
 
-from cortex.config.models import ModelPricing, Settings, derive_cost
+from cortex.config.models import ModelPricing, derive_cost
+from cortex.llm.config import LLMSettings
 from cortex.llm.models import UsageStats
 
 
@@ -12,33 +13,34 @@ class TestModelPricing:
     """Settings exposes a per-model pricing table with sane defaults."""
 
     def test_defaults_cover_deepseek_chat(self):
-        settings = Settings(llm_api_key="test-key")
-        assert "deepseek-chat" in settings.llm_pricing
+        llm = LLMSettings(api_key="test-key", _env_file=None)
+        assert "deepseek-chat" in llm.pricing
 
     def test_defaults_cover_gpt_4o(self):
-        settings = Settings(llm_api_key="test-key")
-        assert "gpt-4o" in settings.llm_pricing
+        llm = LLMSettings(api_key="test-key", _env_file=None)
+        assert "gpt-4o" in llm.pricing
 
     def test_defaults_cover_shipped_v4_models(self):
         """The shipped generator (v4-flash) and judge (v4-pro) are priced so
         eval cost tracking never reports zero for the default models."""
-        pricing = Settings(llm_api_key="test-key").llm_pricing
+        pricing = LLMSettings(api_key="test-key", _env_file=None).pricing
         assert "deepseek-v4-flash" in pricing
         assert "deepseek-v4-pro" in pricing
 
     def test_default_prices_are_positive(self):
-        for pricing in Settings(llm_api_key="test-key").llm_pricing.values():
+        for pricing in LLMSettings(api_key="test-key", _env_file=None).pricing.values():
             assert pricing.input_per_mtok > 0
             assert pricing.output_per_mtok > 0
 
     def test_custom_pricing_overrides_defaults(self):
-        settings = Settings(
-            llm_api_key="test-key",
-            llm_pricing={
+        llm = LLMSettings(
+            api_key="test-key",
+            pricing={
                 "my-model": ModelPricing(input_per_mtok=1.5, output_per_mtok=3.0)
             },
+            _env_file=None,
         )
-        assert settings.llm_pricing == {
+        assert llm.pricing == {
             "my-model": ModelPricing(input_per_mtok=1.5, output_per_mtok=3.0),
         }
 
@@ -47,8 +49,8 @@ class TestModelPricing:
             "LLM_PRICING",
             json.dumps({"env-model": {"input_per_mtok": 2.0, "output_per_mtok": 4.0}}),
         )
-        settings = Settings(llm_api_key="test-key")
-        assert settings.llm_pricing == {
+        llm = LLMSettings(api_key="test-key", _env_file=None)
+        assert llm.pricing == {
             "env-model": ModelPricing(input_per_mtok=2.0, output_per_mtok=4.0),
         }
 

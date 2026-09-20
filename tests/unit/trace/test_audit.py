@@ -30,11 +30,13 @@ from cortex.agentic.events import (
     ToolStartEvent,
 )
 from cortex.config.models import Settings
+from cortex.config.trace import TraceSettings
 from cortex.eval.judge import (
     DEFAULT_DIMENSION_ORDER,
     JudgeVerdict,
     TrajectoryJudge,
 )
+from cortex.llm.config import LLMSettings
 from cortex.llm.models import ChatMessage, ChatResult, Role, UsageStats
 from cortex.sessions.models import MessageRole
 from cortex.trace import audit as trace_audit
@@ -605,9 +607,9 @@ class TestDefaultWiring:
         default_judge = TrajectoryJudge(client)
         default_pseudonymizer = FakePseudonymizer()
 
-        judge_settings: list[Settings] = []
-        pseudonymizer_settings: list[Settings] = []
-        settings = Settings(llm_api_key="test-key", _env_file=None)
+        judge_settings: list[LLMSettings] = []
+        pseudonymizer_settings: list[TraceSettings] = []
+        settings = Settings(llm={"api_key": "test-key"})
         monkeypatch.setattr(
             "cortex.config.loader.get_settings", lambda: settings
         )
@@ -624,24 +626,23 @@ class TestDefaultWiring:
             session_id, session_repo=session_repo, trace_repo=trace_repo
         )
         assert verdict.partial_credit is not None
-        assert judge_settings == [settings]
-        assert pseudonymizer_settings == [settings]
+        assert judge_settings == [settings.llm]
+        assert pseudonymizer_settings == [settings.trace]
         assert len(client.calls) == 2  # the default-built judge ran the passes
 
     def test_default_judge_constructor_from_settings(self) -> None:
-        settings = Settings(llm_api_key="test-key", llm_provider="openai", _env_file=None)
-        assert isinstance(trace_audit._default_judge(settings), TrajectoryJudge)
+        llm = LLMSettings(api_key="test-key", provider="openai", _env_file=None)
+        assert isinstance(trace_audit._default_judge(llm), TrajectoryJudge)
 
     def test_default_pseudonymizer_constructor_from_settings(self) -> None:
         from cortex.trace.pseudonymizer import RizzoPseudonymizer
 
-        settings = Settings(
-            llm_api_key="test-key",
-            trace_sidecar_url="http://sidecar:5005",
-            trace_sidecar_timeout_s=3.0,
+        trace = TraceSettings(
+            sidecar_url="http://sidecar:5005",
+            sidecar_timeout_s=3.0,
             _env_file=None,
         )
-        pseudonymizer = trace_audit._default_pseudonymizer(settings)
+        pseudonymizer = trace_audit._default_pseudonymizer(trace)
         assert isinstance(pseudonymizer, RizzoPseudonymizer)
         assert pseudonymizer._base_url == "http://sidecar:5005"
 

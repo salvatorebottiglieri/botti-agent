@@ -2,7 +2,7 @@
 
 The command follows the token:create CLI conventions (typer command, nested
 async runner via asyncio.run, direct asyncpg connection from --db-url or
-settings.database_url) and deletes ONLY ``loop_events`` rows strictly older
+settings.database.database_url) and deletes ONLY ``loop_events`` rows strictly older
 than ``now - retention window`` — the same predicate as
 TraceRepository.delete_older_than, mirrored on the CLI's own connection so an
 explicit --db-url is honored. It is safe on an empty DB and idempotent.
@@ -23,6 +23,8 @@ import pytest
 from typer.testing import CliRunner
 
 from cortex.cli import cli
+from cortex.config.database import DatabaseSettings
+from cortex.config.trace import TraceSettings
 
 runner = CliRunner()
 
@@ -46,8 +48,10 @@ def pinned_clock(monkeypatch):
 def fake_settings(monkeypatch):
     """Stub get_settings so DB URL + retention come from a controllable source."""
     stub = SimpleNamespace(
-        database_url="postgresql://settings:5432/cortex",
-        trace_retention_days=45,
+        database=DatabaseSettings(
+            database_url="postgresql://settings:5432/cortex", _env_file=None
+        ),
+        trace=TraceSettings(retention_days=45, _env_file=None),
     )
     monkeypatch.setattr("cortex.config.loader.get_settings", lambda: stub)
     return stub
@@ -78,7 +82,7 @@ class TestTracesCleanup:
         )
 
         assert result.exit_code == 0, result.output
-        # --db-url flag wins over settings.database_url.
+        # --db-url flag wins over settings.database.database_url.
         connect.assert_awaited_once_with("postgresql://flag:5432/cortex")
         # Exactly one statement ran — nothing else (sessions/messages) was touched.
         assert conn.execute.await_count == 1

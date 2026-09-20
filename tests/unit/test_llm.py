@@ -1,7 +1,6 @@
 """Tests for the LLM Client."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -13,6 +12,7 @@ from cortex.llm import (
     ToolCall,
     ToolDefinition,
 )
+from cortex.llm.config import LLMSettings
 from cortex.llm.models import ChatResult
 from cortex.llm.providers import OpenAIClient
 
@@ -158,15 +158,11 @@ class TestOpenAIClient:
 
     @pytest.fixture
     def mock_settings(self):
-        """Create mock settings."""
-        settings = MagicMock()
-        settings.llm_api_key.get_secret_value.return_value = "test-key"
-        settings.llm_model = "gpt-4o"
-        settings.llm_base_url = None
-        return settings
+        """LLM settings slice handed to the client."""
+        return LLMSettings(api_key="test-key", model="gpt-4o", base_url=None, _env_file=None)
 
     def test_from_settings(self, mock_settings):
-        """Test creating client from settings."""
+        """Test creating client from the LLM settings slice."""
         client = OpenAIClient.from_settings(mock_settings)
         assert client._model == "gpt-4o"
 
@@ -379,13 +375,10 @@ class TestLLMClientFactory:
 
     @pytest.fixture
     def mock_settings(self):
-        """Create mock settings."""
-        settings = MagicMock()
-        settings.llm_provider = "openai"
-        settings.llm_api_key.get_secret_value.return_value = "test-key"
-        settings.llm_model = "gpt-4o"
-        settings.llm_base_url = None
-        return settings
+        """LLM settings slice handed to the factory."""
+        return LLMSettings(
+            provider="openai", api_key="test-key", model="gpt-4o", base_url=None, _env_file=None
+        )
 
     def test_create_default_provider(self, mock_settings):
         """Test creating client with default provider."""
@@ -413,8 +406,7 @@ class TestLLMClientFactory:
 
         LLMClientFactory.register_provider("custom", CustomClient)
 
-        settings = MagicMock()
-        settings.llm_provider = "openai"
+        settings = LLMSettings(api_key="test-key", _env_file=None)
 
         factory = LLMClientFactory(settings)
         # This would fail because CustomClient isn't a proper subclass,
