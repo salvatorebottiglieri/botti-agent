@@ -374,7 +374,7 @@ class TestImportGraph:
             capture_output=True,
         )
 
-    def test_config_layer_does_not_load_the_openai_sdk(self) -> None:
+    def test_config_layer_does_not_import_the_llm_package(self) -> None:
         """The config layer must not depend on the ``llm`` package (F-A).
 
         Negation, first assertion: a reintroduced ``config -> llm`` edge —
