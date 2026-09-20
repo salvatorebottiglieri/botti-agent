@@ -109,13 +109,15 @@ def load_settings(config_path: Path | None = None) -> Settings:
     2. Environment variables
     3. Default values in the settings models
 
-    # YAML > env is a known defect tracked in #125.
-
     YAML values are passed to the composed slices as constructor arguments, and
     pydantic-settings ranks an explicit argument above an environment variable —
     hence the order above. A YAML section that is absent (or a ``${VAR}``
     reference whose variable is unset, which drops that key) leaves the field to
     its environment variable or default.
+
+    That order is the measured behaviour and is preserved deliberately; an
+    operator would expect the environment to win, and the inverted precedence is
+    the defect filed as #125 (out of scope here).
 
     Args:
         config_path: Optional path to config YAML file.

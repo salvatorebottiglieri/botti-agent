@@ -352,10 +352,20 @@ CLI (`cortex <command>`, `src/cortex/cli.py`): `token:create`, `traces:cleanup`,
 
 ## Configuration
 
-`config.yaml` sections (env overrides win): `database`, `llm` (provider, model,
-base_url, timeout), `trace` (sidecar URL, timeout, retention), `mqtt`
-(broker_url, keepalive, reconnect), `app` (host, port), `logging`.
-Per-module LLM settings are composed (ADR-0010).
+`Settings` is composed of per-module slices handed to consumers by constructor
+injection (ADR-0010): `database`, `llm` (provider, model, base_url, timeout,
+judge model, pricing, circuit breaker), `mqtt` (broker_url, keepalive, reconnect),
+`app` (host, port), `trace` (sidecar URL, timeout, retention), `logging`,
+`learning`. `config.yaml` carries one optional section per slice, and a section's
+values win over the environment, which wins over the field defaults
+(`src/cortex/config/loader.py`) — the inverted precedence an operator expects is
+the defect filed as #125.
+
+Each slice reads its own environment namespace: `DATABASE_URL`/`DB_POOL_*`,
+`LLM_*` (plus the legacy `CIRCUIT_BREAKER_*` spellings), `MQTT_*`, `APP_*`,
+`TRACE_*`, `LOG_*`. The slices are nested fields of the root, so a bare variable
+named after one (`APP`, `LLM`, `TRACE`, …) is read as that slice and surfaces as
+a validation error rather than being ignored.
 
 ## Testing and CI
 

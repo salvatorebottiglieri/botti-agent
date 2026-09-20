@@ -19,8 +19,9 @@ from pydantic import ValidationError
 from cortex.config.app import AppSettings
 from cortex.config.database import DatabaseSettings
 from cortex.config.llm import LLMSettings
-from cortex.config.loader import load_settings
+from cortex.config.loader import _SETTINGS_SECTIONS, load_settings
 from cortex.config.logging import LoggingSettings
+from cortex.config.models import Settings
 from cortex.config.mqtt import MQTTSettings
 from cortex.config.trace import TraceSettings
 
@@ -215,3 +216,18 @@ logging:
 
         with pytest.raises(ValidationError, match="api_key"):
             load_settings(config)
+
+
+class TestSectionList:
+    """F-E: the loader's section list and the composed root must stay in sync.
+
+    Negation: a slice added to ``Settings`` without a matching
+    ``_SETTINGS_SECTIONS`` entry is silently never fed its YAML section; a stale
+    entry is dead configuration surface. Pinned against the private tuple on
+    purpose — it *is* the correspondence under test.
+    """
+
+    def test_root_fields_and_sections_match_one_to_one(self) -> None:
+        root_slices = set(Settings.model_fields) - {"version"}
+
+        assert root_slices == set(_SETTINGS_SECTIONS)

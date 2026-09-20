@@ -15,7 +15,6 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.types import Scope
 
-from cortex.api.dependencies import set_app_state
 from cortex.api.routes import (
     admin_auth_router,
     chat_router,
@@ -124,33 +123,3 @@ def create_api_app(settings: Settings) -> FastAPI:
         app.mount("/ui", NoCacheStaticFiles(directory=static_dir, html=True), name="ui")
 
     return app
-
-
-def create_app(settings: Settings) -> FastAPI:
-    """Alias for create_api_app for backward compatibility."""
-    return create_api_app(settings)
-
-
-def bootstrap_app(state: dict[str, Any], settings: Settings) -> FastAPI:
-    """
-    Bootstrap the app with full dependency injection.
-
-    Called during startup with all initialized services.
-
-    Args:
-        state: Dict containing all initialized services:
-            - db_pool
-            - event_bus
-            - session_service
-            - execution_module
-            - interaction_service
-            - minion_service
-            - context_provider
-            - fact_store
-            - llm_client
-        settings: Root settings, forwarded to :func:`create_api_app`.
-    """
-    # Set the app state for dependency injection
-    set_app_state(state)
-
-    return create_app(settings)
