@@ -11,11 +11,25 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import ValidationError
 
 from cortex.config.models import Settings
 
 _UNRESOLVED_ENV_REF = re.compile(r"\$\{?\w+\}?")
+
+#: YAML section -> slice field name, for the section keys whose name differs
+#: from the field. ``config.yaml`` key names are a user-facing contract, so the
+#: translation happens here and the file keeps its documented shape.
+_YAML_KEY_TO_FIELD: dict[str, dict[str, str]] = {
+    "database": {
+        "url": "database_url",
+        "pool_min_size": "db_pool_min_size",
+        "pool_max_size": "db_pool_max_size",
+        "pool_timeout": "db_pool_timeout",
+    },
+}
+
+#: YAML sections that map onto a slice of the composed ``Settings``.
+_SETTINGS_SECTIONS = ("database", "llm", "mqtt", "app", "logging", "trace", "learning")
 
 
 def find_config_file() -> Path | None:
@@ -46,18 +60,6 @@ def load_yaml_config(config_path: Path | None = None) -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def _flatten_dict(d: dict[str, Any], parent_key: str = "", sep: str = "_") -> dict[str, Any]:
-    """Flatten nested dict for environment variable matching."""
-    items: list[tuple[str, Any]] = []
-    for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict):
-            items.extend(_flatten_dict(v, new_key, sep=sep).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
-
-
 def _resolve_env_refs(value: Any) -> Any:
     """Expand ``${VAR}`` references in a YAML scalar.
 
@@ -84,18 +86,36 @@ class _UnresolvedEnvRefError(Exception):
     """Raised internally when a ${VAR} reference is not set in the environment."""
 
 
+def _section_input(section: str, values: dict[str, Any]) -> dict[str, Any]:
+    """Map a YAML section onto the field names of its settings slice.
+
+    Values that resolved to ``None`` (an unset ``${VAR}`` reference) are
+    dropped so the slice's environment variable or default applies instead.
+    """
+    aliases = _YAML_KEY_TO_FIELD.get(section, {})
+    return {
+        aliases.get(key, key): value
+        for key, value in values.items()
+        if value is not None
+    }
+
+
 def load_settings(config_path: Path | None = None) -> Settings:
     """
     Load settings from YAML file and environment variables.
 
     Priority (highest to lowest):
-    1. Environment variables
-    2. YAML config file
-    3. Default values in Settings model
+    1. YAML config file values
+    2. Environment variables
+    3. Default values in the settings models
 
-    ``${VAR}`` references inside YAML scalars are resolved from the
-    environment; values whose references are unset are dropped so the
-    environment variable of the same name (or the field default) wins.
+    # YAML > env is a known defect tracked in #125.
+
+    YAML values are passed to the composed slices as constructor arguments, and
+    pydantic-settings ranks an explicit argument above an environment variable —
+    hence the order above. A YAML section that is absent (or a ``${VAR}``
+    reference whose variable is unset, which drops that key) leaves the field to
+    its environment variable or default.
 
     Args:
         config_path: Optional path to config YAML file.
@@ -107,98 +127,23 @@ def load_settings(config_path: Path | None = None) -> Settings:
     Raises:
         ValidationError: If settings are invalid.
     """
-    # Load YAML config
     raw_yaml_config = load_yaml_config(config_path)
     yaml_config = {
-        k: {sk: _resolve_env_refs(sv) for sk, sv in sv.items()} if isinstance(sv, dict) else _resolve_env_refs(sv)
-        for k, sv in raw_yaml_config.items()
+        k: (
+            {sk: _resolve_env_refs(sv) for sk, sv in v.items()}
+            if isinstance(v, dict)
+            else _resolve_env_refs(v)
+        )
+        for k, v in raw_yaml_config.items()
     }
 
-    # Convert YAML to Pydantic-compatible nested dict
     settings_data: dict[str, Any] = {
-        "database": {},
-        "llm": {},
-        "mqtt": {},
-        "app": {},
-        "trace": {},
-        "log_level": None,
-        "log_format": None,
-        "log_include_trace_id": None,
+        section: _section_input(section, yaml_config[section])
+        for section in _SETTINGS_SECTIONS
+        if isinstance(yaml_config.get(section), dict)
     }
 
-    # Map nested YAML config to flat settings fields
-    if "database" in yaml_config:
-        db = yaml_config["database"]
-        if "url" in db:
-            settings_data["database_url"] = db["url"]
-        if "pool_min_size" in db:
-            settings_data["db_pool_min_size"] = db["pool_min_size"]
-        if "pool_max_size" in db:
-            settings_data["db_pool_max_size"] = db["pool_max_size"]
-        if "pool_timeout" in db:
-            settings_data["db_pool_timeout"] = db["pool_timeout"]
-
-    if "llm" in yaml_config:
-        llm = yaml_config["llm"]
-        if "provider" in llm:
-            settings_data["llm_provider"] = llm["provider"]
-        if "api_key" in llm:
-            settings_data["llm_api_key"] = llm["api_key"]
-        if "model" in llm:
-            settings_data["llm_model"] = llm["model"]
-        if "base_url" in llm:
-            settings_data["llm_base_url"] = llm["base_url"]
-        if "timeout" in llm:
-            settings_data["llm_timeout"] = llm["timeout"]
-
-    if "mqtt" in yaml_config:
-        mqtt = yaml_config["mqtt"]
-        if "broker_url" in mqtt:
-            settings_data["mqtt_broker_url"] = mqtt["broker_url"]
-        if "username" in mqtt:
-            settings_data["mqtt_username"] = mqtt["username"]
-        if "keepalive" in mqtt:
-            settings_data["mqtt_keepalive"] = mqtt["keepalive"]
-        if "reconnect_interval" in mqtt:
-            settings_data["mqtt_reconnect_interval"] = mqtt["reconnect_interval"]
-
-    if "app" in yaml_config:
-        app = yaml_config["app"]
-        if "host" in app:
-            settings_data["app_host"] = app["host"]
-        if "port" in app:
-            settings_data["app_port"] = app["port"]
-        if "reload" in app:
-            settings_data["app_reload"] = app["reload"]
-        if "workers" in app:
-            settings_data["app_workers"] = app["workers"]
-
-    if "trace" in yaml_config:
-        trace = yaml_config["trace"]
-        if "sidecar_url" in trace:
-            settings_data["trace_sidecar_url"] = trace["sidecar_url"]
-        if "sidecar_timeout_s" in trace:
-            settings_data["trace_sidecar_timeout_s"] = trace["sidecar_timeout_s"]
-        if "retention_days" in trace:
-            settings_data["trace_retention_days"] = trace["retention_days"]
-
-    if "logging" in yaml_config:
-        log = yaml_config["logging"]
-        if "level" in log:
-            settings_data["log_level"] = log["level"]
-        if "format" in log:
-            settings_data["log_format"] = log["format"]
-        if "include_trace_id" in log:
-            settings_data["log_include_trace_id"] = log["include_trace_id"]
-
-    # Remove None values
-    settings_data = {k: v for k, v in settings_data.items() if v is not None}
-
-    try:
-        return Settings(**settings_data)
-    except ValidationError:
-        # Re-raise original error
-        raise
+    return Settings(**settings_data)
 
 
 @lru_cache(maxsize=1)

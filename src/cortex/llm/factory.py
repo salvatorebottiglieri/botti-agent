@@ -2,8 +2,8 @@
 
 import logging
 
-from cortex.config.models import Settings
 from cortex.llm.base import LLMClient
+from cortex.llm.config import LLMSettings
 from cortex.llm.providers.openai import OpenAIClient
 
 logger = logging.getLogger(__name__)
@@ -18,23 +18,23 @@ class LLMClientFactory:
     Factory for creating LLM client instances.
 
     Example:
-        settings = get_settings()
-        factory = LLMClientFactory(settings)
+        llm = get_settings().llm
+        factory = LLMClientFactory(llm)
         client = factory.create()  # Creates OpenAI client by default
 
         # Or specify provider
         client = factory.create(provider="anthropic")
     """
 
-    def __init__(self, settings: Settings):
-        self._settings = settings
+    def __init__(self, llm: LLMSettings):
+        self._llm = llm
 
     def create(self, provider: str | None = None) -> LLMClient:
         """
         Create an LLM client for the specified provider.
 
         Args:
-            provider: Provider name (defaults to settings.llm_provider)
+            provider: Provider name (defaults to the settings slice's provider)
 
         Returns:
             Configured LLM client instance
@@ -42,7 +42,7 @@ class LLMClientFactory:
         Raises:
             ValueError: If provider is not supported
         """
-        provider = provider or self._settings.llm_provider
+        provider = provider or self._llm.provider
 
         client_class = PROVIDER_MAP.get(provider)
         if client_class is None:
@@ -51,7 +51,7 @@ class LLMClientFactory:
             )
 
         logger.info("Creating LLM client for provider: %s", provider)
-        return client_class.from_settings(self._settings)
+        return client_class.from_settings(self._llm)
 
     def create_for_module(
         self,
@@ -61,11 +61,12 @@ class LLMClientFactory:
         """Create an LLM client for a specific module, wrapped with CircuitBreaker.
 
         Each module gets its own ``CircuitBreaker`` with thresholds from
-        ``Settings``, so failures in one module do not affect another.
+        :class:`cortex.llm.config.LLMSettings`, so failures in one module do not
+        affect another.
 
         Args:
             module: Module name (e.g. ``"execution"``, ``"memory"``).
-            provider: Provider name (defaults to ``settings.llm_provider``).
+            provider: Provider name (defaults to the settings slice's provider).
 
         Returns:
             A ``CircuitBreakerLLMClient`` wrapping the provider's client.
@@ -75,9 +76,9 @@ class LLMClientFactory:
 
         client = self.create(provider=provider)
         breaker = CircuitBreaker(
-            failure_threshold=self._settings.circuit_breaker_threshold,
-            recovery_timeout=self._settings.circuit_breaker_timeout,
-            half_open_successes=self._settings.circuit_breaker_half_open_successes,
+            failure_threshold=self._llm.circuit_breaker_threshold,
+            recovery_timeout=self._llm.circuit_breaker_timeout,
+            half_open_successes=self._llm.circuit_breaker_half_open_successes,
         )
         return CircuitBreakerLLMClient(client, breaker, module)
 

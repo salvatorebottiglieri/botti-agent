@@ -213,11 +213,11 @@ async def run_suite(
         from cortex.llm.factory import LLMClientFactory
 
         settings = get_settings()
-        client = LLMClientFactory(settings).create()
+        client = LLMClientFactory(settings.llm).create()
         if pricing is None:
-            pricing = settings.llm_pricing.get(settings.llm_model)
+            pricing = settings.llm.pricing.get(settings.llm.model)
         if judge_pricing is None:
-            judge_pricing = settings.llm_pricing.get(settings.llm_judge_model)
+            judge_pricing = settings.llm.pricing.get(settings.llm.judge_model)
 
 
     judge: TrajectoryJudge | None = None
@@ -231,7 +231,7 @@ async def run_suite(
             if judge_client_ is None:
                 from cortex.config.loader import get_settings
 
-                judge_client_ = build_judge_client(get_settings())
+                judge_client_ = build_judge_client(get_settings().llm)
             judge = TrajectoryJudge(judge_client_)
         return judge
 

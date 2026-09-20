@@ -1,156 +1,60 @@
-"""
-Pydantic settings models for Cortex configuration.
+"""Pydantic settings models for Cortex configuration.
+
+The root :class:`Settings` is a composition of per-module slices (ADR-0010):
+each slice is handed to its consumer by constructor injection, so a module can
+be tested with its own config without mutating unrelated ones.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from pydantic import Field
 
-from pydantic import BaseModel, Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from cortex.config.app import AppSettings
+from cortex.config.base import CortexSettings
+from cortex.config.database import DatabaseSettings
+from cortex.config.learning import LearningSettings
+from cortex.config.logging import LoggingSettings
+from cortex.config.mqtt import MQTTSettings
+from cortex.config.trace import TraceSettings
+from cortex.llm.config import LLMSettings, ModelPricing, derive_cost
 
-if TYPE_CHECKING:
-    from cortex.llm.models import UsageStats
-
-
-class ModelPricing(BaseModel):
-    """Per-model token pricing, in USD per 1M tokens (mtok).
-
-    Mirrors the published per-model price sheets (OpenAI, DeepSeek):
-    input tokens and output tokens are priced independently.
-    """
-
-    input_per_mtok: float
-    output_per_mtok: float
-
-
-def derive_cost(usage: UsageStats, pricing: ModelPricing) -> float:
-    """Derive the USD cost of a call's token usage from per-model pricing.
-
-    Pure and deterministic: same usage + pricing always yields the same cost.
-    ``total_tokens`` is informational — cost is driven by the
-    prompt/completion split because the two directions are priced differently.
-    """
-    return (
-        usage.prompt_tokens * pricing.input_per_mtok
-        + usage.completion_tokens * pricing.output_per_mtok
-    ) / 1_000_000
+__all__ = [
+    "AppSettings",
+    "DatabaseSettings",
+    "LLMSettings",
+    "LearningSettings",
+    "LoggingSettings",
+    "MQTTSettings",
+    "ModelPricing",
+    "Settings",
+    "TraceSettings",
+    "derive_cost",
+]
 
 
-class Settings(BaseSettings):
+class Settings(CortexSettings):
     """
     Root settings container for Cortex.
 
-    All modules import Settings from here to ensure consistent configuration.
-    Uses env vars with prefixes: DB_, LLM_, MQTT_, APP_, LOG_
+    Holds one instance of each per-module slice. Composed fields read their own
+    environment namespace (``DB_``/``DATABASE_``, ``LLM_``, ``MQTT_``, ``APP_``,
+    ``LOG_``, ``TRACE_``) and their own ``.env``; pass a slice explicitly to
+    override it, e.g. ``Settings(llm={"api_key": ...})``.
     """
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore"
-    )
-
-    # ─── Database ────────────────────────────────────────────
-    database_url: str = Field(
-        default="postgresql://postgres:postgres@localhost:5432/cortex",
-        description="PostgreSQL connection URL"
-    )
-    db_pool_min_size: int = Field(default=5, ge=1)
-    db_pool_max_size: int = Field(default=20, ge=1)
-    db_pool_timeout: int = Field(default=30, ge=1)
-
-    # ─── LLM ──────────────────────────────────────────────────
-    llm_provider: Literal["openai", "anthropic"] = Field(
-        default="openai",
-        description="LLM provider to use"
-    )
-    llm_api_key: SecretStr = Field(
-        description="API key for the LLM provider"
-    )
-    llm_model: str = Field(
-        default="deepseek-v4-flash",
-        description="Model name to use"
-    )
-    llm_judge_model: str = Field(
-        default="deepseek-v4-pro",
-        description="Model used by the Trajectory Judge — distinct from llm_model "
-        "so the judge never grades with the generator's model (self-enhancement "
-        "bias guard, T5)"
-    )
-    llm_base_url: str | None = Field(
-        default=None,
-        description="Base URL for API-compatible providers"
-    )
-    circuit_breaker_threshold: int = Field(default=5, ge=1)
-    circuit_breaker_timeout: float = Field(default=30.0, ge=0.0)
-    circuit_breaker_half_open_successes: int = Field(default=3, ge=1)
-    llm_timeout: int = Field(default=60, ge=1)
-    llm_pricing: dict[str, ModelPricing] = Field(
-        default_factory=lambda: {
-            # Defaults cover the shipped config model (deepseek-v4-flash) and the
-            # Settings default (deepseek-v4-flash generator / deepseek-v4-pro
-            # judge); v4 prices are DeepSeek's off-peak cache-miss input and
-            # off-peak output rates (api-docs.deepseek.com/quick_start/pricing).
-            # Override via LLM_PRICING (JSON) or constructor for any other model.
-            "deepseek-v4-flash": ModelPricing(input_per_mtok=0.22, output_per_mtok=0.66),
-            "deepseek-v4-pro": ModelPricing(input_per_mtok=0.66, output_per_mtok=1.98),
-            "deepseek-chat": ModelPricing(input_per_mtok=0.27, output_per_mtok=1.10),
-            "gpt-4o": ModelPricing(input_per_mtok=2.50, output_per_mtok=10.00),
-        },
-        description="Per-model token pricing in USD per 1M tokens",
-    )
-
-    # ─── MQTT ─────────────────────────────────────────────────
-    mqtt_broker_url: str = Field(
-        default="mqtt://localhost:1883",
-        description="MQTT broker URL"
-    )
-    mqtt_username: str | None = Field(default=None)
-    mqtt_password: SecretStr | None = Field(default=None)
-    mqtt_client_id_prefix: str = Field(default="cortex")
-    mqtt_keepalive: int = Field(default=60, ge=1)
-    mqtt_reconnect_interval: int = Field(default=5, ge=1)
-
-    # ─── App Server ───────────────────────────────────────────
-    app_host: str = Field(default="0.0.0.0")
-    app_port: int = Field(default=8000, ge=1, le=65535)
-    app_reload: bool = Field(default=False)
-    app_workers: int = Field(default=1, ge=1)
-
-    # ─── Trace capture ─────────────────────────────────────────
-    # Local rizzo-pii pseudonymization sidecar for loop-trace capture (issue
-    # #112 T2). Flat, env-overridable (TRACE_SIDECAR_URL /
-    # TRACE_SIDECAR_TIMEOUT_S / TRACE_RETENTION_DAYS) like LLM_PRICING.
-    # Capture fails closed when the sidecar is unreachable.
-    trace_sidecar_url: str = Field(
-        default="http://127.0.0.1:5005",
-        description="Base URL of the rizzo-pii pseudonymization sidecar",
-    )
-    trace_sidecar_timeout_s: float = Field(
-        default=10.0,
-        gt=0,
-        description="Per-request timeout in seconds for sidecar /analyze calls",
-    )
-    # Loop-event rows older than this many days are eligible for deletion by
-    # `cortex traces:cleanup` (issue #114 T4).
-    trace_retention_days: int = Field(
-        default=30,
-        ge=1,
-        description="Days of loop_events history to keep; older rows are "
-        "deleted by `cortex traces:cleanup`",
-    )
-
-    # ─── Logging ──────────────────────────────────────────────
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
-        default="INFO"
-    )
-    log_format: Literal["json", "console"] = Field(default="console")
-    log_include_trace_id: bool = Field(default=True)
-
-    # ─── Version ──────────────────────────────────────────────
     version: str = Field(default="0.1.0")
+
+    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    # ``LLMSettings`` has a required ``api_key`` that the environment supplies,
+    # so mypy rejects the bare class as a zero-arg factory. ``model_validate({})``
+    # runs the same settings sources (env / .env) and keeps the required-field
+    # check, so a missing LLM_API_KEY still raises ValidationError.
+    llm: LLMSettings = Field(default_factory=lambda: LLMSettings.model_validate({}))
+    mqtt: MQTTSettings = Field(default_factory=MQTTSettings)
+    app: AppSettings = Field(default_factory=AppSettings)
+    logging: LoggingSettings = Field(default_factory=LoggingSettings)
+    trace: TraceSettings = Field(default_factory=TraceSettings)
+    learning: LearningSettings = Field(default_factory=LearningSettings)
 
     def __repr__(self) -> str:
         """Hide sensitive values in repr."""

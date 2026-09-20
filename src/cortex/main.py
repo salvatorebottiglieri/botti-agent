@@ -89,7 +89,7 @@ def create_app(cortex_state: dict[str, Any] | None = None) -> FastAPI:
         from cortex.api.dependencies import set_app_state
         set_app_state(cortex_state)
 
-    return create_api_app()
+    return create_api_app(get_settings())
 
 
 async def initialize_app() -> CortexApp:
@@ -114,7 +114,7 @@ async def initialize_app() -> CortexApp:
     settings = get_settings()
 
     # Configure logging
-    configure_logging(settings)
+    configure_logging(settings.logging)
 
     logger.info(f"Cortex v{settings.version} - Initializing...")
 
@@ -125,7 +125,7 @@ async def initialize_app() -> CortexApp:
     # 2. Create DB pool
     logger.info("Creating database pool...")
     from cortex.db.pool import create_pool
-    cortex.db_pool = await create_pool(settings)
+    cortex.db_pool = await create_pool(settings.database)
 
     # 3. Run DB migrations
     logger.info("Running database migrations...")
@@ -166,8 +166,8 @@ async def initialize_app() -> CortexApp:
     trace_recorder = TraceRecorder(
         repository=PostgresTraceRepository(),
         pseudonymizer=RizzoPseudonymizer(
-            base_url=settings.trace_sidecar_url,
-            timeout=settings.trace_sidecar_timeout_s,
+            base_url=settings.trace.sidecar_url,
+            timeout=settings.trace.sidecar_timeout_s,
         ),
     )
 
@@ -180,7 +180,7 @@ async def initialize_app() -> CortexApp:
 
     # 5d. Create LLM client
     from cortex.llm.factory import LLMClientFactory
-    llm_factory = LLMClientFactory(settings)
+    llm_factory = LLMClientFactory(settings.llm)
     cortex.llm_client = llm_factory.create()
 
     # 5d'. Create fact extractor so sensory-event extraction is live rather
@@ -285,7 +285,7 @@ async def initialize_app() -> CortexApp:
     from cortex.api.dependencies import set_app_state
     from cortex.api.main import create_api_app
     set_app_state(state)
-    cortex.app = create_api_app()
+    cortex.app = create_api_app(settings)
 
     # Subscribe services to event bus
     await _subscribe_services(cortex)
@@ -358,12 +358,12 @@ async def _initialize_minion_service(cortex: CortexApp) -> None:
         minion_id=f"cortex-{settings.version}",
         minion_name="Cortex Server",
         device_type="server",
-        broker_url=settings.mqtt_broker_url,
-        username=settings.mqtt_username,
-        password=settings.mqtt_password.get_secret_value() if settings.mqtt_password else None,
+        broker_url=settings.mqtt.broker_url,
+        username=settings.mqtt.username,
+        password=settings.mqtt.password.get_secret_value() if settings.mqtt.password else None,
         topics=["minions/+/events"],  # Subscribe to all minion events
         qos=1,
-        keepalive=settings.mqtt_keepalive,
+        keepalive=settings.mqtt.keepalive,
     )
 
     # Create gateway and registry

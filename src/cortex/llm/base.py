@@ -4,8 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any
 
-from cortex.config.models import Settings
-from cortex.llm.config import GenerationConfig
+from cortex.llm.config import GenerationConfig, LLMSettings
 from cortex.llm.models import ChatMessage, ChatResult
 from cortex.tools.interfaces import ToolCall, ToolDefinition
 
@@ -99,6 +98,6 @@ class LLMClient(ABC):
 
     @classmethod
     @abstractmethod
-    def from_settings(cls,settings: Settings) -> "LLMClient":
-        """Return settings for the class"""
+    def from_settings(cls, llm: LLMSettings) -> "LLMClient":
+        """Build a client from the LLM settings slice."""
         ...

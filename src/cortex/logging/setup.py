@@ -10,19 +10,19 @@ from typing import Any
 import structlog
 from structlog.types import Processor
 
-from cortex.config.models import Settings
+from cortex.config.logging import LoggingSettings
 
 
-def configure_logging(settings: Settings | None = None) -> None:
+def configure_logging(log_settings: LoggingSettings | None = None) -> None:
     """
     Configure structured logging for Cortex.
 
     Args:
-        settings: Application settings. If None, loads from config.
+        log_settings: Logging settings slice. If None, loads from config.
     """
-    if settings is None:
+    if log_settings is None:
         from cortex.config.loader import get_settings
-        settings = get_settings()
+        log_settings = get_settings().logging
 
     # Determine processors based on format
     shared_processors: list[Processor] = [
@@ -34,11 +34,11 @@ def configure_logging(settings: Settings | None = None) -> None:
         structlog.processors.UnicodeDecoder(),
     ]
 
-    if settings.log_include_trace_id:
+    if log_settings.include_trace_id:
         shared_processors.insert(0, structlog.contextvars.merge_contextvars)
         shared_processors.insert(2, _inject_trace_id)
 
-    if settings.log_format == "json":
+    if log_settings.format == "json":
         # JSON output for production
         processors = shared_processors + [
             structlog.processors.format_exc_info,
@@ -70,7 +70,7 @@ def configure_logging(settings: Settings | None = None) -> None:
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
-        level=getattr(logging, settings.log_level),
+        level=getattr(logging, log_settings.level),
     )
 
     # Reduce noise from third-party libraries

@@ -24,7 +24,7 @@ from cortex.api.routes import (
     minions_router,
     sessions_router,
 )
-from cortex.config.loader import get_settings
+from cortex.config.models import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +59,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Shutting down Cortex API...")
 
 
-def create_api_app() -> FastAPI:
+def create_api_app(settings: Settings) -> FastAPI:
     """
     Create and configure the FastAPI application.
 
+    Args:
+        settings: Root settings; the app reads ``version`` from it.
+
     Returns a fully wired FastAPI app with all routes mounted.
     """
-    settings = get_settings()
-
     app = FastAPI(
         title="Cortex API",
         description="Personal AI Assistant - Cortex",
@@ -125,12 +126,12 @@ def create_api_app() -> FastAPI:
     return app
 
 
-def create_app() -> FastAPI:
+def create_app(settings: Settings) -> FastAPI:
     """Alias for create_api_app for backward compatibility."""
-    return create_api_app()
+    return create_api_app(settings)
 
 
-def bootstrap_app(state: dict[str, Any]) -> FastAPI:
+def bootstrap_app(state: dict[str, Any], settings: Settings) -> FastAPI:
     """
     Bootstrap the app with full dependency injection.
 
@@ -147,8 +148,9 @@ def bootstrap_app(state: dict[str, Any]) -> FastAPI:
             - context_provider
             - fact_store
             - llm_client
+        settings: Root settings, forwarded to :func:`create_api_app`.
     """
     # Set the app state for dependency injection
     set_app_state(state)
 
-    return create_app()
+    return create_app(settings)

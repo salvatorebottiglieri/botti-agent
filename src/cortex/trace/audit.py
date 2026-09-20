@@ -50,8 +50,9 @@ from cortex.llm.models import UsageStats
 from cortex.sessions.models import MessageRole
 
 if TYPE_CHECKING:
-    from cortex.config.models import Settings
+    from cortex.config.trace import TraceSettings
     from cortex.eval.judge import JudgeVerdict, TrajectoryJudge
+    from cortex.llm.config import LLMSettings
     from cortex.sessions.interfaces import SessionRepository
     from cortex.sessions.models import Message
     from cortex.trace.interfaces import TraceRepository
@@ -163,7 +164,7 @@ async def audit_session(
         trace_repo: Loop-trace store; ``list_events`` supplies the captured
             pseudonymized payloads in seq order.
         judge: Trajectory Judge to run; when None, one is built from settings
-            (``build_judge_client(get_settings())`` + :class:`TrajectoryJudge`).
+            (``build_judge_client(get_settings().llm)`` + :class:`TrajectoryJudge`).
         pseudonymizer: Sidecar pseudonymizer for the first user turn and for
             stored-raw ``ErrorEvent.error`` text (capture stores it as-is by
             design); when None, the same rizzo sidecar the recorder uses is
@@ -200,7 +201,7 @@ async def audit_session(
 
         settings = get_settings()
     if pseudonymizer is None:
-        pseudonymizer = _default_pseudonymizer(settings)
+        pseudonymizer = _default_pseudonymizer(settings.trace)
     try:
         task_description = await pseudonymizer.anonymize(first_turn)
         await _pseudonymize_error_events(events, pseudonymizer)
@@ -212,7 +213,7 @@ async def audit_session(
         ) from exc
 
     if judge is None:
-        judge = _default_judge(settings)
+        judge = _default_judge(settings.llm)
     return await judge.judge_with_order_swap(
         events,
         task_name=f"session-{session_id}",
@@ -269,17 +270,15 @@ async def _pseudonymize_error_events(
             event.error = await pseudonymizer.anonymize(event.error)
 
 
-def _default_judge(settings: Settings) -> TrajectoryJudge:
-    """Build the production judge: the eval judge client from settings."""
+def _default_judge(llm: LLMSettings) -> TrajectoryJudge:
+    """Build the production judge: the eval judge client from the LLM slice."""
     from cortex.eval.judge import TrajectoryJudge, build_judge_client
 
-    return TrajectoryJudge(build_judge_client(settings))
+    return TrajectoryJudge(build_judge_client(llm))
 
 
-def _default_pseudonymizer(settings: Settings) -> Pseudonymizer:
+def _default_pseudonymizer(trace: TraceSettings) -> Pseudonymizer:
     """Build the production pseudonymizer: the same rizzo sidecar as capture."""
     from cortex.trace.pseudonymizer import RizzoPseudonymizer
 
-    return RizzoPseudonymizer(
-        settings.trace_sidecar_url, timeout=settings.trace_sidecar_timeout_s
-    )
+    return RizzoPseudonymizer(trace.sidecar_url, timeout=trace.sidecar_timeout_s)
