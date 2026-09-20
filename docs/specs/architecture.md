@@ -15,48 +15,113 @@
 
 ## System overview
 
+One diagram, all subsystems. Nodes are grouped by layer (see the module map
+below); external systems and data stores are outside the `Cortex` layers.
+Solid arrows are runtime calls; `-.` arrows are protocol/MQTT paths.
+
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph Actors
-        User[User]
-        Minions[Minions<br/>phone / card / laptop]
-        Admin[Admin / CLI]
+        User([User])
+        Admin([Admin / CLI])
+        Edge([Minions<br/>phone / card / laptop])
     end
 
     subgraph External
-        LLM[LLM provider<br/>OpenAI-compatible]
-        Sidecar[rizzo-pii sidecar]
+        LLMProvider[[LLM provider<br/>OpenAI-compatible]]
+        Sidecar[[rizzo-pii<br/>pseudonymizer]]
     end
 
-    subgraph Cortex
-        API[FastAPI API]
-        River[Event bus - The River]
-        Core[Agentic core<br/>loop / reasoner / executor]
-        Memory[Memory<br/>facts / concepts]
-        Learning[Learning<br/>reservoir]
-        Tools[Tool ecosystem]
-        MinionGW[Minion gateway]
-        Trace[Trace]
+    subgraph L6["Layer 6 - integration"]
+        Protocol[cortex_protocol]
+        Laptop[laptop-minion]
+        Root[main.py<br/>composition root]
     end
 
-    DB[(Postgres)]
+    subgraph L5["Layer 5 - orchestration"]
+        API[api routes]
+        Execution[ExecutionModule]
+        Interaction[InteractionService]
+    end
+
+    subgraph L4["Layer 4 - agentic core"]
+        Loop[AgentLoop]
+        CtxBuilder[ContextBuilder]
+        Reasoner[Reasoner]
+        LoopExec[LoopExecutor]
+    end
+
+    subgraph L3["Layer 3 - services"]
+        ToolSvc[ToolExecutorService]
+        MinionSvc[MinionService]
+    end
+
+    subgraph L2["Layer 2 - modules"]
+        Sessions[sessions]
+        Memory[memory<br/>FactStore / ContextProvider / FactExtractor]
+        Goals[goals]
+        MinionsMod[minions gateway]
+        Trace[trace]
+        Eval[eval]
+        Learning[learning<br/>ESN reservoir]
+    end
+
+    subgraph L1["Layer 1 - primitives"]
+        River[(events - The River)]
+        LLM[llm]
+        Tools[tools]
+        DB[db]
+        Config[config]
+        Logging[logging]
+    end
+
+    PG[(Postgres)]
+    MQ{{Mosquitto MQTT}}
 
     User --> API
     Admin --> API
-    Minions --> MinionGW
-    MinionGW --> River
-    API --> Core
-    Core --> River
-    River --> Memory
-    River --> Learning
-    River --> Tools
-    Core --> LLM
-    Trace --> Sidecar
-    Memory --> DB
-    Learning --> DB
-    MinionGW --> DB
+    Edge -. MQTT .-> MQ
+    Laptop --> MQ
+    MQ --> MinionSvc
+
+    API --> Execution
+    API --> Interaction
+    API --> MinionSvc
+    Execution --> Loop
+    Interaction --> Sessions
+
+    Loop --> CtxBuilder
+    Loop --> Reasoner
+    Loop --> LoopExec
+    Loop --> River
+    CtxBuilder --> Memory
+    CtxBuilder --> Sessions
+    CtxBuilder --> Tools
+    Reasoner --> LLM
+    LLM --> LLMProvider
+    LoopExec --> ToolSvc
+    ToolSvc --> Tools
+    ToolSvc --> River
+
+    MinionSvc --> Memory
+    MinionSvc --> River
+    Learning --> River
+    Eval --> Loop
     Trace --> DB
+    Trace --> Sidecar
+    Laptop --> Protocol
+
+    Memory --> DB
+    Sessions --> DB
+    Goals --> DB
+    MinionsMod --> DB
+    DB --> PG
 ```
+
+> The minion path drawn as `Edge -. MQTT .-> MQ` is **not wired end to end
+> today** — see [minion-protocol.md](minion-protocol.md) § Status.
+> `cortex_protocol` is the shared schema package that `laptop-minion` (and
+> future phone/card minions) depend on.
 
 Runtime at a glance — one chat turn (details in
 [agentic-loop.md](agentic-loop.md), trace wrapping in
