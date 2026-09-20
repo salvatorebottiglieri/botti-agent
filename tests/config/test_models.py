@@ -331,6 +331,22 @@ class TestLearningSettingsStub:
 
         assert isinstance(Settings().learning, LearningSettings)
 
+    def test_env_namespace_is_prefixed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The slice reads ``LEARNING_*``, never the bare generic field names.
+
+        Negation: with no ``env_prefix`` on the slice, a process-wide
+        ``RESERVOIR_SIZE`` / ``SPECTRAL_RADIUS`` / ``LEAK_RATE`` would
+        configure the ESN — the same generic-name hazard the circuit-breaker
+        aliases were restricted to avoid.
+        """
+        monkeypatch.setenv("LEARNING_RESERVOIR_SIZE", "128")
+        monkeypatch.setenv("RESERVOIR_SIZE", "999")
+
+        learning = LearningSettings(_env_file=None)
+
+        assert learning.reservoir_size == 128
+        assert learning.reservoir_size != 999
+
 
 class TestImportGraph:
     """The composed root is imported first by many entry points, so importing
@@ -361,12 +377,17 @@ class TestImportGraph:
     def test_config_layer_does_not_load_the_openai_sdk(self) -> None:
         """The config layer must not depend on the ``llm`` package (F-A).
 
-        Negation: a reintroduced ``config -> llm`` edge — ``LLMSettings``
-        imported from ``cortex.llm.config`` instead of ``cortex.config.llm`` —
-        executes ``cortex.llm.__init__``, which eagerly imports the factory and
-        the OpenAI provider, so ``import openai`` happens and this fails.
+        Negation, first assertion: a reintroduced ``config -> llm`` edge —
+        ``LLMSettings`` imported from ``cortex.llm.config`` instead of
+        ``cortex.config.llm`` — puts ``cortex.llm`` in ``sys.modules``. This is
+        the edge itself, so it still fails if ``cortex.llm.__init__`` ever stops
+        importing eagerly.
 
-        Runs in a subprocess: other tests import the SDK, so an in-process
+        Negation, second assertion: that edge executes ``cortex.llm.__init__``
+        today, which imports the factory and the OpenAI provider, so
+        ``import openai`` happens.
+
+        Runs in a subprocess: other tests import both, so an in-process
         ``sys.modules`` check could not fail.
         """
         result = subprocess.run(
@@ -374,8 +395,10 @@ class TestImportGraph:
                 sys.executable,
                 "-c",
                 "import cortex.config.models, sys; "
+                "assert 'cortex.llm' not in sys.modules, "
+                "'cortex.config.models must not import the cortex.llm package'; "
                 "assert 'openai' not in sys.modules, "
-                "'cortex.config.models must not depend on cortex.llm'",
+                "'cortex.config.models must not load the openai SDK'",
             ],
             capture_output=True,
             text=True,

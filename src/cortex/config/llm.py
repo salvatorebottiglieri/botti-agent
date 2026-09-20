@@ -40,10 +40,8 @@ def derive_cost(usage: UsageStats, pricing: ModelPricing) -> float:
 class LLMSettings(CortexSettings):
     """LLM provider, model and circuit-breaker settings (env namespace ``LLM_``).
 
-    Lives under ``cortex.config`` rather than next to the LLM client: the
-    composed root imports this slice, and importing it from ``cortex.llm`` would
-    pull the ``cortex.llm`` package ``__init__`` (factory → provider → ``openai``
-    SDK) into every process that only reads configuration.
+    This slice must not be imported from ``cortex.llm`` — see
+    :mod:`cortex.llm.config` for why.
 
     The three circuit-breaker fields keep the legacy unprefixed environment
     names they had as flat root fields (``CIRCUIT_BREAKER_THRESHOLD``,
@@ -62,7 +60,7 @@ class LLMSettings(CortexSettings):
     model: str = Field(default="deepseek-v4-flash", description="Model name to use")
     judge_model: str = Field(
         default="deepseek-v4-pro",
-        description="Model used by the Trajectory Judge — distinct from llm_model "
+        description="Model used by the Trajectory Judge — distinct from ``model`` "
         "so the judge never grades with the generator's model (self-enhancement "
         "bias guard, T5)",
     )

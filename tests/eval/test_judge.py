@@ -4,7 +4,7 @@ The judge evaluates the problem-solving path of FAILED E2 tasks: G-Eval
 rubric (criteria written before judging, per dimension), chain-of-thought,
 form-fill Likert, averaged over samples; partial credit in [0,1] plus a
 diagnosis per dimension; order-swap consistency (only consistent verdicts
-accepted); ``llm_judge_model`` settings separation; and audit-set
+accepted); ``llm.judge_model`` settings separation; and audit-set
 judge-vs-human agreement. All LLM calls go through a scripted client — no
 real API.
 """

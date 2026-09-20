@@ -363,9 +363,9 @@ the defect filed as #125.
 
 Each slice reads its own environment namespace: `DATABASE_URL`/`DB_POOL_*`,
 `LLM_*` (plus the legacy `CIRCUIT_BREAKER_*` spellings), `MQTT_*`, `APP_*`,
-`TRACE_*`, `LOG_*`. The slices are nested fields of the root, so a bare variable
-named after one (`APP`, `LLM`, `TRACE`, …) is read as that slice and surfaces as
-a validation error rather than being ignored.
+`TRACE_*`, `LOG_*`, `LEARNING_*`. The slices are nested fields of the root, so
+a bare variable named after one (`APP`, `LLM`, `TRACE`, …) is read as that
+slice and surfaces as a validation error rather than being ignored.
 
 ## Testing and CI
 
