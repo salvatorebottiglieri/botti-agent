@@ -60,7 +60,7 @@ sequenceDiagram
 
     PY->>RUN: load_suite(fixtures + manifest)
     loop per task
-        RUN->>SB: mkdtemp; wrap meta tools
+        RUN->>SB: mkdtemp, wrap meta tools
         RUN->>L: drive scripted user turns (stream_chat)
         L-->>M: LoopEvents
         M-->>RUN: iterations, tools, usage, latency

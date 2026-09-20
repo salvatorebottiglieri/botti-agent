@@ -117,10 +117,10 @@ sequenceDiagram
     participant LX as LoopExecutor
 
     C->>RT: POST /chat/stream
-    RT->>EX: resolve session; stream_chat(message, trace_enabled)
+    RT->>EX: resolve session, then stream_chat(message, trace_enabled)
     EX->>RC: capture(session_id, loop_stream)
     RC->>L: stream_chat(...)
-    L->>L: seed history; persist user message
+    L->>L: seed history, persist user message
     loop until RESPOND (max 20 iterations)
         L->>CB: build(session, message, CHAT)
         CB->>CP: get_memory_context(query, max_facts)
@@ -141,7 +141,7 @@ sequenceDiagram
             end
         end
     end
-    RC-->>EX: events (pseudonymized copy persisted; original unchanged)
+    RC-->>EX: events (pseudonymized copy persisted, original unchanged)
     EX-->>RT: LoopEvents
     RT-->>C: SSE frames (event_type is the wire name)
 ```

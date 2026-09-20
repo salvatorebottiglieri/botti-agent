@@ -161,7 +161,7 @@ sequenceDiagram
         S->>S: check sequence gap
         S->>F: extract_from_event_type
         F->>DB: upsert facts
-        S->>BUS: minion.event.&lt;type&gt;
+        S->>BUS: minion.event.{type}
     end
     M->>B: publish heartbeat
     B->>GW: heartbeat
