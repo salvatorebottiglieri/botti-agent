@@ -171,6 +171,17 @@ sequenceDiagram
 
 ## Status
 
-Protocol and event schemas are **implemented** in `src/cortex_protocol/` and
-consumed by `src/cortex/minions/` and `laptop-minion/`. Phone and card minions
+The protocol schemas (`src/cortex_protocol/`) and the laptop client are
+implemented and agree with each other. **The server-side gateway is not wired to
+them yet** — this is a known gap, not a documented design:
+
+| Layer | Speaks | Evidence |
+|---|---|---|
+| Protocol / laptop minion | topic `cortex/minions/{id}/events`, batch `{metadata, events}`, events with `type` | `cortex_protocol/schemas/topics.py:10`, `envelopes.py:24`, `events.py:46`; `laptop-minion/.../mqtt_client.py:318` |
+| Server gateway | subscribes `minions/+/events`; expects `event_type` key and its own `MinionEventBatch` dataclass | `src/cortex/main.py:364`, `src/cortex/minions/mqtt_client.py:176,184`, `models.py:215` |
+
+Consequences: `_extract_minion_id()` rejects `cortex/minions/...` (parts[0] is
+`cortex`), and a protocol event's `type` key is read as `event_type`
+(`custom.event`), so no facts are extracted. The unit tests cover each side
+against its own shape, so neither catches the mismatch. Phone and card minions
 are specified but not built.
