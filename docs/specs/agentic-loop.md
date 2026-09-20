@@ -99,6 +99,88 @@ about the `done` frame: `message` → `final_message`, `tools_used` → `tool_ca
 Session lookup happens before the stream starts, so a missing session is an HTTP
 404, not an in-stream error.
 
+## Flows
+
+### Chat turn (SSE)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant RT as chat route
+    participant EX as ExecutionModule
+    participant RC as TraceRecorder
+    participant L as AgentLoop
+    participant CB as ContextBuilder
+    participant CP as ContextProvider
+    participant R as Reasoner
+    participant LX as LoopExecutor
+
+    C->>RT: POST /chat/stream
+    RT->>EX: resolve session; stream_chat(message, trace_enabled)
+    EX->>RC: capture(session_id, loop_stream)
+    RC->>L: stream_chat(...)
+    L->>L: seed history; persist user message
+    loop until RESPOND (max 20 iterations)
+        L->>CB: build(session, message, CHAT)
+        CB->>CP: get_memory_context(query, max_facts)
+        CP-->>CB: facts + personality + ambient
+        CB-->>L: Context
+        L->>R: reason_stream(context)
+        R-->>L: text deltas, then Decision
+        alt RESPOND
+            L-->>RC: text, done
+        else EXECUTE_TOOLS
+            alt ask_user call
+                L->>LX: execute_single(ask_user)
+                L-->>RC: ask_user, done
+            else normal tools
+                L->>LX: execute_single(tool_call)
+                LX-->>L: ToolResult
+                Note over L: persist assistant tool-call then tool result
+            end
+        end
+    end
+    RC-->>EX: events (pseudonymized copy persisted; original unchanged)
+    EX-->>RT: LoopEvents
+    RT-->>C: SSE frames (event_type is the wire name)
+```
+
+### Goal execution
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant API as goals route
+    participant EX as ExecutionModule
+    participant GR as GoalRepository
+    participant BUS as Event bus
+    participant L as AgentLoop
+
+    C->>API: POST /goals
+    API->>EX: create_goal(description)
+    EX->>GR: create(goal)
+    Note over EX: no goal.created emitted here - it would start the goal twice
+    EX->>L: run_goal (background task)
+    EX->>BUS: goal.started
+    loop max 100 iterations
+        L->>L: context / reason / act / observe
+    end
+    alt success
+        EX->>BUS: goal.completed
+    else MaxIterationsError or error
+        EX->>BUS: goal.failed
+    end
+    EX->>GR: update(final status)
+    EX-->>API: Goal
+    API-->>C: goal id
+```
+
+An **external** `goal.created` event instead reaches `ExecutionModule.handle_event()`
+on the bus, which calls `run_goal()` in the same way. Goals left RUNNING at
+shutdown are re-scheduled by `resume_in_flight()` (ADR-0004).
+
 ## Error handling
 
 - `MaxIterationsError` — bounded loops, no runaways.

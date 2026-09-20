@@ -136,6 +136,39 @@ Sensors: `screen` (active window, idle), `keyboard` (aggregated),
 `network`, `battery`. CLI: `run`, `status`, `init`. It queues events locally and
 flushes batches to the events topic.
 
+## Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant M as Minion
+    participant B as Mosquitto
+    participant GW as MinionMQTTClient
+    participant S as MinionService
+    participant F as FactExtractor / FactStore
+    participant BUS as Event bus
+    participant DB as Postgres
+
+    M->>B: CONNECT (username/password)
+    M->>B: publish register
+    B->>GW: register
+    GW->>S: MinionInfo
+    S->>DB: upsert minion
+    loop every batch / flush interval
+        M->>B: publish MinionEventBatch
+        B->>GW: events
+        GW->>S: handle_batch
+        S->>S: check sequence gap
+        S->>F: extract_from_event_type
+        F->>DB: upsert facts
+        S->>BUS: minion.event.&lt;type&gt;
+    end
+    M->>B: publish heartbeat
+    B->>GW: heartbeat
+    GW->>S: heartbeat
+    S->>DB: update state + last_heartbeat_at
+```
+
 ## Status
 
 Protocol and event schemas are **implemented** in `src/cortex_protocol/` and

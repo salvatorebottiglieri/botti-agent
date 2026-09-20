@@ -37,6 +37,26 @@ stored **pseudonymized** so it carries no real PII. Distinct from:
 - Capture is **fail-closed** with respect to the caller: a sidecar or storage
   failure never alters or interrupts the user's stream.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant EX as ExecutionModule
+    participant RC as TraceRecorder
+    participant L as AgentLoop
+    participant P as rizzo-pii sidecar
+    participant DB as loop_events
+
+    EX->>RC: capture(session_id, loop_stream)
+    loop per LoopEvent
+        RC->>L: next event
+        L-->>RC: LoopEvent (original)
+        RC->>P: POST /analyze (each PII-bearing field)
+        P-->>RC: anonymized text
+        RC->>DB: insert(pseudonymized payload, next seq)
+        RC-->>EX: yield event — original, untouched
+    end
+```
+
 ## Pseudonymization
 
 `Pseudonymizer` is a one-method interface (`anonymize(text) -> str`) so capture

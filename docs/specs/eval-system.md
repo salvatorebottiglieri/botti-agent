@@ -47,6 +47,31 @@ The harness adds no new seams inside existing modules; the only injected
 dependency is the LLM client, so tests run against a fake while real runs use the
 factory.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant PY as pytest / CI
+    participant RUN as runner.run_suite
+    participant SB as TaskSandbox
+    participant L as AgentLoop
+    participant M as metrics
+    participant G as grader
+    participant J as TrajectoryJudge
+
+    PY->>RUN: load_suite(fixtures + manifest)
+    loop per task
+        RUN->>SB: mkdtemp; wrap meta tools
+        RUN->>L: drive scripted user turns (stream_chat)
+        L-->>M: LoopEvents
+        M-->>RUN: iterations, tools, usage, latency
+        RUN->>G: grade annotated goal state
+        alt task failed
+            RUN->>J: judge trajectory -> partial credit
+        end
+    end
+    RUN-->>PY: metrics + optional baseline JSON
+```
+
 ## Grading (v2, ADR-0016)
 
 The annotated goal state — sandbox filesystem, database, or exact answer — is the

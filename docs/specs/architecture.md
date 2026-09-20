@@ -15,18 +15,81 @@
 
 ## System overview
 
+```mermaid
+flowchart LR
+    subgraph Actors
+        User[User]
+        Minions[Minions<br/>phone / card / laptop]
+        Admin[Admin / CLI]
+    end
+
+    subgraph External
+        LLM[LLM provider<br/>OpenAI-compatible]
+        Sidecar[rizzo-pii sidecar]
+    end
+
+    subgraph Cortex
+        API[FastAPI API]
+        River[Event bus - The River]
+        Core[Agentic core<br/>loop / reasoner / executor]
+        Memory[Memory<br/>facts / concepts]
+        Learning[Learning<br/>reservoir]
+        Tools[Tool ecosystem]
+        MinionGW[Minion gateway]
+        Trace[Trace]
+    end
+
+    DB[(Postgres)]
+
+    User --> API
+    Admin --> API
+    Minions --> MinionGW
+    MinionGW --> River
+    API --> Core
+    Core --> River
+    River --> Memory
+    River --> Learning
+    River --> Tools
+    Core --> LLM
+    Trace --> Sidecar
+    Memory --> DB
+    Learning --> DB
+    MinionGW --> DB
+    Trace --> DB
 ```
-INPUT SOURCES                    THE RIVER (event bus)              STATE
-• HTTP chat / goals  ──►  EventBus: async pub/sub, wildcard     • Postgres
-• minions (MQTT,           subscriptions, per-handler error       (sessions, facts,
-  pseudonymized events)    isolation, salience on every event     concepts, goals,
-                                                                  loop_events, api_keys,
-                              │                                   minions)
-        ┌─────────────┬───────┼────────┬─────────────┬─────────┐
-        ▼             ▼       ▼        ▼             ▼         ▼
-   interaction     memory  learning  execution     minions   trace
-   (thin I/O)      facts/  reservoir (agentic loop) (MQTT)    (audit)
-                   evidence
+
+Runtime at a glance — one chat turn (details in
+[agentic-loop.md](agentic-loop.md), trace wrapping in
+[trace-system.md](trace-system.md)):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant API as API route
+    participant EX as ExecutionModule
+    participant L as AgentLoop
+    participant CB as ContextBuilder
+    participant R as Reasoner
+    participant LX as LoopExecutor
+
+    C->>API: POST /chat/stream
+    API->>EX: stream_chat(session, message, trace_enabled)
+    EX->>L: stream_chat(...)
+    loop until RESPOND (max 20 iterations)
+        L->>CB: build(session, message, CHAT)
+        CB-->>L: Context: history + facts + tools + ambient
+        L->>R: reason(context)
+        R-->>L: Decision
+        alt EXECUTE_TOOLS
+            L->>LX: execute_single(tool_call)
+            LX-->>L: ToolResult
+        else RESPOND
+            L-->>EX: text + done
+        end
+    end
+    EX-->>API: LoopEvents (TraceRecorder wraps the stream if enabled)
+    API-->>C: SSE frames
 ```
 
 Modules communicate by publishing and subscribing to events, not by calling each
@@ -118,11 +181,63 @@ Full contract in [agentic-loop.md](agentic-loop.md).
 
 ## Dependency direction
 
-```
-api ──► execution, interaction ──► agentic ──► memory, sessions, tools, llm
-                                          └──► events (publish only)
-modules ──► events                 (indirect communication)
-repositories ──► db
+```mermaid
+flowchart TB
+    subgraph L6[Layer 6 - integration]
+        Protocol[cortex_protocol]
+        Laptop[laptop-minion]
+        Root[main.py composition root]
+    end
+
+    subgraph L5[Layer 5 - orchestration]
+        API[api]
+        Exec[execution]
+        Inter[interaction]
+    end
+
+    subgraph L4[Layer 4 - agentic core]
+        Loop[agentic]
+    end
+
+    subgraph L2[Layer 2 - standalone modules]
+        Mem[memory]
+        Sess[sessions]
+        Goals[goals]
+        Min[minions]
+        Tr[trace]
+        Ev[eval]
+        Learn[learning]
+    end
+
+    subgraph L1[Layer 1 - primitives]
+        Events[events]
+        LLM[llm]
+        Tools[tools]
+        DB[db]
+        Conf[config]
+        Log[logging]
+    end
+
+    API --> Exec
+    API --> Inter
+    Exec --> Loop
+    Inter --> Sess
+    Loop --> Mem
+    Loop --> Sess
+    Loop --> Tools
+    Loop --> LLM
+    Loop --> Events
+    Mem --> DB
+    Mem --> Events
+    Sess --> DB
+    Goals --> DB
+    Min --> Events
+    Min --> DB
+    Tr --> DB
+    Ev --> Loop
+    Learn --> Events
+    Mem --> LLM
+    Tr --> LLM
 ```
 
 `memory` does not import `agentic`. Consumers reach Memory through the
