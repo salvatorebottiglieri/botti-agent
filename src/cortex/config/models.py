@@ -13,10 +13,10 @@ from cortex.config.app import AppSettings
 from cortex.config.base import CortexSettings
 from cortex.config.database import DatabaseSettings
 from cortex.config.learning import LearningSettings
+from cortex.config.llm import LLMSettings, ModelPricing, derive_cost
 from cortex.config.logging import LoggingSettings
 from cortex.config.mqtt import MQTTSettings
 from cortex.config.trace import TraceSettings
-from cortex.llm.config import LLMSettings, ModelPricing, derive_cost
 
 __all__ = [
     "AppSettings",

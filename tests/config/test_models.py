@@ -26,11 +26,11 @@ from pydantic import ValidationError
 from cortex.config.app import AppSettings
 from cortex.config.database import DatabaseSettings
 from cortex.config.learning import LearningSettings
+from cortex.config.llm import LLMSettings, ModelPricing, derive_cost
 from cortex.config.logging import LoggingSettings
 from cortex.config.models import Settings
 from cortex.config.mqtt import MQTTSettings
 from cortex.config.trace import TraceSettings
-from cortex.llm.config import LLMSettings, ModelPricing
 
 
 class TestFrozenEnvNames:
@@ -336,6 +336,17 @@ class TestImportGraph:
     """The composed root is imported first by many entry points, so importing
     it must not depend on the LLM package's import order."""
 
+    def test_legacy_llm_config_path_still_re_exports(self) -> None:
+        """F-A: ``cortex.llm.config`` keeps its pre-move import surface."""
+        from cortex import llm
+
+        legacy = llm.config
+
+        assert legacy.LLMSettings is LLMSettings
+        assert legacy.ModelPricing is ModelPricing
+        assert legacy.derive_cost is derive_cost
+        assert hasattr(legacy, "GenerationConfig")
+
     @pytest.mark.parametrize(
         "target",
         ["cortex.config.models", "cortex.llm.config", "cortex", "cortex.config.loader"],
@@ -346,3 +357,28 @@ class TestImportGraph:
             check=True,
             capture_output=True,
         )
+
+    def test_config_layer_does_not_load_the_openai_sdk(self) -> None:
+        """The config layer must not depend on the ``llm`` package (F-A).
+
+        Negation: a reintroduced ``config -> llm`` edge — ``LLMSettings``
+        imported from ``cortex.llm.config`` instead of ``cortex.config.llm`` —
+        executes ``cortex.llm.__init__``, which eagerly imports the factory and
+        the OpenAI provider, so ``import openai`` happens and this fails.
+
+        Runs in a subprocess: other tests import the SDK, so an in-process
+        ``sys.modules`` check could not fail.
+        """
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import cortex.config.models, sys; "
+                "assert 'openai' not in sys.modules, "
+                "'cortex.config.models must not depend on cortex.llm'",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr

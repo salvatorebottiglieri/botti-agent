@@ -18,11 +18,11 @@ from pydantic import ValidationError
 
 from cortex.config.app import AppSettings
 from cortex.config.database import DatabaseSettings
+from cortex.config.llm import LLMSettings
 from cortex.config.loader import load_settings
 from cortex.config.logging import LoggingSettings
 from cortex.config.mqtt import MQTTSettings
 from cortex.config.trace import TraceSettings
-from cortex.llm.config import LLMSettings
 
 
 @pytest.fixture(autouse=True)
