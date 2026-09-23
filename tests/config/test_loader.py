@@ -1,12 +1,6 @@
 """``load_settings``: YAML section → composed model (issue #35).
 
-L2 — precedence ``YAML > env > default`` is preserved.
-
-This is the *measured* law: ``load_settings`` passes the YAML section as a
-constructor argument, and pydantic-settings ranks an explicit argument above an
-environment variable. The docstring claimed the opposite order; that claim was
-stale and has been corrected, and the precedence defect itself is filed as #125
-(out of scope here).
+L2 — precedence ``env > YAML > .env > default`` (ADR-0019, fixing #125).
 """
 
 from __future__ import annotations
@@ -46,18 +40,18 @@ def _write_config(tmp_path: Path, body: str) -> Path:
 
 
 class TestPrecedence:
-    """L2 — negation: the env value stops losing to the YAML section, or a
+    """L2 — negation: the YAML section beats the exported env var, or a
     default beats the YAML value."""
 
-    def test_yaml_beats_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_env_beats_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         config = _write_config(tmp_path, "llm:\n  model: yaml-model\napp:\n  port: 8123\n")
         monkeypatch.setenv("LLM_MODEL", "env-model")
         monkeypatch.setenv("APP_PORT", "9999")
 
         settings = load_settings(config)
 
-        assert settings.llm.model == "yaml-model"
-        assert settings.app.port == 8123
+        assert settings.llm.model == "env-model"
+        assert settings.app.port == 9999
 
     def test_yaml_beats_default(self, tmp_path: Path) -> None:
         config = _write_config(tmp_path, "database:\n  pool_min_size: 9\n")
@@ -68,6 +62,15 @@ class TestPrecedence:
         assert settings.database.db_pool_min_size != DatabaseSettings.model_fields[
             "db_pool_min_size"
         ].default
+
+    def test_yaml_beats_dotenv(self, tmp_path: Path) -> None:
+        """``.env`` keeps its rank below the YAML section (ADR-0019)."""
+        (tmp_path / ".env").write_text("LLM_MODEL=dotenv-model\n", encoding="utf-8")
+        config = _write_config(tmp_path, "llm:\n  model: yaml-model\n")
+
+        settings = load_settings(config)
+
+        assert settings.llm.model == "yaml-model"
 
     def test_env_beats_default_when_yaml_is_silent(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -103,6 +106,7 @@ class TestPrecedence:
 
     def test_resolved_env_ref_is_used(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         config = _write_config(tmp_path, "llm:\n  api_key: ${CORTEX_TEST_KEY}\n")
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
         monkeypatch.setenv("CORTEX_TEST_KEY", "resolved-key")
 
         settings = load_settings(config)
@@ -117,6 +121,9 @@ class TestSectionMapping:
     def test_all_sections_map_to_their_slice(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # The env var outranks the YAML section (ADR-0019), so the module
+        # fixture's key must not compete with the YAML-supplied one.
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
         config = _write_config(
             tmp_path,
             """

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 
 class CortexSettings(BaseSettings):
@@ -21,3 +21,16 @@ class CortexSettings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """``env > init (config.yaml) > dotenv > secrets`` (ADR-0019); the seam
+        sits on the base so nested slices decide the same collisions."""
+        return (env_settings, init_settings, dotenv_settings, file_secret_settings)

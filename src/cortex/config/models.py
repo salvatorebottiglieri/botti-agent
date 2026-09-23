@@ -39,7 +39,8 @@ class Settings(CortexSettings):
     Holds one instance of each per-module slice. Composed fields read their own
     environment namespace (``DB_``/``DATABASE_``, ``LLM_``, ``MQTT_``, ``APP_``,
     ``LOG_``, ``TRACE_``, ``LEARNING_``) and their own ``.env``; pass a slice
-    explicitly to override it, e.g. ``Settings(llm={"api_key": ...})``.
+    explicitly to fill a field the environment does not supply, e.g.
+    ``Settings(llm={"api_key": ...})`` (see ADR-0019).
     """
 
     version: str = Field(default="0.1.0")

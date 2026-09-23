@@ -104,20 +104,15 @@ def load_settings(config_path: Path | None = None) -> Settings:
     """
     Load settings from YAML file and environment variables.
 
-    Priority (highest to lowest):
-    1. YAML config file values
-    2. Environment variables
-    3. Default values in the settings models
+    Priority (highest to lowest) — normative statement in ADR-0019:
+    1. Environment variables
+    2. YAML config file values
+    3. ``.env`` file
+    4. Default values in the settings models
 
-    YAML values are passed to the composed slices as constructor arguments, and
-    pydantic-settings ranks an explicit argument above an environment variable —
-    hence the order above. A YAML section that is absent (or a ``${VAR}``
-    reference whose variable is unset, which drops that key) leaves the field to
-    its environment variable or default.
-
-    That order is the measured behaviour and is preserved deliberately; an
-    operator would expect the environment to win, and the inverted precedence is
-    the defect filed as #125 (out of scope here).
+    A YAML section that is absent (or a ``${VAR}`` reference whose variable is
+    unset, which drops that key) leaves the field to its environment variable,
+    its ``.env`` entry or its default.
 
     Args:
         config_path: Optional path to config YAML file.

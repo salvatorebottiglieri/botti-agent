@@ -356,16 +356,36 @@ CLI (`cortex <command>`, `src/cortex/cli.py`): `token:create`, `traces:cleanup`,
 injection (ADR-0010): `database`, `llm` (provider, model, base_url, timeout,
 judge model, pricing, circuit breaker), `mqtt` (broker_url, keepalive, reconnect),
 `app` (host, port), `trace` (sidecar URL, timeout, retention), `logging`,
-`learning`. `config.yaml` carries one optional section per slice, and a section's
-values win over the environment, which wins over the field defaults
-(`src/cortex/config/loader.py`) — the inverted precedence an operator expects is
-the defect filed as #125.
+`learning`. `config.yaml` carries one optional section per slice. Sources rank
+`env > constructor arguments (config.yaml) > .env > secrets dir` (ADR-0019),
+implemented by `CortexSettings.settings_customise_sources` in
+`src/cortex/config/base.py`: an exported variable beats the YAML section, the
+YAML section the loader passes as a constructor argument beats `.env`, and
+`.env` beats the field default.
 
 Each slice reads its own environment namespace: `DATABASE_URL`/`DB_POOL_*`,
 `LLM_*` (plus the legacy `CIRCUIT_BREAKER_*` spellings), `MQTT_*`, `APP_*`,
 `TRACE_*`, `LOG_*`, `LEARNING_*`. The slices are nested fields of the root, so
 a bare variable named after one (`APP`, `LLM`, `TRACE`, …) is read as that
 slice and surfaces as a validation error rather than being ignored.
+
+### System invariants
+
+| Invariant (law) | Negation → test | Verified in |
+|---|---|---|
+| **CFG1** — an exported environment variable beats `config.yaml` for the same field | the YAML value is returned while the same variable is exported | `tests/config/test_loader.py::TestPrecedence::test_env_beats_yaml` |
+| **CFG2** — with no variable exported, `config.yaml` beats `.env` and beats the field default | `.env`, or the default, is returned while the YAML section supplies that field | `::test_yaml_beats_dotenv`, `::test_yaml_beats_default` |
+| **CFG3** — a constructor argument — the loader's YAML section, or any caller's kwarg — beats `.env` but loses to the environment, at the root and inside a nested slice | a nested kwarg wins while the matching variable is exported | `tests/config/test_models.py::TestSourcePrecedence::test_env_beats_nested_constructor_kwarg` |
+| **CFG4** — no ambient environment variable configures a settings object during the test run | an ambient variable shifts an assertion | `tests/conftest.py::_no_ambient_settings_env` + `tests/config/test_models.py::TestSourcePrecedence::test_exported_variable_does_not_reach_a_test` + `tests/config/test_models.py::TestAmbientEnvGuard::test_every_settings_env_name_is_scrubbed` |
+| **CFG5** — a YAML `${VAR}` whose variable is unset drops that key, so the variable or the default applies | the literal placeholder reaches the model | `tests/config/test_loader.py::TestPrecedence::test_unresolved_env_ref_falls_back_to_default` |
+| **CFG6** — a missing `LLM_API_KEY` raises `ValidationError` naming `api_key`, whatever the precedence | a settings object is built without the secret | `tests/config/test_loader.py::TestSectionMapping::test_missing_api_key_still_fails_loudly`, `tests/config/test_models.py::TestMissingSecretFailsLoudly` |
+
+The env-fallback sibling (`::test_unresolved_env_ref_falls_back_to_env_var`) is
+not coverage for CFG5: under a precedence where the environment outranks
+constructor arguments, a retained `${VAR}` placeholder would still be beaten by
+the exported `LLM_BASE_URL`, so that test passes either way. Only the
+default-fallback case, which deletes the variable, is failing-capable for the
+placeholder drop.
 
 ## Testing and CI
 

@@ -32,11 +32,11 @@ class TestTraceSettingsEnvOverrides:
         trace = TraceSettings(_env_file=None)
         assert trace.sidecar_timeout_s == 2.5
 
-    def test_constructor_kwargs_win_over_env(self, monkeypatch):
-        """Explicit constructor values still beat env (init-args precedence)."""
+    def test_env_beats_constructor_kwargs(self, monkeypatch):
+        """An exported variable outranks the constructor argument (ADR-0019)."""
         monkeypatch.setenv("TRACE_SIDECAR_URL", "http://env:1")
         trace = TraceSettings(sidecar_url="http://ctor:1", _env_file=None)
-        assert trace.sidecar_url == "http://ctor:1"
+        assert trace.sidecar_url == "http://env:1"
 
 
 class TestTraceSettingsLoader:
@@ -90,11 +90,11 @@ class TestTraceRetentionEnvOverrides:
         monkeypatch.setenv("TRACE_RETENTION_DAYS", "7")
         assert TraceSettings(_env_file=None).retention_days == 7
 
-    def test_constructor_kwargs_win_over_env(self, monkeypatch):
-        """Explicit constructor values still beat env (init-args precedence)."""
+    def test_env_beats_constructor_kwargs(self, monkeypatch):
+        """An exported variable outranks the constructor argument (ADR-0019)."""
         monkeypatch.setenv("TRACE_RETENTION_DAYS", "7")
         trace = TraceSettings(retention_days=14, _env_file=None)
-        assert trace.retention_days == 14
+        assert trace.retention_days == 7
 
 
 class TestTraceRetentionLoader:
@@ -118,10 +118,8 @@ class TestTraceRetentionLoader:
         assert settings.trace.sidecar_url == "http://rizzo:5005"
 
     def test_env_override_reaches_settings_when_no_yaml_retention(self, tmp_path, monkeypatch):
-        """Env passthrough: without a YAML retention_days the env var supplies
-        the field. (An explicit YAML value would win — init kwargs take
-        precedence over env in pydantic-settings — so this mirrors the sidecar
-        loader tests.)"""
+        """Env passthrough: with no YAML retention_days present the env var
+        supplies the field — and would outrank one anyway (ADR-0019)."""
         monkeypatch.setenv("TRACE_RETENTION_DAYS", "60")
         cfg = tmp_path / "config.yaml"
         cfg.write_text("trace:\n  sidecar_url: http://rizzo:5005\n")
