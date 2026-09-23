@@ -134,6 +134,130 @@ Integration points:
 
 CPTs initialised from priors; updated online with Dirichlet posteriors as facts accumulate. Structure stays fixed in v1; structure learning deferred until at least ~30 days of data are available.
 
+---
+
+## Calibrated Decision Models for Evidence Strength
+
+**Status:** Proposed (2026-09-23). Not yet promoted to a wave; no ADR yet.
+
+**Hypothesis:** `Evidence.strength` — the scalar that drives the Bayesian logit update in
+`docs/evidence-system.md` — should come from a *calibrated decision component*, not from the
+generative model's self-reported `confidence`. "Jev-class" models (a state plus typed questions
+in, typed answers with calibrated probabilities out, no free-form generation) are the shape that
+matches this job, and since TypeSafe released Jev on 2026-09-15 an open-weights tier of them has
+appeared under Apache-2.0 / MIT. The cheapest candidate that fits Cortex's constraints — CPU
+only, no model server (ADR-0001), Italian input, one call per observation, pinnable — is a
+**multilingual NLI cross-encoder**. The **null model** (a constant, or a three-level categorical
+mapped by hand) is the baseline every candidate must beat before any code is written.
+
+### Why this is worth a ticket at all (and why it might not be)
+
+The payoff is bounded by our own constants (`docs/evidence-system.md`), with `LR(llm) = 3` and a
+new fact seeded from prior 0.5:
+
+| `strength` | posterior after one `llm` observation |
+| --- | --- |
+| 1.0 | 0.75 |
+| 0.9 (typical self-report) | 0.71 |
+| 0.5 | 0.50 |
+
+Two consequences:
+
+1. **Precision in `strength` matters less than source type and observation count.** One
+   `user_confirm` (LR = 20) takes the same fact to 0.95 by itself. So the goal here is *not* a
+   better ranking signal so much as an honest one.
+2. **The branch worth reaching is `strength < 0.5`.** `FactExtractor`'s prompt
+   (`src/cortex/memory/fact_extractor.py`, `_SYSTEM_PROMPT`) asks for the confidence of the fact
+   it already chose to extract — a number that is structurally never a statement about *support*
+   and, in practice, never lands below 0.5. The `(2·strength − 1)` term is therefore effectively
+   one-sided for the `llm` source, and the "evidence against" half of the update rule is only
+   expressible if the producer is asked for it explicitly.
+
+### Where it fits
+
+`EvidenceStore.record(fact)` reads `strength` (issue **#83**). Today the value traces back to
+`Fact.confidence` produced by `FactExtractor.extract_from_text` (issue **#82**) — i.e. the
+generative model's own JSON. **#82's acceptance criteria pin `confidence` as a field of extracted
+facts**, so the producer of `strength` is being decided right now; deciding it after #83 ships
+means either backfilling evidence or living with a number that was never calibrated.
+
+This entry is only about that one producer. The same "typed question, no generation" seam would
+later serve `EventMetadata.salience` (ADR-0001 leaves the door open for a hybrid LLM-labeler for
+the reservoir readouts) and the relevance gate in `ContextProvider._calculate_relevance_score`
+(heuristic today) — explicitly **out of scope here**, listed only so the seam is not designed in a
+way that forbids them.
+
+### Candidate components
+
+The category is eight days old and moving weekly; the numbers below were read on 2026-09-23 and
+the ranking criterion is deliberately **calibration, not accuracy** — `strength` is consumed as a
+number, not as a label.
+
+| Candidate | Licence / base | Calibration evidence | Runtime fit | Verdict |
+| --- | --- | --- | --- | --- |
+| **Multilingual NLI cross-encoder**, `strength = P(entailment) + 0.5·P(neutral)` | e.g. the shape of [`AlexWortega/openjev`](https://huggingface.co/AlexWortega/openjev) (MIT, 3-way `contradiction`/`entailment`/`neutral`, Qwen3.5-4B; **English only**) on a multilingual checkpoint | The highest-calibration rows on JevBench are the NLI/reranker heads (Calibration 77–84), not the trained decision models | ~150–300M, ONNX INT8 in process (`onnxruntime`, no server, no GPU); multilingual checkpoints cover Italian | **Recommended.** Our question is a fixed hypothesis to verify, which is exactly an entailment judgement |
+| [`convaiinnovations/laya`](https://huggingface.co/convaiinnovations/laya) + [`laya-multilingual`](https://huggingface.co/convaiinnovations/laya-multilingual) | Apache-2.0, ModernBERT-large 421M / mmBERT 322M, `it` in the language list | JevBench v1.3.0: Intelligence 46, **Calibration 62**, ~$0.0029 per 1k decisions | Encoder, CPU (193–464 ms reported), one forward pass, `Noul`/`Choice`/`Score` primitives; ONNX/GGUF/CoreML ports already published | **Second choice.** The only open "Jev" with the language coverage we need; weaker calibration than an NLI head, 512-token budget per question (fine for one sentence + one fact) |
+| [`Mapika/decider`](https://huggingface.co/Mapika/decider) (`decider-ai`) | Apache-2.0, Qwen3.5-0.8B/2B/4B/35B-A3B | JevBench `decider-2b`: **Calibration 47** | Speaks TypeSafe's wire format (`POST /v1/systemone`, official SDK via `TYPESAFE_BASE_URL`); needs `torch` + `transformers>=5` + `flash-linear-attention`; 3.5 GB at 2B | **No** for this job. Card says **English only**, and it is a general decision engine priced for more than one scalar |
+| SemIf / `decider-35b-a3b` / `kev` 4B–9B | Apache-2.0, Qwen3.5-4B and up | SemIf is JevBench #2 (Intelligence 79, Calibration 72.6) | GPU-class, or a separate serving process | **No** here; this is the shortlist if Cortex ever wants a *general* decision engine (loop routing, refusal gate) |
+| Jev (TypeSafe), hosted | proprietary API, $0.042/Mtok input, output free | JevBench #1 (Calibration 82.7) | One HTTP call, no local runtime | **No for now.** At our volume the cost is irrelevant (~$0.0004/decision), so the objection is not money: it is sending statements about the user's life to a third party, which `CONTEXT.md`'s PII Gateway already aims to avoid |
+| **Null model**: constant `strength`, or a categorical mapped by hand | zero dependencies | — | — | **The baseline.** With the arithmetic above it may well win |
+
+Sources: [docs.typesafe.ai/models](https://docs.typesafe.ai/models) (primitives, price, limits),
+the Hugging Face model cards above (primary), and
+[Benchmark Heaven JevBench v1.3.0](https://benchmarkheaven.com/jev-models) (third-party, 52
+systems, 534 decisions, harness
+[MIT](https://github.com/fstandhartinger/jevbench); its self-host latencies are "adjusted ×2 +
+0.15 s", an assumption it states outright).
+
+### Where it does NOT fit
+
+- **The agentic loop.** `Reasoner` needs generation — tool arguments and response text
+  (`src/cortex/agentic/reasoner.py:76`). A decision model produces neither, so at best it could
+  route in front of the generator, adding a call for a decision the generator already makes.
+- **As a `LLMClient` provider.** `chat_stream()` and `translate_tools()` are meaningless for it:
+  putting it in `PROVIDER_MAP` (`src/cortex/llm/factory.py:11`) would violate the interface's
+  contract. The seam must be a sibling interface if it is ever built.
+- **The Trajectory Judge.** ADR-0015 requires chain-of-thought over the transcript and the judge
+  emits a diagnosis; the informative part is text.
+
+### Trade-offs / known risks
+
+- **Calibration rots with the input distribution, and no published ECE was measured on Italian
+  personal-life statements.** The number must be fitted (temperature scaling = one scalar) and
+  re-fitted on our own labels; a miscalibrated model plus a fitted temperature regularly beats a
+  well-calibrated model dropped in raw.
+- **A confidently wrong float looks more trustworthy than hedged prose.** `strength` feeds a
+  confidence that drives retrieval ranking; it must never gate a side effect.
+- **Small models are option-order sensitive** (one entrant scored 21% vs 72% on the same items
+  with options reversed). One fixed question shape mitigates this.
+- **Category churn.** 52 systems on a leaderboard that is itself in beta, eight days after the
+  category started. Pin version IDs, never aliases (Jev's own docs say the same for tuned
+  thresholds).
+- **New dependency**, `onnxruntime` preferred over `torch`, matching the posture of ADR-0001
+  ("no GPU, no model server").
+
+### Concrete first step
+
+0. **Fix the contract before #83 lands.** Decide in `docs/evidence-system.md` (+ an ADR) what
+   `strength` means — the support of the observation for the fact's current value — and who
+   produces it. Today that document says "strength (the ingested fact's confidence)", which
+   silently delegates a Bayesian quantity to a generative model.
+1. **Label fixture:** 200–300 Italian rows (`sentence → candidate fact → support`), YAML under
+   `tests/eval/fixtures/`, with the same manifest pinning discipline the eval suites use for
+   prompt/model/grading/rubric versions.
+2. **ECE harness:** ~20 lines of NumPy (15 bins) plus one temperature scalar fitted on a held-out
+   split. Score three producers against it: the current DeepSeek self-report, the null model, and
+   the NLI candidate. Rough reading: ECE ≤ ~0.05 is usable for acting on the number, ≥ ~0.15
+   means thresholds are fiction.
+3. **Shadow-run:** compute the candidate number on every extraction, log it beside the current
+   self-report, write nothing to `evidence`. Once #83's table exists, compare both against the
+   outcomes the user actually confirmed (`user_confirm`) and switch the producer only then.
+4. **Only if it wins:** a sibling decision-client seam injected optionally, absent → constant
+   fallback (the posture `FactExtractor(llm_client=None)` and the untrained readout already use).
+   `CircuitBreaker.call()` accepts any awaitable, so the breaker is reusable as-is.
+
+Skipped until the numbers justify it: an ABC, a factory path, config fields, a client wrapper.
+
 
 # Neurosymbolic AI Patterns for Cortex
 
