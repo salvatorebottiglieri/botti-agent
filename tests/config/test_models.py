@@ -3,10 +3,7 @@
 Invariants under test — from the design annotation on #35:
 
 * **L1** Every legacy env-var name still configures its field.
-* **L2** Precedence ``YAML > env > default`` is preserved. This is the
-  *measured* law; the ``load_settings`` docstring claimed ``env > YAML`` and
-  was stale. The precedence defect itself is filed as #125. L2's tests live in
-  ``test_loader.py``.
+* **L2** Precedence ``env > YAML > .env > default`` (ADR-0019, fixing #125).
 * **L3** A slice reads only its own section.
 * **L4** A missing required secret fails loudly.
 
@@ -17,11 +14,14 @@ a *default*: a nested ``BaseSettings`` reads ``.env`` itself, and a root-level
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from pydantic_settings import BaseSettings
 
 from cortex.config.app import AppSettings
 from cortex.config.database import DatabaseSettings
@@ -31,6 +31,7 @@ from cortex.config.logging import LoggingSettings
 from cortex.config.models import Settings
 from cortex.config.mqtt import MQTTSettings
 from cortex.config.trace import TraceSettings
+from tests.settings_env import SETTINGS_ENV_NAMES
 
 
 class TestFrozenEnvNames:
@@ -313,6 +314,76 @@ class TestComposedRoot:
 
         with pytest.raises(ValidationError, match="port"):
             Settings(llm={"api_key": "k"}, app={"port": 0})
+
+
+class TestSourcePrecedence:
+    """L2 — the environment outranks a constructor argument, at the root and
+    inside a nested slice (CFG3).
+
+    Negation: the nested kwarg (``app={"port": 7000}``) is returned while
+    ``APP_PORT`` is exported.
+    """
+
+    def test_env_beats_nested_constructor_kwarg(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("APP_PORT", "9999")
+
+        settings = Settings(llm={"api_key": "k"}, app={"port": 7000})
+
+        assert settings.app.port == 9999
+
+    def test_exported_variable_does_not_reach_a_test(self) -> None:
+        """CFG4 — the autouse scrub keeps an exported settings variable out of
+        the suite. The child below exports ``LLM_API_KEY``/``LLM_MODEL`` and
+        ``APP_PORT`` (which outrank the kwargs under test) plus a bare ``APP``
+        (which the scrub's name set has to catch too, or the app slice eats it
+        as the whole field value)."""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "tests/config/test_models.py::TestComposedRoot::test_root_accepts_nested_sections",
+            ],
+            cwd=Path(__file__).resolve().parents[2],
+            env={
+                **os.environ,
+                "LLM_API_KEY": "ambient",
+                "LLM_MODEL": "ambient",
+                "APP_PORT": "9999",
+                "APP": "1",
+            },
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+
+
+class TestAmbientEnvGuard:
+    """CFG4 — the autouse scrub covers every namespace the slices declare.
+
+    Negation A: a slice declaring a new ``env_prefix`` leaks its ambient
+    variable into every test until someone remembers to add it to
+    ``tests/settings_env.py::SETTINGS_ENV_PREFIXES``.
+    Negation B: a root field added to ``Settings`` and not added to
+    ``tests/settings_env.py::SETTINGS_ENV_NAMES`` leaks its bare variable
+    (``APP``, ``VERSION``, …) the same way.
+    """
+
+    def test_every_settings_env_name_is_scrubbed(self) -> None:
+        slice_prefixes = {
+            field.annotation.model_config.get("env_prefix")
+            for field in Settings.model_fields.values()
+            if isinstance(field.annotation, type) and issubclass(field.annotation, BaseSettings)
+        } - {None, ""}
+        root_field_names = {name.upper() for name in Settings.model_fields}
+
+        assert slice_prefixes <= SETTINGS_ENV_NAMES
+        assert root_field_names <= SETTINGS_ENV_NAMES
 
 
 class TestLearningSettingsStub:
