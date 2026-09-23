@@ -35,11 +35,15 @@ class TestCortexAppBootstrap:
         assert "Cortex API" in response.json()["name"]
 
     @pytest.mark.asyncio
-    async def test_app_has_health_endpoint(self, mock_settings):
+    async def test_app_has_health_endpoint(self, mock_settings, monkeypatch):
         """App should have a health endpoint."""
         from fastapi.testclient import TestClient
 
         from cortex.main import create_app
+
+        # The health route calls get_settings() itself, so it needs a real key
+        # in the environment (CFG4: no process-start default, CI has no .env).
+        monkeypatch.setenv("LLM_API_KEY", "test-key")
 
         # Create mock state so dependencies can resolve
         mock_db_pool = MagicMock()

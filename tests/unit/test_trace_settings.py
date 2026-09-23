@@ -9,8 +9,17 @@ Since #35 the trace fields live on :class:`cortex.config.trace.TraceSettings`
 (``settings.trace``) instead of on the flat root model.
 """
 
+import pytest
+
 from cortex.config.loader import load_settings
 from cortex.config.trace import TraceSettings
+
+
+@pytest.fixture(autouse=True)
+def _llm_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Supply the key the composed root requires (CFG4: no process-start
+    default, and CI has no ``.env`` to fill it in)."""
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
 
 
 class TestTraceSettingsDefaults:
