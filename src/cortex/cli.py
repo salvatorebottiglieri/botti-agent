@@ -29,7 +29,7 @@ def token_create(
             from cortex.config.loader import get_settings
 
             settings = get_settings()
-            database_url = settings.database_url
+            database_url = settings.database.database_url
 
         # Connect to DB
         conn = await asyncpg.connect(database_url)
@@ -71,7 +71,7 @@ def traces_cleanup(
         None,
         "--days",
         min=1,
-        help="Retention window in days (defaults to trace_retention_days setting)",
+        help="Retention window in days (defaults to the trace settings slice)",
     ),
 ) -> None:
     """Delete loop_events rows older than now - retention window (issue #114 T4).
@@ -96,9 +96,9 @@ def traces_cleanup(
 
             settings = get_settings()
             if not database_url:
-                database_url = settings.database_url
+                database_url = settings.database.database_url
             if retention_days is None:
-                retention_days = settings.trace_retention_days
+                retention_days = settings.trace.retention_days
 
         # Same predicate as TraceRepository.delete_older_than (strictly older
         # than the cutoff), mirrored on the CLI's own connection so --db-url is

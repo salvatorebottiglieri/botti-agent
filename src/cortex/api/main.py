@@ -15,7 +15,6 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.types import Scope
 
-from cortex.api.dependencies import set_app_state
 from cortex.api.routes import (
     admin_auth_router,
     chat_router,
@@ -24,7 +23,7 @@ from cortex.api.routes import (
     minions_router,
     sessions_router,
 )
-from cortex.config.loader import get_settings
+from cortex.config.models import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +58,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Shutting down Cortex API...")
 
 
-def create_api_app() -> FastAPI:
+def create_api_app(settings: Settings) -> FastAPI:
     """
     Create and configure the FastAPI application.
 
+    Args:
+        settings: Root settings; the app reads ``version`` from it.
+
     Returns a fully wired FastAPI app with all routes mounted.
     """
-    settings = get_settings()
-
     app = FastAPI(
         title="Cortex API",
         description="Personal AI Assistant - Cortex",
@@ -123,32 +123,3 @@ def create_api_app() -> FastAPI:
         app.mount("/ui", NoCacheStaticFiles(directory=static_dir, html=True), name="ui")
 
     return app
-
-
-def create_app() -> FastAPI:
-    """Alias for create_api_app for backward compatibility."""
-    return create_api_app()
-
-
-def bootstrap_app(state: dict[str, Any]) -> FastAPI:
-    """
-    Bootstrap the app with full dependency injection.
-
-    Called during startup with all initialized services.
-
-    Args:
-        state: Dict containing all initialized services:
-            - db_pool
-            - event_bus
-            - session_service
-            - execution_module
-            - interaction_service
-            - minion_service
-            - context_provider
-            - fact_store
-            - llm_client
-    """
-    # Set the app state for dependency injection
-    set_app_state(state)
-
-    return create_app()

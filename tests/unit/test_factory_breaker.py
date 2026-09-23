@@ -13,9 +13,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from cortex.config.models import Settings
 from cortex.llm.base import LLMClient
 from cortex.llm.circuit_breaker import CircuitBreaker, CircuitOpenError
+from cortex.llm.config import LLMSettings
 from cortex.llm.factory import LLMClientFactory
 from cortex.llm.models import ChatMessage, ChatResult
 from cortex.llm.wrapper import CircuitBreakerLLMClient
@@ -30,8 +30,8 @@ class TestFactoryBreaker:
 
     def test_create_for_module_returns_wrapped_client(self):
         """Factory.create_for_module() returns a CircuitBreakerLLMClient."""
-        settings = Settings(
-            llm_api_key="test-key",
+        settings = LLMSettings(
+            api_key="test-key",
         )
         factory = LLMClientFactory(settings)
         client = factory.create_for_module("execution")
@@ -39,8 +39,8 @@ class TestFactoryBreaker:
 
     def test_create_for_module_uses_custom_provider(self):
         """Factory.create_for_module() respects explicit provider."""
-        settings = Settings(
-            llm_api_key="test-key",
+        settings = LLMSettings(
+            api_key="test-key",
         )
         factory = LLMClientFactory(settings)
         client = factory.create_for_module("memory", provider="openai")
@@ -49,8 +49,8 @@ class TestFactoryBreaker:
 
     def test_create_for_module_configures_breaker_from_settings(self):
         """Breaker thresholds come from Settings."""
-        settings = Settings(
-            llm_api_key="test-key",
+        settings = LLMSettings(
+            api_key="test-key",
             circuit_breaker_threshold=10,
             circuit_breaker_timeout=60.0,
             circuit_breaker_half_open_successes=5,
@@ -221,7 +221,7 @@ class TestFactoryBreaker:
     @pytest.mark.asyncio
     async def test_create_execution_learning_memory_use_separate_breakers(self):
         """Each module gets its own CircuitBreaker instance."""
-        settings = Settings(llm_api_key="test-key")
+        settings = LLMSettings(api_key="test-key")
         factory = LLMClientFactory(settings)
 
         exec_client = factory.create_for_module("execution")

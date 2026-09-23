@@ -1,12 +1,23 @@
-# Features to Add
+# Neurosymbolic ideas (frozen)
 
-> Exploratory ideas not yet on the implementation plan. Each entry captures the hypothesis, where it would slot into the existing architecture, and the reasoning. Promote to `IMPLEMENTATION_PLAN.md` once a decision is made.
+> **Frozen research note — not a backlog.** These ideas were collected May–Aug 2026. The
+> live backlog is the GitHub issue tracker; live design vocabulary is `CONTEXT.md` and
+> `docs/specs/`. This file is kept for the reasoning and the rejected alternatives and is
+> **never updated in place**.
+>
+> Paths and class names below may predate the current code: `MemoryService` was split into
+> `FactStore` / `ContextProvider` / `FactExtractor` (ADR-0003), and the former
+> `docs/ARCHITECTURE.md` was replaced by `docs/specs/architecture.md`.
+>
+> Live work: #121 (Bayesian network), #122 (Datalog pattern detectors), #123
+> (constraint-guarded tools), #124 (abductive reasoning). Reservoir, concept validation and
+> embedding retrieval are tracked by ADR-0001/0007/0008 and their issues.
 
 ---
 
 ## Reservoir Computing in the Learning Module
 
-**Status:** ✅ promoted to **Wave 7.1** (2026-05-05). See [`docs/adr/0001-reservoir-computing-for-learning-module.md`](./adr/0001-reservoir-computing-for-learning-module.md).
+**Status:** implemented — ADR-0001, `src/cortex/learning/reservoir.py` + readouts.
 
 **Hypothesis:** A small Echo State Network (ESN) / Liquid State Machine (LSM) inside the Learning Module is a good fit for processing the minion event streams, with a secondary use as a salience estimator on the event bus.
 
@@ -47,7 +58,7 @@ The reservoir itself stays fixed; readouts are trained offline from logged event
 
 ## Bayesian Network for Context Inference
 
-**Status:** Proposed (2026-05-06). Not yet promoted to a wave; no ADR yet.
+**Status:** Proposed (2026-05-06). Tracked by #121; no ADR yet.
 
 **Hypothesis:** A small discrete Bayesian network sitting between the minion-derived evidence and the symbolic / LLM stack gives Cortex a fourth, complementary reasoning layer: calibrated probabilistic inference over discrete hypotheses with explicit dependencies. The strongest first use case is **sensor fusion into a posterior over latent user state** (working / commuting / resting / socialising / …), consumed by `MemoryService.get_context()` and the Recommender.
 
@@ -259,7 +270,7 @@ Skipped until the numbers justify it: an ABC, a factory path, config fields, a c
 
 ## 1. 🥇 LLM Proposes → Logic Disposes (Concept Validation Loop)
 
-**Status:** Proposed (2026-05-13). No ADR yet.
+**Status:** decided — ADR-0007; tracked by #27, #28, #29.
 
 **Hypothesis:** The LLM can generate derived concepts from facts, but it hallucinates. Adding a
 PyDatalog logic engine as a validator — and routing rejected concepts back to the LLM with
@@ -456,7 +467,7 @@ Keep the same format: step-by-step reasoning, each step referencing specific fac
 
 ## 2. 🥈 Datalog Rules as Symbolic Pattern Detectors
 
-**Status:** Proposed (2026-05-13). No ADR yet.
+**Status:** Proposed (2026-05-13). Tracked by #122; no ADR yet.
 
 **Hypothesis:** The reservoir (Wave 7.1) handles continuous salience and anomaly detection —
 "when something interesting happens." Complement it with declarative Datalog rules that
@@ -665,7 +676,7 @@ class PatternEmitter:
 
 ## 3. 🥉 Constraint-Guarded Tool Selection
 
-**Status:** Proposed (2026-05-13). No ADR yet.
+**Status:** Proposed (2026-05-13). Tracked by #123; no ADR yet.
 
 **Hypothesis:** Before the LLM selects tools in the Agentic Loop, a lightweight symbolic
 constraint layer filters the available tool set based on preconditions evaluated against
@@ -906,7 +917,7 @@ class ConstraintGuard:
 
 ## 4. Embedding + Symbolic Hybrid Fact Retrieval
 
-**Status:** Proposed (2026-05-13). No ADR yet.
+**Status:** decided — ADR-0008; tracked by #30, #31, #32.
 
 **Hypothesis:** The current `MemoryService._calculate_relevance_score()` uses text ILIKE
 matching + confidence + recency boosts. Adding embedding-based semantic search (neural)
@@ -1070,7 +1081,7 @@ async def embed(self, text: str | list[str]) -> list[list[float]]:
 
 ## 5. Abductive Reasoning for Context Inference
 
-**Status:** Proposed (2026-05-13). No ADR yet.
+**Status:** Proposed (2026-05-13). Tracked by #124; no ADR yet.
 
 **Hypothesis:** Abduction — "given observed facts, what missing facts would best explain
 them?" — is the logical complement to the Bayesian Network proposal. The BN gives

@@ -21,8 +21,8 @@ async def run() -> None:
         import uvicorn
         config = uvicorn.Config(
             app,
-            host=settings.app_host,
-            port=settings.app_port,
+            host=settings.app.host,
+            port=settings.app.port,
             log_level="info",
         )
         server = uvicorn.Server(config)

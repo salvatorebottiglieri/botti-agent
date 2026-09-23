@@ -7,9 +7,8 @@ from typing import Any
 import openai
 from openai import AsyncOpenAI
 
-from cortex.config.models import Settings
 from cortex.llm.base import LLMClient
-from cortex.llm.config import GenerationConfig
+from cortex.llm.config import GenerationConfig, LLMSettings
 from cortex.llm.models import (
     ChatMessage,
     ChatResult,
@@ -54,12 +53,12 @@ class OpenAIClient(LLMClient):
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> "OpenAIClient":
-        """Create client from settings."""
+    def from_settings(cls, llm: LLMSettings) -> "OpenAIClient":
+        """Create client from the LLM settings slice."""
         return cls(
-            api_key=settings.llm_api_key.get_secret_value(),
-            model=settings.llm_model,
-            base_url=settings.llm_base_url,
+            api_key=llm.api_key.get_secret_value(),
+            model=llm.model,
+            base_url=llm.base_url,
         )
 
     def get_provider_name(self) -> str:

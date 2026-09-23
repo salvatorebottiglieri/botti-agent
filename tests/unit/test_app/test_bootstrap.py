@@ -4,29 +4,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from cortex.config.models import Settings
+
 
 class TestCortexAppBootstrap:
     """Test CortexApp initialization and wiring."""
 
     @pytest.fixture
     def mock_settings(self):
-        """Create mock settings."""
-        settings = MagicMock()
-        settings.version = "0.1.0"
-        settings.database_url = MagicMock()
-        settings.database_url.host = "localhost"
-        settings.database_url.port = 5432
-        settings.database_url.username = "postgres"
-        settings.database_url.password = MagicMock()
-        settings.database_url.password.get_secret_value.return_value = "postgres"
-        settings.database_url.path = "/cortex"
-        settings.llm_provider = "openai"
-        settings.llm_api_key = MagicMock()
-        settings.llm_api_key.get_secret_value.return_value = "test-key"
-        settings.mqtt_broker_url = "mqtt://localhost:1883"
-        settings.app_host = "0.0.0.0"
-        settings.app_port = 8000
-        return settings
+        """Real root settings, so the fixture cannot drift from the model."""
+        return Settings(llm={"api_key": "test-key"})
 
     @pytest.mark.asyncio
     async def test_create_app_returns_fastapi_app(self, mock_settings):
@@ -125,28 +112,8 @@ class TestCortexAppBootstrap:
 class TestStartupShutdown:
     """Test startup and shutdown events."""
 
-    @pytest.fixture
-    def mock_settings(self):
-        """Create mock settings."""
-        settings = MagicMock()
-        settings.version = "0.1.0"
-        settings.database_url = MagicMock()
-        settings.database_url.host = "localhost"
-        settings.database_url.port = 5432
-        settings.database_url.username = "postgres"
-        settings.database_url.password = MagicMock()
-        settings.database_url.password.get_secret_value.return_value = "postgres"
-        settings.database_url.path = "/cortex"
-        settings.llm_provider = "openai"
-        settings.llm_api_key = MagicMock()
-        settings.llm_api_key.get_secret_value.return_value = "test-key"
-        settings.mqtt_broker_url = "mqtt://localhost:1883"
-        settings.app_host = "0.0.0.0"
-        settings.app_port = 8000
-        return settings
-
     @pytest.mark.asyncio
-    async def test_startup_initializes_components(self, mock_settings):
+    async def test_startup_initializes_components(self):
         """Startup should initialize all components in correct order."""
         # This test verifies that CortexApp exists and has expected fields
         from cortex.main import CortexApp
@@ -187,28 +154,8 @@ class TestModuleEntry:
 class TestMinionServiceIntegration:
     """Test MinionService integration."""
 
-    @pytest.fixture
-    def mock_settings(self):
-        """Create mock settings."""
-        settings = MagicMock()
-        settings.version = "0.1.0"
-        settings.database_url = MagicMock()
-        settings.database_url.host = "localhost"
-        settings.database_url.port = 5432
-        settings.database_url.username = "postgres"
-        settings.database_url.password = MagicMock()
-        settings.database_url.password.get_secret_value.return_value = "postgres"
-        settings.database_url.path = "/cortex"
-        settings.llm_provider = "openai"
-        settings.llm_api_key = MagicMock()
-        settings.llm_api_key.get_secret_value.return_value = "test-key"
-        settings.mqtt_broker_url = "mqtt://localhost:1883"
-        settings.app_host = "0.0.0.0"
-        settings.app_port = 8000
-        return settings
-
     @pytest.mark.asyncio
-    async def test_minion_service_initialization(self, mock_settings):
+    async def test_minion_service_initialization(self):
         """MinionService should be initialized with config."""
         from cortex.minions.models import MinionConfig
 

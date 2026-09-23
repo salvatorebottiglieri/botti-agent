@@ -62,8 +62,7 @@ Source: [`src/cortex/agentic/`](src/cortex/agentic/) —
 - **Goals** — long-running background tasks that run across many iterations and
   can be **paused and resumed**.
 
-See [`docs/AGENTIC_LOOP.md`](docs/AGENTIC_LOOP.md) for the full design and worked
-examples.
+See [`docs/specs/agentic-loop.md`](docs/specs/agentic-loop.md) for the full design.
 
 ## What makes it a harness, not a demo
 
@@ -72,7 +71,7 @@ examples.
 - **Event bus ("The River")** — modules never call each other directly. They
   communicate through an asyncio event bus with **salience filtering**, which
   keeps the system decoupled and observable. See
-  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+  [`docs/specs/architecture.md`](docs/specs/architecture.md).
 - **Reliability designed in, not bolted on:**
   - bounded iterations with a `MaxIterationsError` (chat ≤ 20, goals ≤ 100) —
     no runaway loops
@@ -88,7 +87,9 @@ examples.
 ## Design decisions (ADRs)
 
 Every non-obvious call is written down with its rationale in
-[`docs/adr/`](docs/adr/) — this is where the trade-offs live:
+[`docs/adr/`](docs/adr/) — this is where the trade-offs live. Current subsystem
+contracts live in [`docs/specs/`](docs/specs/) (architecture, agentic loop,
+evidence, minions, eval, trace).
 
 | ADR | Decision |
 |-----|----------|

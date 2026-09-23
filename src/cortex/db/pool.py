@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import asyncpg
 
-from cortex.config.models import Settings
+from cortex.config.database import DatabaseSettings
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +71,12 @@ async def _init_connection(conn: asyncpg.Connection) -> None:
     )
 
 
-async def create_pool(settings: Settings) -> asyncpg.Pool:
+async def create_pool(db: DatabaseSettings) -> asyncpg.Pool:
     """
     Create a connection pool to PostgreSQL.
 
     Args:
-        settings: Application settings with database_url
+        db: Database settings slice
 
     Returns:
         asyncpg.Pool instance
@@ -89,7 +89,7 @@ async def create_pool(settings: Settings) -> asyncpg.Pool:
     if _pool is not None:
         raise RuntimeError("Database pool already exists")
 
-    db_config = _parse_db_url(settings.database_url)
+    db_config = _parse_db_url(db.database_url)
 
     logger.info(f"Creating database pool for: {db_config['host']}")
 
@@ -99,9 +99,9 @@ async def create_pool(settings: Settings) -> asyncpg.Pool:
         user=db_config["user"],
         password=db_config["password"],
         database=db_config["database"],
-        min_size=settings.db_pool_min_size,
-        max_size=settings.db_pool_max_size,
-        command_timeout=settings.db_pool_timeout,
+        min_size=db.db_pool_min_size,
+        max_size=db.db_pool_max_size,
+        command_timeout=db.db_pool_timeout,
         init=_init_connection,
     )
 

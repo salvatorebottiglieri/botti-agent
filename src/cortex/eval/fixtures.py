@@ -182,7 +182,7 @@ def load_manifest(path: str | Path) -> EvalManifest:
           name: capability
           version: 1.0.0
         prompt_version: <sha256 of the reasoner system prompt>
-        model: <settings llm_model>
+        model: <settings llm.model>
         grading_version: <grader GRADING_SCHEMA_VERSION>
         rubric_version: <judge RUBRIC_VERSION>
 

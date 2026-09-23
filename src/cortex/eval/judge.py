@@ -19,9 +19,9 @@ Scoring follows the G-Eval structure (Liu et al., arXiv:2303.16634):
 The rubric text is versioned (:data:`RUBRIC_VERSION`, pinned on the verdict
 and pinned in the eval manifest; the eval test suite asserts the manifest
 pin equals this constant) so score drift is attributable. The judge model is distinct from the generator model
-(``settings.llm_judge_model`` = deepseek-v4-pro vs ``llm_model`` =
+(``llm.judge_model`` = deepseek-v4-pro vs ``llm.model`` =
 deepseek-v4-flash) — the self-enhancement bias guard — configured separately in
-:class:`cortex.config.models.Settings`.
+:class:`cortex.llm.config.LLMSettings`.
 
 Position-bias guard: the same transcript is judged in both dimension orders
 (forward and reversed); the verdict is accepted only when every dimension's
@@ -51,8 +51,8 @@ from typing import Any
 import yaml
 
 from cortex.agentic.events import LoopEvent
-from cortex.config.models import Settings
 from cortex.llm.base import LLMClient
+from cortex.llm.config import LLMSettings
 from cortex.llm.models import ChatMessage, Role, UsageStats
 from cortex.llm.providers.openai import OpenAIClient
 
@@ -530,23 +530,23 @@ class TrajectoryJudge:
         )
 
 
-def build_judge_client(settings: Settings) -> LLMClient:
-    """Build the LLM client for the judge model (``settings.llm_judge_model``).
+def build_judge_client(llm: LLMSettings) -> LLMClient:
+    """Build the LLM client for the judge model (``llm.judge_model``).
 
-    The judge model is a separate setting from ``settings.llm_model`` so the
+    The judge model is a separate setting from ``llm.model`` so the
     judge never grades with the same model that generated the trajectory
     (self-enhancement bias guard, T5). Reuses :class:`OpenAIClient` directly
     with the judge model; only the provider backing the generator today
     (``openai``) is supported.
     """
-    if settings.llm_provider != "openai":
+    if llm.provider != "openai":
         raise ValueError(
-            f"judge client not supported for provider {settings.llm_provider!r}; only 'openai'"
+            f"judge client not supported for provider {llm.provider!r}; only 'openai'"
         )
     return OpenAIClient(
-        api_key=settings.llm_api_key.get_secret_value(),
-        model=settings.llm_judge_model,
-        base_url=settings.llm_base_url,
+        api_key=llm.api_key.get_secret_value(),
+        model=llm.judge_model,
+        base_url=llm.base_url,
     )
 
 

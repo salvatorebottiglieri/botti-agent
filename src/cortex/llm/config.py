@@ -1,8 +1,19 @@
-"""LLM generation configuration."""
+"""LLM generation parameters.
+
+The LLM *settings* slice moved to :mod:`cortex.config.llm` (F-A, issue #35) so
+that the config layer does not import the ``cortex.llm`` package: this module's
+package ``__init__`` eagerly imports the factory and the OpenAI provider, which
+would load the ``openai`` SDK for every process that only reads configuration.
+The names below are re-exported unchanged for existing importers.
+"""
 
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from cortex.config.llm import LLMSettings, ModelPricing, derive_cost
+
+__all__ = ["GenerationConfig", "LLMSettings", "ModelPricing", "derive_cost"]
 
 
 class GenerationConfig(BaseModel):

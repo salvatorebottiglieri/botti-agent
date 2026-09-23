@@ -1,12 +1,12 @@
 """E1 — evidence-invariants suite.
 
-Formalizes the invariants in ``docs/evidence-system.md`` as deterministic eval
+Formalizes the invariants in ``docs/specs/evidence-system.md`` as deterministic eval
 tests, written against the evidence engine's *contract* so the regression
 oracle exists **before** the engine (issue #83). Suite id: E1.
 
 Source of truth
 ---------------
-``docs/evidence-system.md`` (data model, ingestion flow, update rule,
+``docs/specs/evidence-system.md`` (data model, ingestion flow, update rule,
 calibration constants, Invariants table) and ``docs/adr/0013`` (rationale).
 When #83 lands, this module must keep passing with **zero code changes**: the
 ``engine-#83`` fixture parameter below is gated by ``pytest.importorskip`` and
@@ -63,7 +63,7 @@ Decisions where the spec left signatures open (these bind #83)
 
 Structure
 ---------
-Every invariant in the ``docs/evidence-system.md`` Invariants table has a test
+Every invariant in the ``docs/specs/evidence-system.md`` Invariants table has a test
 class here; each docstring states the law and its negation→test pair. Tests
 run against the in-file reference implementation (``_ReferenceEvidenceStore``,
 ``_update_rule`` — the contract's executable spec, so the suite is provably
@@ -90,7 +90,7 @@ from cortex.memory.models import Fact, FactMutability  # type: ignore[import-unt
 ENGINE_MODULE = "cortex.memory.evidence_store"
 ENGINE_SKIP_REASON = "evidence engine #83 not landed"
 
-# --- Calibration constants (docs/evidence-system.md — the only magic numbers) ---
+# --- Calibration constants (docs/specs/evidence-system.md — the only magic numbers) ---
 
 LR_BASE: dict[str, float] = {"user_confirm": 20.0, "sensor": 10.0, "llm": 3.0}
 PRIOR = 0.5
@@ -161,7 +161,7 @@ def _value_hash(value: str) -> str:
 
 
 def _update_rule(confidence: float, strength: float, source_type: str) -> float:
-    """Reference update rule: logit-space Bayesian update (docs/evidence-system.md)."""
+    """Reference update rule: logit-space Bayesian update (docs/specs/evidence-system.md)."""
     if confidence <= 0.0:
         return 0.0
     if confidence >= 1.0:
@@ -187,7 +187,7 @@ class _StoredFact:
 class _ReferenceEvidenceStore:
     """In-memory executable spec of the evidence contract.
 
-    Implements docs/evidence-system.md exactly: dedup, value-tagging, windows,
+    Implements docs/specs/evidence-system.md exactly: dedup, value-tagging, windows,
     static facts, and the logit update rule. This is the contract's reference
     oracle — the #83 engine must reproduce its observable behavior.
     """
@@ -587,7 +587,7 @@ class TestConfidenceRange:
 
 
 class TestUpdateRule:
-    """The update rule is a pure, deterministic function (docs/evidence-system.md)."""
+    """The update rule is a pure, deterministic function (docs/specs/evidence-system.md)."""
 
     def test_full_strength_applies_full_lr(self, engine: EvidenceEngine) -> None:
         for source_type, lr in engine.LR_BASE.items():
@@ -621,7 +621,7 @@ class TestUpdateRule:
 
 
 class TestCalibrationConstants:
-    """The calibration constants table in docs/evidence-system.md is pinned."""
+    """The calibration constants table in docs/specs/evidence-system.md is pinned."""
 
     def test_lr_table(self, engine: EvidenceEngine) -> None:
         assert engine.LR_BASE == {"user_confirm": 20.0, "sensor": 10.0, "llm": 3.0}

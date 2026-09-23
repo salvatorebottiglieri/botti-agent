@@ -878,3 +878,7 @@ safeguards, each with a primary source:
 repo removed; Anthropic's 2025 "Evaluating AI agents" post replaced by the 2026 "Demystifying evals for AI
 agents" post). Repo-relative claims about Cortex (module names, event types, evidence machinery) reference
 `CONTEXT.md`, `docs/ARCHITECTURE.md`, and `docs/evidence-system.md` as read on the same date.*
+
+*Note (documentation cleanup): those paths moved after compilation — `docs/ARCHITECTURE.md` →
+`docs/specs/architecture.md`, `docs/evidence-system.md` → `docs/specs/evidence-system.md`.
+The claims are as read on 2026-08-28 and are not updated.*
