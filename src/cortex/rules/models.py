@@ -58,9 +58,14 @@ class Rule:
     action: str = ""
     rationale: str = ""
     state: RuleState = RuleState.STAGING
+    # Mirrors constants.PRIOR; the literal is repeated because importing the
+    # constants module here would be a cycle.
     confidence: float = 0.5
     origin: RuleOrigin = RuleOrigin.CORRECTION
     superseded_by: UUID | None = None
+    # The reverse history edge: a Split child names the rule it replaced; a
+    # merge product has None (its parents point at it through superseded_by).
+    parent_id: UUID | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     archived_at: datetime | None = None

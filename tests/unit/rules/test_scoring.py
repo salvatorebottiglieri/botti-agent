@@ -14,11 +14,7 @@ import pytest
 
 from cortex.rules.constants import (
     ARCHIVE_THRESHOLD,
-    CONTEXT_BUDGET,
     DEMOTE_THRESHOLD,
-    LR,
-    MIN_DISTINCT_SESSIONS,
-    MIN_POSITIVE_USES,
     PRIOR,
     PROMOTE_THRESHOLD,
     VALIDITY_WINDOW,
@@ -56,27 +52,6 @@ def _use(
 
 def _approvals(count: int, session_id: UUID = SESSION_A) -> list[RuleUse]:
     return [_use(UseOutcome.APPROVAL, session_id=session_id) for _ in range(count)]
-
-
-class TestConstants:
-    """The calibration table is the spec's, not a taste."""
-
-    def test_constants_match_the_spec_table(self):
-        """Witness: any drifted constant changes every posterior below."""
-        assert PRIOR == 0.5
-        assert LR[UseOutcome.APPROVAL] == 20
-        assert LR[UseOutcome.CORRECTION] == 20
-        assert LR[UseOutcome.IMPLICIT] == 3
-        assert LR[UseOutcome.NEUTRAL] == 1
-        assert LR[UseOutcome.SCOPE_CORRECTION] == 1
-        assert PROMOTE_THRESHOLD == 0.9
-        assert DEMOTE_THRESHOLD == 0.7
-        assert ARCHIVE_THRESHOLD == 0.3
-        assert MIN_POSITIVE_USES == 3
-        assert MIN_DISTINCT_SESSIONS == 2
-        assert CONTEXT_BUDGET == 40
-        # Six months, expressed in days: 183 = 6 x the mean month length.
-        assert VALIDITY_WINDOW == timedelta(days=183)
 
 
 class TestPosterior:

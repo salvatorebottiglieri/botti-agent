@@ -124,7 +124,7 @@ class TestCreateFromCorrection:
         """Witness: reusing the dictation path would birth it definitive at 20/21."""
         service, repository, _ = _service()
 
-        rule = await service.create_from_correction(SESSION_A, SPEC)
+        rule = await service.create_from_correction(SPEC)
 
         assert rule.state is RuleState.STAGING
         assert rule.confidence == pytest.approx(0.5)
@@ -135,7 +135,7 @@ class TestCreateFromCorrection:
         """Witness: 0.5 is above the archive threshold 0.3, so a fresh rule is
         visible in staging rather than retired."""
         service, _, _ = _service()
-        rule = await service.create_from_correction(SESSION_A, SPEC)
+        rule = await service.create_from_correction(SPEC)
 
         active = await service.list_active()
 
@@ -154,7 +154,7 @@ class TestRecordUse:
         """Witness: an implementation that mutates the in-memory rule without
         refresh() leaves the stored confidence at 0.5."""
         service, repository, _ = _service()
-        rule = await service.create_from_correction(SESSION_A, SPEC)
+        rule = await service.create_from_correction(SPEC)
 
         updated = await service.record_use(
             rule.id, SESSION_A, "book a table for two", UseOutcome.APPROVAL
@@ -169,7 +169,7 @@ class TestRecordUse:
         """Witness: two approvals across two sessions are (2, 2) — in staging.
         Counting the neutral use as a positive makes it (3, 2) and promotes."""
         service, repository, _ = _service()
-        rule = await service.create_from_correction(SESSION_A, SPEC)
+        rule = await service.create_from_correction(SPEC)
         await service.record_use(rule.id, SESSION_A, "book", UseOutcome.APPROVAL)
         await service.record_use(rule.id, SESSION_B, "book", UseOutcome.APPROVAL)
         before = await repository.get(rule.id)
@@ -184,12 +184,12 @@ class TestRecordUse:
         """Witness: the same three approvals in one session read (3, 1) and stay
         staging — the session counter has to be real."""
         service, _, _ = _service()
-        one_session = await service.create_from_correction(SESSION_A, SPEC)
+        one_session = await service.create_from_correction(SPEC)
         for _ in range(3):
             await service.record_use(
                 one_session.id, SESSION_A, "book", UseOutcome.APPROVAL
             )
-        two_sessions = await service.create_from_correction(SESSION_A, SPEC)
+        two_sessions = await service.create_from_correction(SPEC)
         for session_id in (SESSION_A, SESSION_A, SESSION_B):
             await service.record_use(
                 two_sessions.id, session_id, "book", UseOutcome.APPROVAL
@@ -310,10 +310,82 @@ class TestListActive:
         # Highest confidence first: the cap keeps the top of the ranking.
         assert active[0].condition == f"condition {CONTEXT_BUDGET + 4}"
 
+    async def test_orders_by_the_recomputed_confidence_not_the_stored_one(self):
+        """Witness: the expired rule's stored 0.95 outranks the promoted rule's
+        stored 0.5, so an implementation that sorts before the sweep renders the
+        demoted rule first."""
+        service, repository, _ = _service()
+        expired = await repository.create(
+            Rule(condition="expired", action="act", state=RuleState.STAGING, confidence=0.95)
+        )
+        await repository.add_use(
+            RuleUse(
+                rule_id=expired.id,
+                session_id=SESSION_A,
+                situation="expired dictation",
+                outcome=UseOutcome.APPROVAL,
+                occurred_at=NOW - VALIDITY_WINDOW - timedelta(days=1),
+            )
+        )
+        promoted = await repository.create(
+            Rule(condition="promoted", action="act", state=RuleState.STAGING, confidence=0.5)
+        )
+        for session_id in (SESSION_A, SESSION_A, SESSION_B):
+            await repository.add_use(
+                RuleUse(
+                    rule_id=promoted.id,
+                    session_id=session_id,
+                    situation="fresh approval",
+                    outcome=UseOutcome.APPROVAL,
+                    occurred_at=NOW,
+                )
+            )
+
+        active = await service.list_active()
+
+        assert [rule.id for rule in active] == [promoted.id, expired.id]
+        assert active[0].state is RuleState.DEFINITIVE
+        assert active[0].confidence == pytest.approx(THREE_APPROVALS)
+        assert active[1].state is RuleState.STAGING
+        assert active[1].confidence == pytest.approx(0.5)
+
+    async def test_a_rule_the_sweep_archives_does_not_consume_a_budget_slot(self):
+        """Witness: taking the budget limit on the stored column puts the rule
+        about to be archived in the top 40; the sweep then drops it and returns
+        39 although 40 active rules exist."""
+        service, repository, _ = _service()
+        doomed = await repository.create(
+            Rule(condition="doomed", action="act", state=RuleState.STAGING, confidence=0.99)
+        )
+        for session_id in (SESSION_A, SESSION_B):
+            await repository.add_use(
+                RuleUse(
+                    rule_id=doomed.id,
+                    session_id=session_id,
+                    situation="corrected twice",
+                    outcome=UseOutcome.CORRECTION,
+                    occurred_at=NOW,
+                )
+            )
+        for index in range(CONTEXT_BUDGET):
+            await repository.create(
+                Rule(
+                    condition=f"active {index}",
+                    action="act",
+                    state=RuleState.STAGING,
+                    confidence=0.5,
+                )
+            )
+
+        active = await service.list_active()
+
+        assert len(active) == CONTEXT_BUDGET
+        assert doomed.id not in {rule.id for rule in active}
+
     async def test_get_returns_archived_rules_for_the_cli(self):
         """`get` returns any rule — archived included — so the CLI can show it."""
         service, _, _ = _service()
-        rule = await service.create_from_correction(SESSION_A, SPEC)
+        rule = await service.create_from_correction(SPEC)
         archived = await service.archive(rule.id)
 
         assert archived is not None
@@ -427,17 +499,45 @@ class TestSplit:
         # The parent no longer scores: none of the uses are still attached to it.
         assert await repository.list_uses(parent.id) == []
 
-    async def test_split_needs_at_least_two_children(self):
-        """Witness: an implementation that creates the children first leaves a
-        write behind when it then raises."""
+    async def test_split_lists_its_children_under_the_parent(self):
+        """The history edge is the only one the schema has: both children
+        point back at the parent, nothing points at a child."""
+        service, _, _, parent, uses = await self._parent_with_four_uses()
+        assignments = {uses[0].id: 0, uses[1].id: 0, uses[2].id: 1, uses[3].id: 1}
+
+        created = await service.split(
+            parent.id,
+            [
+                RuleSpec(condition="dinner", action="confirm first"),
+                RuleSpec(condition="pizza", action="order directly"),
+            ],
+            assignments,
+        )
+
+        children = await service.list_children(parent.id)
+        assert {child.id for child in children} == {created[0].id, created[1].id}
+        # The second child has no incoming edge: the parent records only its
+        # own successor (child 0), so child 0 also sees the parent it replaced.
+        assert await service.list_children(created[1].id) == []
+
+    async def test_split_needs_exactly_two_children(self):
+        """Witness: an implementation accepting one or three children leaves a
+        write behind when it then raises — Split is one rule replaced by TWO."""
         service, repository, _, parent, uses = await self._parent_with_four_uses()
 
-        with pytest.raises(ValueError):
-            await service.split(
-                parent.id,
-                [RuleSpec(condition="dinner", action="confirm first")],
-                {uses[0].id: 0},
-            )
+        for children, assignments in (
+            ([RuleSpec(condition="dinner", action="confirm first")], {uses[0].id: 0}),
+            (
+                [
+                    RuleSpec(condition="dinner", action="confirm first"),
+                    RuleSpec(condition="pizza", action="order directly"),
+                    RuleSpec(condition="sushi", action="order directly"),
+                ],
+                {uses[0].id: 0, uses[1].id: 1, uses[2].id: 2, uses[3].id: 2},
+            ),
+        ):
+            with pytest.raises(ValueError):
+                await service.split(parent.id, children, assignments)
 
         assert set(repository.rules) == {parent.id}
 
@@ -487,13 +587,34 @@ class TestSplit:
         assert set(repository.rules) == {parent.id}
 
 
+class TestListChildren:
+    async def test_a_merge_product_lists_the_parents_it_absorbed(self):
+        """The merge product points at nothing; its parents point at it, so the
+        history is only visible by looking at both edges."""
+        service, _, _ = _service()
+        first = await service.create_dictated(SESSION_A, RuleSpec("a", "b"))
+        second = await service.create_dictated(SESSION_B, RuleSpec("c", "d"))
+
+        fused = await service.merge([first.id, second.id], RuleSpec("a or c", "b or d"))
+
+        children = await service.list_children(fused.id)
+        assert {rule.id for rule in children} == {first.id, second.id}
+        assert await service.list_children(first.id) == []
+
+    async def test_a_plain_rule_has_no_children(self):
+        service, _, _ = _service()
+        rule = await service.create_from_correction(SPEC)
+
+        assert await service.list_children(rule.id) == []
+
+
 class TestMerge:
     async def test_merge_takes_the_union_of_the_parents_uses(self):
         """Witness: keeping only the first parent's uses gives 400/401; the union
         of (2 approvals) and (1 approval) gives 8000/8001."""
         service, repository, _ = _service()
-        first = await service.create_from_correction(SESSION_A, RuleSpec("a", "b"))
-        second = await service.create_from_correction(SESSION_B, RuleSpec("c", "d"))
+        first = await service.create_from_correction(RuleSpec("a", "b"))
+        second = await service.create_from_correction(RuleSpec("c", "d"))
         for _ in range(2):
             await service.record_use(first.id, SESSION_A, "a applies", UseOutcome.APPROVAL)
         await service.record_use(second.id, SESSION_B, "c applies", UseOutcome.APPROVAL)
@@ -509,7 +630,7 @@ class TestMerge:
         pair; "all parents" returns staging."""
         service, _, _ = _service()
         definitive = await service.create_dictated(SESSION_A, RuleSpec("a", "b"))
-        staging = await service.create_from_correction(SESSION_B, RuleSpec("c", "d"))
+        staging = await service.create_from_correction(RuleSpec("c", "d"))
 
         mixed = await service.merge(
             [definitive.id, staging.id], RuleSpec("a or c", "b or d")
@@ -544,7 +665,7 @@ class TestMerge:
 
     async def test_merge_needs_at_least_two_parents(self):
         service, repository, _ = _service()
-        rule = await service.create_from_correction(SESSION_A, RuleSpec("a", "b"))
+        rule = await service.create_from_correction(RuleSpec("a", "b"))
 
         with pytest.raises(ValueError):
             await service.merge([rule.id], RuleSpec("a", "b"))
@@ -555,7 +676,7 @@ class TestMerge:
         """Witness: reading the parents before writing means a failed merge
         leaves no fused row behind."""
         service, repository, _ = _service()
-        rule = await service.create_from_correction(SESSION_A, RuleSpec("a", "b"))
+        rule = await service.create_from_correction(RuleSpec("a", "b"))
 
         with pytest.raises(RuleNotFoundError):
             await service.merge([rule.id, uuid4()], RuleSpec("a", "b"))

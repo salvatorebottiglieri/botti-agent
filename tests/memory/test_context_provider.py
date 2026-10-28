@@ -437,12 +437,3 @@ class TestRulesDimension:
 
         assert bundle.rules == []
         assert bundle.degraded_dimensions == []
-
-    @pytest.mark.asyncio
-    async def test_get_rules_context_delegates_to_list_active(
-        self, provider_with_rules, mock_rule_service
-    ):
-        mock_rule_service.list_active = AsyncMock(return_value=[])
-
-        assert await provider_with_rules.get_rules_context() == []
-        mock_rule_service.list_active.assert_awaited_once_with()

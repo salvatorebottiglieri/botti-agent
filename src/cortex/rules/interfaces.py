@@ -46,6 +46,16 @@ class RuleRepository(ABC):
         ...
 
     @abstractmethod
+    async def list_children(self, rule_id: UUID) -> list[Rule]:
+        """List the rules on either side of ``rule_id``'s history edge.
+
+        For a Split parent, its children carry ``parent_id = rule_id``. For a
+        Merge product, its parents carry ``superseded_by = rule_id``. A plain
+        rule returns ``[]``.
+        """
+        ...
+
+    @abstractmethod
     async def refresh(self, rule: Rule) -> Rule | None:
         """Rewrite a rule's state, confidence, archive and supersede columns.
 
@@ -54,6 +64,6 @@ class RuleRepository(ABC):
         ...
 
     @abstractmethod
-    async def reassign_uses(self, use_ids: Sequence[int], rule_id: UUID) -> int:
-        """Move the given uses to ``rule_id``; return how many rows moved."""
+    async def reassign_uses(self, use_ids: Sequence[int], rule_id: UUID) -> None:
+        """Move the given uses to ``rule_id``."""
         ...

@@ -49,17 +49,22 @@ class InMemoryRuleRepository(RuleRepository):
         matching.sort(key=lambda rule: rule.confidence, reverse=True)
         return matching[:limit]
 
+    async def list_children(self, rule_id: UUID) -> list[Rule]:
+        matching = [
+            replace(rule)
+            for rule in self.rules.values()
+            if rule.superseded_by == rule_id or rule.parent_id == rule_id
+        ]
+        return sorted(matching, key=lambda rule: rule.created_at)
+
     async def refresh(self, rule: Rule) -> Rule | None:
         if rule.id not in self.rules:
             return None
         self.rules[rule.id] = replace(rule)
         return replace(rule)
 
-    async def reassign_uses(self, use_ids: Sequence[int], rule_id: UUID) -> int:
+    async def reassign_uses(self, use_ids: Sequence[int], rule_id: UUID) -> None:
         wanted = set(use_ids)
-        reassigned = 0
         for use in self.uses:
             if use.id in wanted:
                 use.rule_id = rule_id
-                reassigned += 1
-        return reassigned

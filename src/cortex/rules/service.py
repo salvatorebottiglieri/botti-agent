@@ -72,13 +72,12 @@ class RuleService:
         await self._repository.add_use(dictation)
         return stored
 
-    async def create_from_correction(self, session_id: UUID, spec: RuleSpec) -> Rule:
+    async def create_from_correction(self, spec: RuleSpec) -> Rule:
         """Create a rule a correction revealed: staging, prior confidence, no use.
 
-        ``session_id`` is accepted for symmetry with ``create_dictated``; a
-        correction-born rule records no evidence until it is applied.
+        A correction-born rule records no evidence until it is applied, so
+        there is no use to attach and no session to name.
         """
-        del session_id
         _require_text(spec)
         rule = Rule(
             condition=spec.condition,
@@ -129,10 +128,16 @@ class RuleService:
 
         Sweeping here is what applies expiry, promotion and demotion: a rule
         whose recomputed state or confidence differs from the stored one is
-        refreshed before it is returned.
+        refreshed before it is returned. The ordering and the budget are
+        applied *after* the sweep, to the recomputed confidence, so an expired
+        rule cannot outrank a live one and a rule the sweep archives cannot
+        consume a slot.
         """
+        # The DAO's default limit is a safety cap only: the context budget is
+        # applied below, to the confidence the sweep recomputes, not to the
+        # stored column.
         candidates = await self._repository.list_by_states(
-            [RuleState.STAGING, RuleState.DEFINITIVE], limit=CONTEXT_BUDGET
+            [RuleState.STAGING, RuleState.DEFINITIVE]
         )
         now = self._clock()
         active: list[Rule] = []
@@ -153,11 +158,21 @@ class RuleService:
             if rule.state is RuleState.ARCHIVED:
                 continue
             active.append(rule)
+        active.sort(key=lambda rule: rule.confidence, reverse=True)
         return active[:CONTEXT_BUDGET]
 
     async def get(self, rule_id: UUID) -> Rule | None:
         """Return one rule whatever its state — the CLI shows archived ones too."""
         return await self._repository.get(rule_id)
+
+    async def list_children(self, rule_id: UUID) -> list[Rule]:
+        """The rules on either side of ``rule_id``'s history edge.
+
+        For a split parent these are its children (``parent_id``); for a merge
+        product they are the parents it absorbed (``superseded_by``). Empty for
+        a plain rule.
+        """
+        return await self._repository.list_children(rule_id)
 
     async def archive(self, rule_id: UUID) -> Rule | None:
         """Retire a rule on the user's command."""
@@ -175,16 +190,17 @@ class RuleService:
         children: Sequence[RuleSpec],
         assignments: Mapping[int, int],
     ) -> list[Rule]:
-        """Replace a rule with two or more complementary ones.
+        """Replace a rule with two complementary ones.
 
         ``assignments`` maps each of the parent's use ids to the index of the
         child that inherits it — the classifier's decision in slice B. Every
         use must be assigned exactly once: a use left on the archived parent
-        would silently stop scoring. Child 0 inherits the parent's state; the
-        others start in staging.
+        would silently stop scoring. Child 0 inherits the parent's state; child
+        1 starts in staging. Each child records ``parent_id`` = the parent, so
+        the split is reconstructible from either end.
         """
-        if len(children) < 2:
-            raise ValueError("a split needs at least two children")
+        if len(children) != 2:
+            raise ValueError("a split needs exactly two children")
         for spec in children:
             _require_text(spec)
         parent = await self._repository.get(rule_id)
@@ -221,6 +237,7 @@ class RuleService:
                         state=parent.state if index == 0 else RuleState.STAGING,
                         confidence=posterior(PRIOR, inherited, now),
                         origin=RuleOrigin.CORRECTION,
+                        parent_id=parent.id,
                         created_at=now,
                         updated_at=now,
                     )

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC
 from typing import Any
 
@@ -12,32 +14,11 @@ import typer
 cli = typer.Typer(help="Cortex CLI commands")
 
 
-class _AsyncpgRuleSession:
-    """A bare asyncpg connection presented as the DbSession surface.
-
-    PostgresRuleRepository only needs fetch/fetchrow/execute behind an async
-    context manager. Wrapping the command's own connection this way lets the
-    ordinary repository honour ``--db-url`` instead of going through the shared
-    pool.
-    """
-
-    def __init__(self, conn: Any) -> None:
-        self._conn = conn
-
-    async def __aenter__(self) -> _AsyncpgRuleSession:
-        return self
-
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        return None
-
-    async def fetch(self, query: str, *args: Any) -> Any:
-        return await self._conn.fetch(query, *args)
-
-    async def fetchrow(self, query: str, *args: Any) -> Any:
-        return await self._conn.fetchrow(query, *args)
-
-    async def execute(self, query: str, *args: Any) -> Any:
-        return await self._conn.execute(query, *args)
+@asynccontextmanager
+async def _connection(conn: Any) -> AsyncIterator[Any]:
+    """Present the command's own asyncpg connection as the DbSession surface,
+    so the ordinary repository honours ``--db-url`` instead of the shared pool."""
+    yield conn
 
 
 def _database_url(db_url: str | None) -> str:
@@ -175,7 +156,7 @@ def rules_list(db_url: str | None = typer.Option(None, "--db-url", help="Databas
         conn = await asyncpg.connect(_database_url(db_url))
         try:
             service = RuleService(
-                PostgresRuleRepository(session_factory=lambda: _AsyncpgRuleSession(conn))
+                PostgresRuleRepository(session_factory=lambda: _connection(conn))
             )
             rules = await service.list_active()
         finally:
@@ -212,14 +193,14 @@ def rules_show(
         parsed = UUID(rule_id)
         conn = await asyncpg.connect(_database_url(db_url))
         try:
-            repository = PostgresRuleRepository(
-                session_factory=lambda: _AsyncpgRuleSession(conn)
-            )
-            rule = await RuleService(repository).get(parsed)
+            repository = PostgresRuleRepository(session_factory=lambda: _connection(conn))
+            service = RuleService(repository)
+            rule = await service.get(parsed)
             if rule is None:
                 typer.echo(f"rule not found: {rule_id}")
                 raise typer.Exit(1)
             uses = await repository.list_uses(parsed)
+            children = await service.list_children(parsed)
         finally:
             await conn.close()
 
@@ -243,6 +224,14 @@ def rules_show(
             typer.echo(
                 f"  {use.occurred_at.isoformat()}  {use.outcome.value:<16}  {use.situation}"
             )
+        # One section covers both directions of the history edge: a split
+        # parent's children (parent_id) and a merge product's parents
+        # (superseded_by).
+        typer.echo("replaced:")
+        if not children:
+            typer.echo("  (none)")
+        for child in children:
+            typer.echo(f"  {child.id}  {child.state.value:<10}  {child.condition}")
 
     asyncio.run(run())
 
@@ -267,7 +256,7 @@ def rules_archive(
         conn = await asyncpg.connect(_database_url(db_url))
         try:
             service = RuleService(
-                PostgresRuleRepository(session_factory=lambda: _AsyncpgRuleSession(conn))
+                PostgresRuleRepository(session_factory=lambda: _connection(conn))
             )
             archived = await service.archive(parsed)
             if archived is None:

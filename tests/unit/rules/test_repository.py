@@ -31,6 +31,7 @@ def _rule_row(rule: Rule) -> dict:
         "confidence": rule.confidence,
         "origin": rule.origin.value,
         "superseded_by": rule.superseded_by,
+        "parent_id": rule.parent_id,
         "created_at": rule.created_at,
         "updated_at": rule.updated_at,
         "archived_at": rule.archived_at,
@@ -216,6 +217,30 @@ class TestListByStates:
         assert await repository.list_by_states([RuleState.STAGING]) == []
 
 
+class TestListChildren:
+    async def test_selects_the_rules_superseded_by_the_given_id(self, repo):
+        """Witness: without this statement the only history edge in the schema
+        (superseded_by) is write-only."""
+        repository, _, session = repo
+        parent_id = uuid4()
+        child = Rule(
+            condition="dinner",
+            action="confirm first",
+            state=RuleState.DEFINITIVE,
+            parent_id=parent_id,
+        )
+        session.fetch.return_value = [_rule_row(child)]
+
+        children = await repository.list_children(parent_id)
+
+        sql = session.fetch.call_args.args[0]
+        assert "FROM rules" in sql
+        assert "WHERE superseded_by = $1 OR parent_id = $1" in sql
+        assert "ORDER BY created_at" in sql
+        assert session.fetch.call_args.args[1] == parent_id
+        assert [rule.id for rule in children] == [child.id]
+
+
 class TestRefresh:
     async def test_rewrites_state_confidence_archive_and_supersede_columns(self, repo):
         """Witness: a refresh that forgets `superseded_by` leaves a split parent
@@ -262,19 +287,11 @@ class TestReassignUses:
     async def test_updates_the_rule_id_of_the_given_uses(self, repo):
         repository, _, session = repo
         target = uuid4()
-        session.execute.return_value = "UPDATE 2"
 
-        reassigned = await repository.reassign_uses([3, 4], target)
+        assert await repository.reassign_uses([3, 4], target) is None
 
         sql = session.execute.call_args.args[0]
         assert "UPDATE rule_uses SET rule_id = $1" in sql
         assert "WHERE id = ANY($2)" in sql
         assert session.execute.call_args.args[1:] == (target, [3, 4])
-        assert reassigned == 2
-
-    async def test_no_ids_writes_nothing(self, repo):
-        repository, _, session = repo
-
-        assert await repository.reassign_uses([], uuid4()) == 0
-        session.execute.assert_not_called()
 

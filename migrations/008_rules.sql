@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS rules (
     confidence FLOAT NOT NULL DEFAULT 0.5,
     origin VARCHAR(20) NOT NULL DEFAULT 'correction',
     superseded_by UUID REFERENCES rules(id) ON DELETE SET NULL,
+    -- The reverse history edge: set on a Split's children (the rule they
+    -- replace), NULL on a Merge product (whose parents point at it instead).
+    parent_id UUID REFERENCES rules(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     archived_at TIMESTAMPTZ

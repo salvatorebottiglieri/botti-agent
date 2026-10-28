@@ -13,7 +13,7 @@ from cortex.rules.models import Rule, RuleOrigin, RuleState, RuleUse, UseOutcome
 
 _RULE_COLUMNS = (
     "id, condition, action, rationale, state, confidence, origin, "
-    "superseded_by, created_at, updated_at, archived_at"
+    "superseded_by, parent_id, created_at, updated_at, archived_at"
 )
 _USE_COLUMNS = "id, rule_id, session_id, situation, outcome, occurred_at"
 
@@ -37,9 +37,9 @@ class PostgresRuleRepository(RuleRepository):
             row = await db.fetchrow(
                 f"""
                 INSERT INTO rules (id, condition, action, rationale, state,
-                                   confidence, origin, superseded_by, created_at,
-                                   archived_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                                   confidence, origin, superseded_by, parent_id,
+                                   created_at, archived_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 RETURNING {_RULE_COLUMNS}
                 """,
                 rule.id,
@@ -50,6 +50,7 @@ class PostgresRuleRepository(RuleRepository):
                 rule.confidence,
                 rule.origin.value,
                 rule.superseded_by,
+                rule.parent_id,
                 rule.created_at,
                 rule.archived_at,
             )
@@ -112,6 +113,19 @@ class PostgresRuleRepository(RuleRepository):
             )
             return [self._row_to_rule(row) for row in rows]
 
+    async def list_children(self, rule_id: UUID) -> list[Rule]:
+        async with self._session_factory() as db:
+            rows = await db.fetch(
+                f"""
+                SELECT {_RULE_COLUMNS}
+                FROM rules
+                WHERE superseded_by = $1 OR parent_id = $1
+                ORDER BY created_at
+                """,
+                rule_id,
+            )
+            return [self._row_to_rule(row) for row in rows]
+
     async def refresh(self, rule: Rule) -> Rule | None:
         """Rewrite the mutable columns of a rule.
 
@@ -138,17 +152,13 @@ class PostgresRuleRepository(RuleRepository):
                 return None
             return self._row_to_rule(row)
 
-    async def reassign_uses(self, use_ids: Sequence[int], rule_id: UUID) -> int:
-        if not use_ids:
-            return 0
+    async def reassign_uses(self, use_ids: Sequence[int], rule_id: UUID) -> None:
         async with self._session_factory() as db:
-            status = await db.execute(
+            await db.execute(
                 "UPDATE rule_uses SET rule_id = $1 WHERE id = ANY($2)",
                 rule_id,
                 list(use_ids),
             )
-            # asyncpg status string, e.g. "UPDATE 2"
-            return int(status.split()[-1])
 
     def _row_to_rule(self, row: Any) -> Rule:
         """Convert a database row to a Rule, decoding the enum columns."""
@@ -161,6 +171,7 @@ class PostgresRuleRepository(RuleRepository):
             confidence=row["confidence"],
             origin=RuleOrigin(row["origin"]),
             superseded_by=row["superseded_by"],
+            parent_id=row["parent_id"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             archived_at=row["archived_at"],
