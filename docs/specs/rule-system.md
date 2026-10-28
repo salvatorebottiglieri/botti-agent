@@ -5,9 +5,14 @@
 > Rationale: `docs/adr/0020-learned-rules.md`. Vocabulary: `CONTEXT.md` (`## Rules`).
 > Work items: issue #130 (rule system v1).
 >
-> **Status: designed, not yet implemented.** There is no `rules` table in
-> `migrations/`, no Rule model in `src/cortex/`, and the feedback classifier
-> does not exist. This document is the implementation contract.
+> **Status: implemented (slice A).** `migrations/008_rules.sql` holds the
+> `rules` and `rule_uses` tables, `src/cortex/rules/` holds the pure score, the
+> repository, the lifecycle service and the prompt rendering, rules are the
+> fourth dimension of the context bundle, and `cortex rules:list` /
+> `rules:show` / `rules:archive` manage them. Slice B — the feedback classifier
+> that attributes uses and proposes rules — does not exist yet: nothing writes a
+> `rule_uses` row at runtime except `RuleService` itself, so the set changes
+> only through the service API and the CLI.
 
 ## Purpose
 
@@ -49,7 +54,7 @@ mathematics and nothing else.
 Both tables live in the same migration as the rest of the schema; the
 `evidence` table of ADR-0013 does not exist in code (issue #83), so whoever
 implements the rule system first writes the pure update function
-(`cortex/learning/rules/scoring.py`) and the evidence engine reuses it.
+(`cortex/rules/scoring.py`) and the evidence engine reuses it.
 
 ## Update rule
 
@@ -223,6 +228,10 @@ If the classifier is down, the feedback queues and is not lost.
   announces a rule it did not really apply, or applies one silently). The
   classifier's attribution is the one that scores. Definitive rules are
   silent — only the use attribution records them.
+- **Not modelled in v1: universal-condition rules.** The "always enter"
+  guarantee has no field in the schema to express it, so the budget is a plain
+  confidence-ordered cap of 40 (`CONTEXT_BUDGET`): the highest-confidence rules
+  enter, the rest do not.
 - Rules reach the prompt through the memory bundle (`MemoryContext`), which
   today carries three dimensions — facts, personality, ambient — and is
   assembled by `ContextProvider` with per-dimension failure isolation

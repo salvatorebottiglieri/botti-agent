@@ -4,7 +4,8 @@
 > Updated in place. Decisions (and the alternatives rejected) live in `docs/adr/`.
 > Subsystems with their own spec: [agentic-loop.md](agentic-loop.md),
 > [evidence-system.md](evidence-system.md), [minion-protocol.md](minion-protocol.md),
-> [eval-system.md](eval-system.md), [trace-system.md](trace-system.md).
+> [eval-system.md](eval-system.md), [trace-system.md](trace-system.md),
+> [rule-system.md](rule-system.md).
 
 ## Sources of truth
 
@@ -64,6 +65,7 @@ flowchart TB
         Trace[trace]
         Eval[eval]
         Learning[learning<br/>ESN reservoir]
+        Rules[rules<br/>RuleService]
     end
 
     subgraph L1["Layer 1 - primitives"]
@@ -111,7 +113,9 @@ flowchart TB
     Trace --> Sidecar
     Laptop --> Protocol
 
+    Memory --> Rules
     Memory --> DB
+    Rules --> DB
     Sessions --> DB
     Goals --> DB
     MinionsMod --> DB
@@ -214,6 +218,7 @@ Event types (`EventTypes`):
 | Minions | `src/cortex/minions/` | `MinionGateway`, `MinionRegistry`, `MinionEventHandler`; `MinionMQTTClient`. See [minion-protocol.md](minion-protocol.md) |
 | Trace | `src/cortex/trace/` | `TraceRepository`, `TraceRecorder`, `Pseudonymizer`, `audit`. See [trace-system.md](trace-system.md) |
 | Eval | `src/cortex/eval/` | fixtures, runner, grader, judge, metrics, baseline, gate. See [eval-system.md](eval-system.md) |
+| Rules | `src/cortex/rules/` | `RuleRepository`, `RuleService` (create / record_use / sweep / archive / split / merge), the pure score in `scoring.py`, `render_rules`. See [rule-system.md](rule-system.md) |
 | Learning | `src/cortex/learning/` | Echo State Network (`reservoir.py`), per-target readouts, `encoding.py`, `module.py` (ADR-0001) |
 
 ### Layer 3 — services
@@ -272,6 +277,7 @@ flowchart TB
         Tr[trace]
         Ev[eval]
         Learn[learning]
+        Rul[rules]
     end
 
     subgraph L1[Layer 1 - primitives]
@@ -302,6 +308,8 @@ flowchart TB
     Ev --> Loop
     Learn --> Events
     Mem --> LLM
+    Mem --> Rul
+    Rul --> DB
     Tr --> LLM
 ```
 
@@ -312,7 +320,7 @@ flowchart TB
 ## Composition root
 
 `initialize_app()` in `src/cortex/main.py` applies migrations, then wires in order:
-sessions → goals → trace → memory → LLM factory → tool registry →
+sessions → goals → trace → memory → rules → LLM factory → tool registry →
 `ToolExecutorService` → `ContextBuilder`/`Reasoner`/`LoopExecutor`/`AgentLoop` →
 `ExecutionModule` → `InteractionService` → optional `MinionService`. Repositories
 and services are injected; the agentic core constructs nothing itself.
@@ -329,6 +337,7 @@ Migrations in `migrations/` (raw SQL, applied by `src/cortex/db/migrations/runne
 | `minions` | Registered minions, state, last heartbeat |
 | `api_keys` | Admin API tokens (hashed) |
 | `loop_events` | Pseudonymized runtime traces (ADR-0017) |
+| `rules`, `rule_uses` | Learned rules and the ledger of their applications (ADR-0020, [rule-system.md](rule-system.md)) |
 
 ## API surface
 
@@ -348,7 +357,7 @@ SSE wire contract for `/chat/stream` is in [agentic-loop.md](agentic-loop.md).
 | `rizzo-pii` | pinned upstream `Rizzo-AI-Academy/rizzo-pii@v2.0.0` | Opt-in `--profile trace`; pseudonymization sidecar for trace capture |
 
 CLI (`cortex <command>`, `src/cortex/cli.py`): `token:create`, `traces:cleanup`,
-`version`.
+`rules:list`, `rules:show`, `rules:archive`, `version`.
 
 ## Configuration
 
