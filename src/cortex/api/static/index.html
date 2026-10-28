@@ -338,7 +338,19 @@ function openText() {
   toolGroup = null;  // tools after this text start a new row below it
   return curTextEl;
 }
-function closeText() { curTextEl = null; }
+// Closing a segment stops its caret and opens the reasoning of a text-less one.
+function closeText() {
+  if (!curTextEl) return;
+  curTextEl.classList.remove("streaming");
+  // Hidden, not removed: the toggle and reasoning block are siblings anchored
+  // to this bubble.
+  if (!curTextEl.dataset.raw && curThink) {
+    curTextEl.style.display = "none";
+    curThink.classList.add("visible");
+    curToggle.textContent = "▾ nascondi ragionamento";
+  }
+  curTextEl = null;
+}
 
 // Render the current segment's raw text, splitting off any <think> block into a
 // collapsible toggle attached to the current bubble.
@@ -358,9 +370,14 @@ function ensureThink() {
   curThink.className = "think-block";
   curTextEl.after(curToggle);
   curToggle.after(curThink);
-  curToggle.addEventListener("click", () => {
-    const vis = curThink.classList.toggle("visible");
-    curToggle.textContent = (vis ? "▾ nascondi" : "▸ mostra") + " ragionamento";
+  // Capture this segment's own nodes: the module-level cursors move on, so
+  // reading them in the handler toggled the newest segment's block, or threw
+  // TypeError when that segment had none.
+  const block = curThink;
+  const button = curToggle;
+  button.addEventListener("click", () => {
+    const vis = block.classList.toggle("visible");
+    button.textContent = (vis ? "▾ nascondi" : "▸ mostra") + " ragionamento";
   });
 }
 
@@ -472,15 +489,14 @@ function handleFrame(frame, onDone) {
       break;
     case "done":
       if (curTextEl) {
-        curTextEl.classList.remove("streaming");
-        renderCurrent();
+        renderCurrent();     // the caret is stopped by closeText() below
       } else if (data.final_message && data.final_message !== curRaw) {
         // No text streamed this turn — render the final message as a bubble.
         // Except: ask_user emits the question twice by design (AskUserEvent, then
         // the short-circuit ResponseDoneEvent carrying it as final_message), so
         // skip the duplicate below the option buttons. curRaw still holds the
-        // question the ask_user branch just rendered — closeText() only nulls
-        // curTextEl — so the equality check catches it without extra state.
+        // question the ask_user branch just rendered — closeText() never
+        // touches it — so the equality check catches it without extra state.
         openText();
         curRaw = data.final_message;
         renderCurrent();
@@ -558,6 +574,8 @@ async function send() {
     if (e.status === 404) { LS.session = ""; addMsg("error", "Sessione scaduta — riprova."); }
     else addMsg("error", String(e.message || e));
   } finally {
+    // Aborts and exceptions never reach `done`; clear any caret left behind.
+    inner.querySelectorAll(".msg.streaming").forEach((el) => el.classList.remove("streaming"));
     busy = false; setBusy(false);
   }
 }
