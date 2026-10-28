@@ -374,9 +374,14 @@ function ensureThink() {
   curThink.className = "think-block";
   curTextEl.after(curToggle);
   curToggle.after(curThink);
-  curToggle.addEventListener("click", () => {
-    const vis = curThink.classList.toggle("visible");
-    curToggle.textContent = (vis ? "▾ nascondi" : "▸ mostra") + " ragionamento";
+  // Capture this segment's own nodes: the module-level cursors move on to the
+  // next segment (openText() nulls them), so reading them in the handler made
+  // an earlier segment's toggle a no-op or a TypeError.
+  const block = curThink;
+  const button = curToggle;
+  button.addEventListener("click", () => {
+    const vis = block.classList.toggle("visible");
+    button.textContent = (vis ? "▾ nascondi" : "▸ mostra") + " ragionamento";
   });
 }
 
