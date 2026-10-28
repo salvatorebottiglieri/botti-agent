@@ -9,6 +9,8 @@ from cortex.agentic.models import AmbientContext, MemoryContext, PersonalityCont
 from cortex.memory.context_provider import ContextProvider
 from cortex.memory.interfaces import ConceptRepository, FactRepository
 from cortex.memory.models import Concept, Fact, FactType
+from cortex.rules.models import Rule, RuleState
+from cortex.rules.service import RuleService
 
 
 class TestPersonalityContext:
@@ -362,3 +364,85 @@ class TestContextProvider:
         assert concept.confidence == pytest.approx(0.9)
         assert len(concept.source_facts) == 1
         mock_concept_repo.store.assert_not_called()
+
+
+class TestRulesDimension:
+    """Rules are the fourth dimension of the bundle (docs/specs/rule-system.md ## Context).
+
+    Built with the same per-dimension isolation as facts/personality/ambient: a
+    failure to load the rules degrades that dimension and leaves the rest of
+    the context intact.
+    """
+
+    @pytest.fixture
+    def mock_fact_repo(self):
+        repo = MagicMock(spec=FactRepository)
+        repo.search = AsyncMock(return_value=[])
+        repo.get_by_type = AsyncMock(return_value=[])
+        return repo
+
+    @pytest.fixture
+    def mock_rule_service(self):
+        return MagicMock(spec=RuleService)
+
+    @pytest.fixture
+    def provider_with_rules(self, mock_fact_repo, mock_rule_service):
+        return ContextProvider(
+            fact_repository=mock_fact_repo,
+            fact_store=MagicMock(),
+            rule_service=mock_rule_service,
+        )
+
+    @pytest.mark.asyncio
+    async def test_bundle_carries_the_active_rules(
+        self, provider_with_rules, mock_rule_service
+    ):
+        """Witness: without the fourth dimension the bundle's rules stay empty
+        and the prompt never sees a rule."""
+        rule = Rule(
+            condition="the user asks to book a table",
+            action="ask for confirmation before booking",
+            state=RuleState.DEFINITIVE,
+        )
+        mock_rule_service.list_active = AsyncMock(return_value=[rule])
+
+        bundle = await provider_with_rules.get_memory_context(None, "book a table")
+
+        assert bundle.rules == [rule]
+        assert bundle.degraded_dimensions == []
+
+    @pytest.mark.asyncio
+    async def test_rules_dimension_degrades_alone(self, provider_with_rules, mock_rule_service):
+        """Witness: a rules failure must not fail the bundle — the facts,
+        personality and ambient dimensions still populate and only 'rules' is
+        recorded as degraded."""
+        mock_rule_service.list_active = AsyncMock(side_effect=RuntimeError("rules down"))
+
+        bundle = await provider_with_rules.get_memory_context(None, "anything")
+
+        assert bundle.rules == []
+        assert bundle.degraded_dimensions == ["rules"]
+        assert bundle.personality is not None
+
+    @pytest.mark.asyncio
+    async def test_no_rule_service_means_no_rules_and_no_degradation(self, mock_fact_repo):
+        """Witness: an install without a RuleService renders no rules section
+        instead of reporting the dimension as broken."""
+        provider = ContextProvider(
+            fact_repository=mock_fact_repo,
+            fact_store=MagicMock(),
+        )
+
+        bundle = await provider.get_memory_context(None, "anything")
+
+        assert bundle.rules == []
+        assert bundle.degraded_dimensions == []
+
+    @pytest.mark.asyncio
+    async def test_get_rules_context_delegates_to_list_active(
+        self, provider_with_rules, mock_rule_service
+    ):
+        mock_rule_service.list_active = AsyncMock(return_value=[])
+
+        assert await provider_with_rules.get_rules_context() == []
+        mock_rule_service.list_active.assert_awaited_once_with()

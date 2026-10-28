@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from cortex.agentic.models import AmbientContext, MemoryContext, PersonalityContext
 from cortex.memory.fact_store import FactStore
 from cortex.memory.interfaces import ConceptRepository, FactRepository
 from cortex.memory.models import Concept, Fact, FactType
+
+if TYPE_CHECKING:
+    from cortex.rules.models import Rule
+    from cortex.rules.service import RuleService
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +30,12 @@ class ContextProvider:
         fact_repository: FactRepository,
         fact_store: FactStore,
         concept_repository: ConceptRepository | None = None,
+        rule_service: RuleService | None = None,
     ):
         self._fact_repo = fact_repository
         self._fact_store = fact_store
         self._concept_repo = concept_repository
+        self._rule_service = rule_service
 
         self._min_relevant_confidence = 0.4
 
@@ -45,8 +52,8 @@ class ContextProvider:
         """
         Single call that returns everything Memory contributes to a reasoning step.
 
-        Failures in any one dimension (facts, personality, ambient) are caught
-        and recorded in `degraded_dimensions` rather than raising.
+        Failures in any one dimension (facts, personality, ambient, rules) are
+        caught and recorded in `degraded_dimensions` rather than raising.
         """
         bundle = MemoryContext()
 
@@ -73,7 +80,23 @@ class ContextProvider:
             logger.warning(f"MemoryContext: ambient dimension failed: {e}")
             bundle.degraded_dimensions.append("ambient")
 
+        try:
+            bundle.rules = await self.get_rules_context()
+        except Exception as e:
+            logger.warning(f"MemoryContext: rules dimension failed: {e}")
+            bundle.degraded_dimensions.append("rules")
+
         return bundle
+
+    async def get_rules_context(self) -> list[Rule]:
+        """The active rules, or [] when no RuleService is injected.
+
+        Goes through `RuleService.list_active`, which also applies expiry,
+        promotion and demotion as a side effect of the sweep.
+        """
+        if self._rule_service is None:
+            return []
+        return await self._rule_service.list_active()
 
     # ─── Query Methods ───────────────────────────────────────────────────
 

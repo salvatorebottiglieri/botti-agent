@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 if TYPE_CHECKING:
     from cortex.llm.models import UsageStats
     from cortex.memory.models import Fact
+    from cortex.rules.models import Rule
     from cortex.sessions.models import Message
     from cortex.tools.interfaces import ToolCall, ToolDefinition
 
@@ -102,11 +103,13 @@ class MemoryContext:
     """Bundle of everything the Memory Module contributes to a reasoning step.
 
     `degraded_dimensions` lists the names of dimensions that failed to populate
-    ("facts", "personality", "ambient"). Empty when Memory answered fully.
+    ("facts", "personality", "ambient", "rules"). Empty when Memory answered
+    fully.
     """
     facts: list[Fact] = field(default_factory=list)
     personality: PersonalityContext | None = None
     ambient: AmbientContext | None = None
+    rules: list[Rule] = field(default_factory=list)
     degraded_dimensions: list[str] = field(default_factory=list)
 
 

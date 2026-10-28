@@ -11,6 +11,7 @@ from cortex.agentic.models import (
     Decision,
 )
 from cortex.llm.models import ChatMessage, ChatResult, Role
+from cortex.rules.render import render_rules
 from cortex.sessions.models import MessageRole
 from cortex.tools.interfaces import ToolCall
 
@@ -177,6 +178,10 @@ class Reasoner:
                     role=Role.SYSTEM,
                     content=f"Known facts: {', '.join(fact_texts)}"
                 ))
+
+        rules_text = render_rules(context.memory.rules)
+        if rules_text:
+            messages.append(ChatMessage(role=Role.SYSTEM, content=rules_text))
 
         for msg in context.conversation:
             messages.append(ChatMessage(
