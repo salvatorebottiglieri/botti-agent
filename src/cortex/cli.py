@@ -5,10 +5,49 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import UTC
+from typing import Any
 
 import typer
 
 cli = typer.Typer(help="Cortex CLI commands")
+
+
+class _AsyncpgRuleSession:
+    """A bare asyncpg connection presented as the DbSession surface.
+
+    PostgresRuleRepository only needs fetch/fetchrow/execute behind an async
+    context manager. Wrapping the command's own connection this way lets the
+    ordinary repository honour ``--db-url`` instead of going through the shared
+    pool.
+    """
+
+    def __init__(self, conn: Any) -> None:
+        self._conn = conn
+
+    async def __aenter__(self) -> _AsyncpgRuleSession:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        return None
+
+    async def fetch(self, query: str, *args: Any) -> Any:
+        return await self._conn.fetch(query, *args)
+
+    async def fetchrow(self, query: str, *args: Any) -> Any:
+        return await self._conn.fetchrow(query, *args)
+
+    async def execute(self, query: str, *args: Any) -> Any:
+        return await self._conn.execute(query, *args)
+
+
+def _database_url(db_url: str | None) -> str:
+    """``--db-url`` wins; the database slice is only loaded when it is absent."""
+    if db_url:
+        return db_url
+
+    from cortex.config.loader import get_settings
+
+    return get_settings().database.database_url
 
 
 @cli.command("token:create", help="Create a new API token")
@@ -116,6 +155,130 @@ def traces_cleanup(
         typer.echo(f"Deleted {deleted} expired loop event(s) (created_at < {cutoff.isoformat()}).")
 
     asyncio.run(cleanup())
+
+
+@cli.command("rules:list", help="List the active learned rules")
+def rules_list(db_url: str | None = typer.Option(None, "--db-url", help="Database URL")) -> None:
+    """List the rules that may enter the context (staging + definitive).
+
+    Goes through RuleService.list_active, so the sweep also applies expiry,
+    promotion and demotion before printing.
+    """
+    import asyncio
+
+    from cortex.rules.repository import PostgresRuleRepository
+    from cortex.rules.service import RuleService
+
+    async def run() -> None:
+        import asyncpg
+
+        conn = await asyncpg.connect(_database_url(db_url))
+        try:
+            service = RuleService(
+                PostgresRuleRepository(session_factory=lambda: _AsyncpgRuleSession(conn))
+            )
+            rules = await service.list_active()
+        finally:
+            await conn.close()
+
+        if not rules:
+            typer.echo("no rules")
+            return
+        for rule in rules:
+            typer.echo(
+                f"{rule.id}  {rule.state.value:<10}  {rule.confidence:.3f}  "
+                f"{rule.condition} → {rule.action}"
+            )
+
+    asyncio.run(run())
+
+
+@cli.command("rules:show", help="Show one learned rule with its recent uses")
+def rules_show(
+    rule_id: str = typer.Argument(..., help="Rule ID"),
+    db_url: str | None = typer.Option(None, "--db-url", help="Database URL"),
+) -> None:
+    """Show a rule's fields, its last 10 uses, and what superseded it."""
+    import asyncio
+
+    from cortex.rules.repository import PostgresRuleRepository
+    from cortex.rules.service import RuleService
+
+    async def run() -> None:
+        from uuid import UUID
+
+        import asyncpg
+
+        parsed = UUID(rule_id)
+        conn = await asyncpg.connect(_database_url(db_url))
+        try:
+            repository = PostgresRuleRepository(
+                session_factory=lambda: _AsyncpgRuleSession(conn)
+            )
+            rule = await RuleService(repository).get(parsed)
+            if rule is None:
+                typer.echo(f"rule not found: {rule_id}")
+                raise typer.Exit(1)
+            uses = await repository.list_uses(parsed)
+        finally:
+            await conn.close()
+
+        typer.echo(f"id: {rule.id}")
+        typer.echo(f"state: {rule.state.value}")
+        typer.echo(f"confidence: {rule.confidence:.3f}")
+        typer.echo(f"origin: {rule.origin.value}")
+        typer.echo(f"condition: {rule.condition}")
+        typer.echo(f"action: {rule.action}")
+        if rule.rationale:
+            typer.echo(f"rationale: {rule.rationale}")
+        typer.echo(f"created: {rule.created_at.isoformat()}")
+        if rule.archived_at is not None:
+            typer.echo(f"archived: {rule.archived_at.isoformat()}")
+        if rule.superseded_by is not None:
+            typer.echo(f"superseded by: {rule.superseded_by}")
+        typer.echo("recent uses:")
+        if not uses:
+            typer.echo("  (none)")
+        for use in uses[-10:]:
+            typer.echo(
+                f"  {use.occurred_at.isoformat()}  {use.outcome.value:<16}  {use.situation}"
+            )
+
+    asyncio.run(run())
+
+
+@cli.command("rules:archive", help="Archive a learned rule")
+def rules_archive(
+    rule_id: str = typer.Argument(..., help="Rule ID"),
+    db_url: str | None = typer.Option(None, "--db-url", help="Database URL"),
+) -> None:
+    """Retire a rule. The user's explicit command prevails over the classifier."""
+    import asyncio
+
+    from cortex.rules.repository import PostgresRuleRepository
+    from cortex.rules.service import RuleService
+
+    async def run() -> None:
+        from uuid import UUID
+
+        import asyncpg
+
+        parsed = UUID(rule_id)
+        conn = await asyncpg.connect(_database_url(db_url))
+        try:
+            service = RuleService(
+                PostgresRuleRepository(session_factory=lambda: _AsyncpgRuleSession(conn))
+            )
+            archived = await service.archive(parsed)
+            if archived is None:
+                typer.echo(f"rule not found: {rule_id}")
+                raise typer.Exit(1)
+        finally:
+            await conn.close()
+
+        typer.echo(f"archived {archived.id} ({archived.state.value})")
+
+    asyncio.run(run())
 
 
 @cli.command("version", help="Show Cortex version")
