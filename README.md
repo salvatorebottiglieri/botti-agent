@@ -89,7 +89,7 @@ See [`docs/specs/agentic-loop.md`](docs/specs/agentic-loop.md) for the full desi
 Every non-obvious call is written down with its rationale in
 [`docs/adr/`](docs/adr/) — this is where the trade-offs live. Current subsystem
 contracts live in [`docs/specs/`](docs/specs/) (architecture, agentic loop,
-evidence, minions, eval, trace).
+evidence, rules, minions, eval, trace).
 
 | ADR | Decision |
 |-----|----------|
@@ -103,8 +103,9 @@ evidence, minions, eval, trace).
 | [0011](docs/adr/0011-public-get-or-create-session.md) | Public get_or_create_session on InteractionService |
 | [0012](docs/adr/0012-system-invariants.md) | System invariants — CircuitBreaker + SessionPolicy |
 | [0018](docs/adr/0018-ask-user-tool-and-token-streaming.md) | ask_user tool + token streaming (refines 0002, supersedes 0005's `[QUESTION]`) |
+| [0020](docs/adr/0020-learned-rules.md) | Learned rules — staged, scored by outcome |
 
-(Full list, 0001–0018, in the folder.)
+(Full list, 0001–0020, in the folder.)
 
 ## Architecture at a glance
 

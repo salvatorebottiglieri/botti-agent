@@ -72,6 +72,67 @@ _Avoid_: confidence engine, scorer, confidence store
 The per-source constant encoding how strongly a full-strength Evidence of that source moves a Fact's confidence — the calibration point of the Bayesian update.
 _Avoid_: weight, importance, source reliability
 
+## Rules
+
+Term definitions for the learned-rule system. The decision is in
+`docs/adr/0020-learned-rules.md`; the mechanics in
+`docs/specs/rule-system.md`.
+
+**Rule**:
+A learned prescription Cortex applies when a condition holds — condition →
+action → rationale. Distinct from a Fact: a Fact is scored on whether it is
+true, a Rule on what happened each time it was followed. Rules start in staging
+until enough positive evidence accumulates, are split when a correction shows
+them too broad, and are merged when the set grows.
+_Avoid_: instruction, policy, preference, guideline
+
+**Rule confidence**:
+The posterior probability that following a Rule goes well, in [0, 1]. Computed
+by the same logit-space odds update as Fact Confidence, but over the outcomes of
+the Rule's uses instead of observations of truth.
+_Avoid_: score, rating, truth probability
+
+**Staging**:
+The state of a Rule that is still being tried. A staged Rule is in the context
+like any other Rule and declares itself to the user in one line whenever it is
+applied. Promotion to definitive requires confidence ≥ 0.9, at least 3 positive
+uses and at least 2 distinct sessions.
+_Avoid_: probation, trial, candidate, pending
+
+**Split**:
+The replacement of one Rule by two complementary Rules with disjoint conditions,
+triggered by a correction showing the Rule is too broad. The Rule preserving
+the parent's behaviour inherits its state and the uses that fall in its
+condition; the new one starts in staging and takes the uses in its own.
+_Avoid_: refinement, exception, derivation, parent/child rules
+
+**Merge**:
+The fusion of several Rules into one covering the union of their conditions.
+Proposed by Cortex, always approved by the user. The fused Rule takes the union
+of the evidence and is definitive only if all its parents were.
+_Avoid_: consolidation, generalization, grouping
+
+**Use attribution**:
+The decision, taken after the turn by the feedback classifier, of which Rules
+were actually applied. A Rule present in context but not applied takes no
+score, and every use records the situation it was applied to, which is what
+lets a Split redistribute history instead of copying it.
+_Avoid_: declared use, cited rules, relevance
+
+**Feedback classifier**:
+The asynchronous LLM component that attributes uses and categorises the user's
+next message per Rule — approval, implicit acceptance, correction of the
+decision, scope correction, or neutral. It returns a category, never a number:
+the weight comes from the table, because a model's confidence in itself is not
+calibrated.
+_Avoid_: grader, evaluator, scorer
+
+**Rule declaration**:
+The one-line notice Cortex adds to its response when it applies a staged Rule,
+so the user can confirm or correct it. Definitive Rules are silent — only the
+structured use attribution records them.
+_Avoid_: announcement, notice, trace
+
 ## Evaluation
 
 Term definitions for the eval system. The suites, harness, grading, judge and
