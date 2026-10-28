@@ -45,6 +45,15 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: cortex-app
+    # Every settings slice reads its own env; without this, only the variables
+    # hand-copied below are reachable in the container (TOOLS_ALLOW could never
+    # be widened, TRACE_SIDECAR_URL could never point at the rizzo-pii service).
+    # Optional, so a checkout with no .env still starts; the explicit
+    # `environment:` block wins over the file (compose precedence), keeping the
+    # container-oriented DATABASE_URL.
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql://cortex:cortex@postgres:5432/cortex
       MQTT_BROKER_URL: mqtt://mosquitto:1883
