@@ -338,7 +338,9 @@ function openText() {
   toolGroup = null;  // tools after this text start a new row below it
   return curTextEl;
 }
-function closeText() { curTextEl = null; }
+// Closing a segment stops its caret: every exit path (tool, ask_user, done,
+// error) goes through here, so a closed bubble must not keep blinking.
+function closeText() { if (curTextEl) curTextEl.classList.remove("streaming"); curTextEl = null; }
 
 // Render the current segment's raw text, splitting off any <think> block into a
 // collapsible toggle attached to the current bubble.
@@ -472,8 +474,7 @@ function handleFrame(frame, onDone) {
       break;
     case "done":
       if (curTextEl) {
-        curTextEl.classList.remove("streaming");
-        renderCurrent();
+        renderCurrent();     // the caret is stopped by closeText() below
       } else if (data.final_message && data.final_message !== curRaw) {
         // No text streamed this turn — render the final message as a bubble.
         // Except: ask_user emits the question twice by design (AskUserEvent, then
@@ -558,6 +559,8 @@ async function send() {
     if (e.status === 404) { LS.session = ""; addMsg("error", "Sessione scaduta — riprova."); }
     else addMsg("error", String(e.message || e));
   } finally {
+    // Aborts and exceptions never reach `done`; clear any caret left behind.
+    inner.querySelectorAll(".msg.streaming").forEach((el) => el.classList.remove("streaming"));
     busy = false; setBusy(false);
   }
 }
