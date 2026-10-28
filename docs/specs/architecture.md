@@ -351,7 +351,7 @@ SSE wire contract for `/chat/stream` is in [agentic-loop.md](agentic-loop.md).
 
 | Service | Image | Notes |
 |---|---|---|
-| `postgres` | `postgres:16-alpine` | Port 5432 |
+| `postgres` | `postgres:16-alpine` | Port 5432 (host: `${POSTGRES_HOST_PORT:-5433}`) |
 | `mosquitto` | `eclipse-mosquitto:2` | Port 1883; broker config in `docker/mosquitto.conf` |
 | `cortex` | built from `Dockerfile` | Port 8000; depends on healthy postgres + mosquitto |
 | `rizzo-pii` | pinned upstream `Rizzo-AI-Academy/rizzo-pii@v2.0.0` | Opt-in `--profile trace`; pseudonymization sidecar for trace capture |
@@ -365,18 +365,18 @@ CLI (`cortex <command>`, `src/cortex/cli.py`): `token:create`, `traces:cleanup`,
 injection (ADR-0010): `database`, `llm` (provider, model, base_url, timeout,
 judge model, pricing, circuit breaker), `mqtt` (broker_url, keepalive, reconnect),
 `app` (host, port), `trace` (sidecar URL, timeout, retention), `logging`,
-`learning`. `config.yaml` carries one optional section per slice. Sources rank
-`env > constructor arguments (config.yaml) > .env > secrets dir` (ADR-0019),
-implemented by `CortexSettings.settings_customise_sources` in
-`src/cortex/config/base.py`: an exported variable beats the YAML section, the
-YAML section the loader passes as a constructor argument beats `.env`, and
-`.env` beats the field default.
+`learning`, `tools` (allow-list). `config.yaml` carries one optional section
+per slice. Sources rank `env > constructor arguments (config.yaml) > .env >
+secrets dir` (ADR-0019), implemented by
+`CortexSettings.settings_customise_sources` in `src/cortex/config/base.py`:
+an exported variable beats the YAML section, the YAML section the loader passes
+as a constructor argument beats `.env`, and `.env` beats the field default.
 
 Each slice reads its own environment namespace: `DATABASE_URL`/`DB_POOL_*`,
 `LLM_*` (plus the legacy `CIRCUIT_BREAKER_*` spellings), `MQTT_*`, `APP_*`,
-`TRACE_*`, `LOG_*`, `LEARNING_*`. The slices are nested fields of the root, so
-a bare variable named after one (`APP`, `LLM`, `TRACE`, …) is read as that
-slice and surfaces as a validation error rather than being ignored.
+`TRACE_*`, `LOG_*`, `LEARNING_*`, `TOOLS_*`. The slices are nested fields of
+the root, so a bare variable named after one (`APP`, `LLM`, `TRACE`, …) is read
+as that slice and surfaces as a validation error rather than being ignored.
 
 ### System invariants
 

@@ -35,24 +35,19 @@ def register_meta_tools(
     from cortex.tools.registry import ToolRegistrar
 
     meta_tools = get_meta_tools()
-    allowed_names = None if allowed is None else set(allowed)
+    known_names = {tool.name for tool in meta_tools}
+    allowed_names = known_names if allowed is None else set(allowed)
 
-    if allowed_names is not None:
-        unknown = allowed_names - {tool.name for tool in meta_tools}
-        if unknown:
-            known = ", ".join(tool.name for tool in meta_tools)
-            raise ValueError(
-                f"unknown meta tool(s): {', '.join(sorted(unknown))}; known: {known}"
-            )
+    unknown = allowed_names - known_names
+    if unknown:
+        known = ", ".join(tool.name for tool in meta_tools)
+        raise ValueError(
+            f"unknown meta tool(s): {', '.join(sorted(unknown))}; known: {known}"
+        )
 
-    selected = [
-        tool
-        for tool in meta_tools
-        if allowed_names is None or tool.name in allowed_names
-    ]
+    selected = [tool for tool in meta_tools if tool.name in allowed_names]
     registrar = ToolRegistrar(registry)
-    if selected:
-        registrar.register_many(selected)
+    registrar.register_many(selected)
 
     return registrar.registered
 

@@ -1,13 +1,9 @@
 # Cortex Configuration
 # Copy this file to config.yaml and customize as needed
 #
-# Precedence (ADR-0019): OS environment > this file > .env > defaults. A
-# DATABASE_URL in .env therefore does NOT override the url below — to move the
-# database, edit this file or export DATABASE_URL in the shell.
-#
-# The compose Postgres publishes POSTGRES_HOST_PORT (default 5433) so it does
-# not collide with another project's Postgres on the usual 5432; keep the url
-# below in sync when you change it.
+# Precedence (ADR-0019): OS environment > this file > .env > defaults.
+# The compose Postgres publishes POSTGRES_HOST_PORT (default 5433) — keep the
+# url below in sync when you change it.
 
 database:
   url: "postgresql://cortex:cortex@localhost:5433/cortex"
@@ -47,12 +43,12 @@ logging:
   include_trace_id: true
 
 tools:
-  # Deny-by-default meta-tool allow-list (#134). Only these names are
-  # advertised to the model; anything else is not registered at all.
+  # Deny-by-default meta-tool allow-list (#134): only these names are
+  # advertised to the model. Left unset, the code default
+  # (`DEFAULT_ALLOWED_TOOLS`) applies; `TOOLS_ALLOW` overrides both.
   # `shell` and `file_write` are opt-in until #120 owns path/argument policy
-  # and per-call approval — add them here (or via TOOLS_ALLOW) to grant the
-  # process user's hands back to the agent.
-  allow:
-    - file_read
-    - grep
-    - ask_user
+  # and per-call approval.
+  #  allow:
+  #    - file_read
+  #    - grep
+  #    - ask_user

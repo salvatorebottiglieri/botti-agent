@@ -28,8 +28,8 @@ turn with a question.
   `NoDecode` with a before-validator because pydantic-settings JSON-decodes a
   list field read from the environment: `TOOLS_ALLOW=file_read,grep` and an
   explicit `TOOLS_ALLOW=""` would raise instead of parsing. The validator
-  accepts a JSON list, a CSV string (whitespace stripped, empty items dropped)
-  or an already-parsed list; it does **not** validate the names.
+  accepts a CSV string (whitespace stripped, empty items dropped) or an
+  already-parsed list; it does **not** validate the names.
 - `register_meta_tools(registry, allowed=None)` — `None` keeps today's
   behaviour (every tool), an explicit sequence filters by tool name and
   **validates the whole list before registering anything**: an unknown name
@@ -109,7 +109,7 @@ turn with a question.
       "site": "initialize_app",
       "callee": "register_meta_tools",
       "exits": [
-        {"kind": "returns", "type": "list[str] — the registered tool names (logged at startup)", "handled_at": "cortex/main.py initialize_app logs the names beside the existing tool-registry log line"},
+        {"kind": "returns", "type": "list[str] — the registered tool names (logged at startup)", "handled_at": "cortex/main.py initialize_app logs them with the `Registered meta tools: ...` logger.info call added by this change, right after registering"},
         {"kind": "absent", "type": "[] when TOOLS_ALLOW is empty", "handled_at": "initialize_app proceeds with a registry that advertises no meta tool; the loop runs tool-less (chat still works)"},
         {"kind": "raises", "type": "ValueError from an unknown tool name in TOOLS_ALLOW", "handled_at": "initialize_app propagates it; the process exits before serving (fast fail on a typo, no half-registered registry)"},
         {"kind": "effect", "type": "the process-wide ToolRegistry holds exactly the allowed meta tools"}
@@ -120,7 +120,7 @@ turn with a question.
       "callee": "ToolRegistrar.register_many",
       "exits": [
         {"kind": "returns", "type": "list[str] of registered tool names", "handled_at": "initialize_app logs it; tests/unit/test_tools_meta.py asserts the content"},
-        {"kind": "absent", "type": "[] for an empty allowed list", "handled_at": "register_meta_tools returns [] without calling register_many; callers treat it as 'no tools'"},
+        {"kind": "absent", "type": "[] for an empty allowed list", "handled_at": "register_meta_tools registers an empty list (a no-op) and returns []; callers treat it as 'no tools'"},
         {"kind": "raises", "type": "ValueError when an allowed name is not a meta tool", "handled_at": "raised before any registration in register_meta_tools; initialize_app lets it abort startup; tests pin that the registry stayed untouched"},
         {"kind": "effect", "type": "registers the selected tools on the given registry"}
       ]

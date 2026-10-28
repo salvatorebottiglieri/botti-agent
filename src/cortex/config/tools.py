@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Annotated
 
 from pydantic import Field, field_validator
@@ -19,18 +18,13 @@ DEFAULT_ALLOWED_TOOLS: tuple[str, ...] = ("file_read", "grep", "ask_user")
 class ToolsSettings(CortexSettings):
     """Meta tools the composition root registers (env namespace ``TOOLS_``).
 
-    Deny-by-default: only the names in ``allow`` reach the registry, so a
-    prompt-injected turn cannot run ``shell`` or write files unless the operator
-    opted in. ``ask_user`` is in the default set because it touches no host
-    resource — it only ends the turn with a question. The real policy (paths,
-    arguments, per-call approval) is #120; this slice is the phase-0 mitigation.
+    Deny-by-default; paths, arguments and per-call approval are #120.
 
     ``allow`` is ``NoDecode`` with a before-validator because pydantic-settings
-    JSON-decodes a list field read from the environment: the documented
-    ``TOOLS_ALLOW=file_read,grep`` and an explicit ``TOOLS_ALLOW=""`` would
-    raise instead of parsing. The names are not validated here —
-    ``register_meta_tools`` raises on an unknown one, so a typo has exactly one
-    loud failure point at startup.
+    JSON-decodes a list field read from the environment: ``TOOLS_ALLOW=file_read,grep``
+    and an explicit ``TOOLS_ALLOW=""`` would raise instead of parsing. The names
+    are not validated here — ``register_meta_tools`` raises on an unknown one, so
+    a typo has a single loud failure point at startup.
     """
 
     model_config = SettingsConfigDict(env_prefix="TOOLS_")
@@ -42,7 +36,7 @@ class ToolsSettings(CortexSettings):
     @field_validator("allow", mode="before")
     @classmethod
     def _decode_allow(cls, value: object) -> object:
-        """Accept a JSON list, a CSV string, or an already-parsed list.
+        """Accept a CSV string or an already-parsed list.
 
         The result is left to pydantic's own ``list[str]`` validation.
         """
@@ -52,6 +46,4 @@ class ToolsSettings(CortexSettings):
         text = value.strip()
         if not text:
             return []
-        if text.startswith("["):
-            return json.loads(text)
         return [name.strip() for name in text.split(",") if name.strip()]

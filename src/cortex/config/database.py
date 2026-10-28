@@ -16,7 +16,7 @@ class DatabaseSettings(CortexSettings):
     """
 
     database_url: str = Field(
-        default="postgresql://postgres:postgres@localhost:5432/cortex",
+        default="postgresql://postgres:postgres@localhost:5433/cortex",
         description="PostgreSQL connection URL",
     )
     db_pool_min_size: int = Field(default=5, ge=1)

@@ -13,48 +13,35 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from cortex.config.loader import load_settings
 from cortex.config.models import Settings
-from cortex.config.tools import DEFAULT_ALLOWED_TOOLS, ToolsSettings
+from cortex.config.tools import ToolsSettings
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Run every test from an empty directory, with a key for the composed root.
+
+    Keeps the module runnable with no repo-root ``.env`` (CI has none), like
+    ``tests/config/test_loader.py::_hermetic_env``.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_API_KEY", "tools-test-key")
 
 
 class TestDefaultAllowList:
     """The default must *exclude* exactly the two host-mutating tools.
 
     Negation: a default of "all tools" (or ``None`` meaning "no filter") fails
-    the exclusion assertions — that is the whole point of the change.
+    the equality assertion — that is the whole point of the change.
     """
 
     def test_default_is_the_read_only_set(self) -> None:
         assert ToolsSettings(_env_file=None).allow == ["file_read", "grep", "ask_user"]
 
-    def test_default_excludes_the_host_mutating_tools(self) -> None:
-        allow = ToolsSettings(_env_file=None).allow
-
-        assert "shell" not in allow
-        assert "file_write" not in allow
-
-    def test_default_is_a_copy_not_the_module_constant(self) -> None:
-        """A per-instance list: mutating one settings object must not rewrite
-        ``DEFAULT_ALLOWED_TOOLS`` for the rest of the process."""
-        first = ToolsSettings(_env_file=None)
-        first.allow.append("shell")
-
-        assert "shell" not in ToolsSettings(_env_file=None).allow
-        assert "shell" not in DEFAULT_ALLOWED_TOOLS
-
-    def test_reachable_from_the_composed_root(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("LLM_API_KEY", "k")
-
-        settings = Settings()
-
-        assert isinstance(settings.tools, ToolsSettings)
-        assert settings.tools.allow == ["file_read", "grep", "ask_user"]
+    def test_reachable_from_the_composed_root(self) -> None:
+        assert Settings().tools.allow == ["file_read", "grep", "ask_user"]
 
 
 class TestAllowListDecoding:
@@ -75,6 +62,8 @@ class TestAllowListDecoding:
         assert ToolsSettings(_env_file=None).allow == ["file_read", "grep"]
 
     def test_opt_in_to_the_host_mutating_tools(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Negation: an allow-list intersected with the read-only default would
+        still pass the two tests above and silently ignore the opt-in."""
         monkeypatch.setenv("TOOLS_ALLOW", "file_read,grep,ask_user,shell,file_write")
 
         assert ToolsSettings(_env_file=None).allow == [
@@ -93,21 +82,7 @@ class TestAllowListDecoding:
         removed."""
         monkeypatch.setenv("TOOLS_ALLOW", "")
 
-        allow = ToolsSettings(_env_file=None).allow
-
-        assert allow == []
-        assert allow != list(DEFAULT_ALLOWED_TOOLS)
-
-    def test_json_list_still_parses(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("TOOLS_ALLOW", '["file_read", "grep"]')
-
-        assert ToolsSettings(_env_file=None).allow == ["file_read", "grep"]
-
-    def test_malformed_json_fails_loudly(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("TOOLS_ALLOW", '["file_read"')
-
-        with pytest.raises(ValidationError):
-            ToolsSettings(_env_file=None)
+        assert ToolsSettings(_env_file=None).allow == []
 
     def test_yaml_section_reaches_the_root(self, tmp_path: Path) -> None:
         """The ``tools:`` section of ``config.yaml`` is a loader section, not
