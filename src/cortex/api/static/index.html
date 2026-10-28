@@ -474,8 +474,13 @@ function handleFrame(frame, onDone) {
       if (curTextEl) {
         curTextEl.classList.remove("streaming");
         renderCurrent();
-      } else if (data.final_message) {
+      } else if (data.final_message && data.final_message !== curRaw) {
         // No text streamed this turn — render the final message as a bubble.
+        // Except: ask_user emits the question twice by design (AskUserEvent, then
+        // the short-circuit ResponseDoneEvent carrying it as final_message), so
+        // skip the duplicate below the option buttons. curRaw still holds the
+        // question the ask_user branch just rendered — closeText() only nulls
+        // curTextEl — so the equality check catches it without extra state.
         openText();
         curRaw = data.final_message;
         renderCurrent();
