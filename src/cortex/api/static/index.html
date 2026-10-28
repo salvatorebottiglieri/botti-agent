@@ -209,6 +209,7 @@ let curToggle = null;   // <think> toggle button for the current bubble
 let curThink = null;    // <think> content block for the current bubble
 let toolGroup = null;   // current tools row wrap, or null
 let thinkingEl = null;  // transient "sto pensando…" indicator, or null
+let askedThisTurn = null;  // question already rendered by an ask_user frame, or null
 
 function setStatus(on, text) { $("dot").classList.toggle("on", on); $("stext").textContent = text; }
 function showBanner(msg) { if (!msg) { banner.style.display = "none"; return; } banner.textContent = msg; banner.style.display = "block"; }
@@ -467,6 +468,7 @@ function handleFrame(frame, onDone) {
       if (Array.isArray(data.options) && data.options.length) {
         renderOptions(data.options);    // separate sibling; survives re-render
       }
+      askedThisTurn = data.question || "";
       closeText();
       scroll();
       break;
@@ -474,8 +476,11 @@ function handleFrame(frame, onDone) {
       if (curTextEl) {
         curTextEl.classList.remove("streaming");
         renderCurrent();
-      } else if (data.final_message) {
+      } else if (data.final_message && !(askedThisTurn !== null && data.final_message === askedThisTurn)) {
         // No text streamed this turn — render the final message as a bubble.
+        // Except: ask_user emits the question twice by design (AskUserEvent, then
+        // the short-circuit ResponseDoneEvent carrying it as final_message), so
+        // skip the duplicate below the option buttons.
         openText();
         curRaw = data.final_message;
         renderCurrent();
@@ -522,7 +527,7 @@ async function send() {
   input.value = ""; autoSize();
   addMsg("user", text);
   // Reset the streaming render state for this turn; bubbles are created lazily.
-  curTextEl = null; curRaw = ""; curToggle = null; curThink = null; toolGroup = null;
+  curTextEl = null; curRaw = ""; curToggle = null; curThink = null; toolGroup = null; askedThisTurn = null;
   thinkingEl = addThinking();
   busy = true; setBusy(true);
 
