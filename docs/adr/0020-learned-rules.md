@@ -47,11 +47,19 @@ Attribution — which Rules were actually applied in a turn — is decided *afte
 the turn by an asynchronous feedback classifier, not by the reasoner. The
 reasoner's final output is free text or a tool call; there is no structured
 field to carry Rule IDs, and the text conventions ADR-0005 rejected and
-ADR-0018 replaced are exactly what we do not want back. The classifier already
-exists to categorise user feedback; it now also sees the active Rules, the
-response and the model's reasoning, and returns, per Rule, whether it was
-applied and what the user's next message says about it. One extra async call,
-no extra loop iteration, no new convention on the wire.
+ADR-0018 replaced are exactly what we do not want back. The classifier sees
+the active Rules, the response and the model's reasoning, and returns, per
+Rule, whether it was applied and what the user's next message says about it.
+One extra async call, no extra loop iteration, no new convention on the wire.
+
+The classifier does not exist yet and is built with the rule system (issue
+#130). The Learning Module is not its host: that module is an Echo State
+Network over minion events (ADR-0001) with no LLM client at all, and it is not
+even mounted in the composition root (`src/cortex/main.py` never instantiates
+it). The classifier is a new component with its own
+`CircuitBreakerLLMClient`, and where it lives is an implementation choice the
+issue settles — the only constraint the design fixes is that it is
+asynchronous, has its own breaker, and never blocks the loop.
 
 ## What "used" means
 
@@ -102,6 +110,13 @@ should not decay for someone else's failure.
 Evidence is valid for 6 months. Time alone never kills a Rule: it demotes it
 back to staging, where it becomes visible again. Only corrections archive it.
 
+A Rule is created in two situations only: the user dictates one, or a
+correction reveals one that no existing Rule covers. Both are recognised by
+the same classifier pass, which returns the second kind as a *proposal*
+(condition, action, rationale) rather than as a score, and the proposal goes
+through the conflict check before being saved. The classifier classifies what
+happened to the Rules already in play; it does not invent Rules on its own.
+
 ## Context
 
 In v1 every active Rule enters the context. Beyond a configurable budget (40)
@@ -142,10 +157,13 @@ enter. The budget is also the signal that the set needs consolidation.
   no `evidence` table and no `EvidenceStore`. The Rule score reuses ADR-0013's
   *mathematics*, not a component. Whichever of the two systems is implemented
   first writes the pure update function; the other reuses it.
-- **There is no LLM priority queue.** Each module gets its own
-  `CircuitBreakerLLMClient` through `LLMClientFactory.create_for_module`, and
-  the classifier is asynchronous with its own breaker. If the classifier is
-  down, the feedback queues and is not lost.
+- **There is no LLM priority queue, and the per-module breaker is not wired.**
+  `LLMClientFactory.create_for_module()` exists and is tested, but nothing in
+  `src/cortex/` calls it: `main.py` builds a single client with `create()` and
+  hands it to the reasoner, the fact extractor and the minion service alike.
+  The classifier must be given its own `CircuitBreakerLLMClient` (via
+  `create_for_module`), which means wiring that seam for the first time. If
+  the classifier is down, the feedback queues and is not lost.
 - **The classifier reads the model's reasoning where the provider surfaces it.**
   Reasoning arrives out of band (`reasoning_content` / `reasoning`) and the
   OpenAI provider normalises it into a single inline `<think>...</think>` block

@@ -62,15 +62,21 @@ logit(p') = logit(p) + Σ s(use) · ln(LR(outcome))
   `correction`, `0` for `scope_correction` (a scope correction triggers a
   Split, it does not penalise the parent) and for `neutral`.
 - `LR(outcome)` is the strength of the signal, from the table below.
-- Confidence is recomputed as the posterior over **active** uses — those
-  within the validity window. Uses that expire stop counting; they are not
-  deleted.
+- Confidence is **recomputed** from the prior over **active** uses — those
+  within the validity window — not accumulated in place. Recomputing is what
+  makes expiry work: when a use falls out of the window it stops contributing
+  and the posterior moves back toward the prior on its own, with no separate
+  decay mechanism. Uses that expire are not deleted.
+- The incremental form above is the per-use step; the stored confidence is
+  always the recomputed posterior, so an expired use cannot leave a stale
+  number behind (the same invariant ADR-0013's sweep enforces for facts).
 
 ### Calibration constants (isolated and documented)
 
 | Constant | Value |
 |---|---|
-| prior (new rule) | 0.5 |
+| prior (new rule from a correction) | 0.5 |
+| prior (new rule dictated by the user) | 0.95 — the dictation is itself one `user_confirm`-strength evidence, so the rule starts definitive |
 | `LR(approval)` | 20 (strong) |
 | `LR(correction)` | 20 (strong, negative direction) |
 | `LR(implicit)` | 3 (weak) |
@@ -82,6 +88,16 @@ logit(p') = logit(p) + Σ s(use) · ln(LR(outcome))
 | min positive uses (promotion) | 3 |
 | min distinct sessions (promotion) | 2 |
 | context budget (rules) | 40 |
+
+The two priors are not decoration. A rule born from a correction has no
+evidence yet, so it starts at the prior 0.5 — and stays in staging, where the
+demotion rule does not touch it. A rule dictated by the user starts with the
+dictation as its first evidence (`logit(0.5) + ln(20) ≈ 0.95`), which is why it
+is definitive from the start and why it does not immediately fall back to
+staging: with the plain 0.5 prior it would sit below the 0.7 demotion
+threshold and be demoted on the first sweep. Its dictation still expires with
+the 6-month window, and an expired dictation brings it back to 0.5 — demoted
+to staging, visible again.
 
 These are the only magic numbers in the system, like ADR-0013's likelihood
 ratios and windows. The rule "explicit approval is worth a lot, implicit
@@ -105,9 +121,22 @@ nobody complained.
 
 The hysteresis between 0.9 (promote) and 0.7 (demote) is deliberate: a
 consolidated rule should not fall on the first bad day. Time alone never kills
-a rule — expiry of its uses returns the confidence to the prior 0.5, which
-demotes it to staging, where it becomes visible again. Only corrections
-archive it.
+a rule — expiry of its uses returns the confidence to the prior, which demotes
+it to staging, where it becomes visible again. Only corrections archive it.
+
+**Where a new rule comes from.** The classifier produces a *category per
+existing rule*; it does not invent rules. A rule is created when the user
+dictates one ("d'ora in poi chiedi conferma prima di prenotare") or when a
+correction reveals one that no existing rule covers. Both are recognised by
+the same classifier pass, which returns them as proposals rather than as
+scores: a proposal carries the condition, the action and the rationale, and
+goes through the conflict check below before being saved. A dictated rule is
+born definitive; a proposed rule born from a correction is born in staging.
+
+This is the one place where the classifier does more than classify: it also
+proposes. Both outputs come from the same call, because both need the same
+context — the active rules and the user's message — and splitting them would
+mean two LLM calls to read the same message.
 
 ## Split
 
@@ -131,15 +160,22 @@ a pizza accepted in silence belongs to the pizza rule, not to the dinner rule.
 The reasoner's final output is free text or a tool call — there is no
 structured field for rule IDs, and ADR-0005 rejected `response_format`/JSON
 schema, ADR-0018 removed the text-marker convention. So attribution happens
-**after** the turn, in the Learning module, asynchronously, with its own
-`CircuitBreakerLLMClient` (there is no LLM priority queue in the codebase;
-each module gets its own breaker).
+**after** the turn, asynchronously, with its own `CircuitBreakerLLMClient`
+(there is no LLM priority queue in the codebase; `create_for_module()` exists
+but is not called anywhere in `src/cortex/` — `main.py` builds one client with
+`create()` — so the classifier wires that seam for the first time).
 
 Per turn, the classifier receives the active rules, the assistant turn's
 content, and the user's next message, and returns per rule: *was it applied*
 and *what is the outcome category*. It returns a category, never a number —
 the weight comes from the table above, because a model's confidence in itself
 is not calibrated.
+
+The classifier is a **new component** (issue #130), not an extension of an
+existing one: the Learning Module is an Echo State Network over minion events
+with no LLM client (ADR-0001) and is not mounted in the composition root. The
+design fixes only its contract — asynchronous, own `CircuitBreakerLLMClient`,
+never blocking the loop; where it lives is the implementation's call.
 
 **The classifier reads the model's reasoning.** Reasoning reaches Cortex out
 of band (`reasoning_content` / `reasoning` on the provider delta); the OpenAI
@@ -181,13 +217,37 @@ If the classifier is down, the feedback queues and is not lost.
   implemented (no `LLMClient.embed()`, no vector column), so v1 does not need
   it.
 - A staged rule additionally gets a one-line declaration in the response when
-  it is applied, so the user can confirm or correct it. Definitive rules are
-  silent — only the structured use attribution records them.
+  it is applied, so the user can confirm or correct it. The **model** writes
+  it, following a prompt instruction — it is written before the turn ends,
+  while use attribution is decided after, so the two can disagree (the model
+  announces a rule it did not really apply, or applies one silently). The
+  classifier's attribution is the one that scores. Definitive rules are
+  silent — only the use attribution records them.
+- Rules reach the prompt through the memory bundle (`MemoryContext`), which
+  today carries three dimensions — facts, personality, ambient — and is
+  assembled by `ContextProvider` with per-dimension failure isolation
+  (`degraded_dimensions`). Rules are a fourth dimension of that bundle, built
+  with the same isolation: a failure to load the rules degrades the dimension
+  and leaves the rest of the context intact.
+
+## Evaluation
+
+Learning is off during eval: no rule is created, no use is recorded. The
+active rules are loaded as **fixtures**, so an eval measures behaviour *with*
+rules and never modifies them. The Golden Set stays out of the learning loop
+(`CONTEXT.md`).
+
+The eval fixture schema (`EvalTask` in `src/cortex/eval/fixtures.py`) has no
+field for rules today — it carries `turns`, `goal` and `sandbox` only. Loading
+rules as fixtures therefore needs a new optional field on the task, with the
+rule set supplied per task, and the runner must not enable learning for those
+tasks.
 
 ## Manual management
 
-- `cortex rules list` / `cortex rules show <id>` — state, confidence, recent
-  uses, history (splits, merges, replacements).
+- `cortex rules:list` / `cortex rules:show <id>` — state, confidence, recent
+  uses, history (splits, merges, replacements). The colon form follows the
+  existing CLI convention (`token:create`, `traces:cleanup`).
 - Archiving is an explicit command and prevails over the classifier.
 - There is no way to edit confidence or state directly: promotion and demotion
   are reached through feedback.
@@ -205,6 +265,9 @@ If the classifier is down, the feedback queues and is not lost.
 | A split's children have disjoint conditions and cover the parent's | condition check on both children |
 | Archived rules are never applied | no rule in context has state `archived` |
 | The Golden Set never enters the learning loop | during eval, no rule is created and no use is recorded |
+| A dictated rule starts definitive and does not immediately demote | a fresh dictated rule's confidence is ≥ 0.9 |
+| A rule born from a correction starts in staging | a fresh correction-born rule's state is `staging` |
+| The stored confidence equals the recomputed posterior | recompute from the active uses and compare |
 
 ## Out of scope for v1
 
@@ -217,6 +280,8 @@ If the classifier is down, the feedback queues and is not lost.
 - Embedding-based retrieval of rules in the context (ADR-0008).
 - Reading the reasoning of a turn the classifier did not attribute (the
   classifier sees the reasoning of the turn it is judging, not of past turns).
+- A dedicated UI for the rules — v1 exposes them through the CLI and the
+  chat, like everything else.
 
 ## Sources of truth
 

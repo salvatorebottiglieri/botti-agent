@@ -136,9 +136,11 @@ placeholder and no model thought.
 _Avoid_: thinking event, chain of thought, scratchpad
 
 **Rule declaration**:
-The one-line notice Cortex adds to its response when it applies a staged Rule,
-so the user can confirm or correct it. Definitive Rules are silent — only the
-structured use attribution records them.
+The one-line notice the **model** writes in its response when it applies a
+staged Rule, so the user can confirm or correct it. It follows a prompt
+instruction and is best-effort: it is written before the turn ends, while use
+attribution is decided after. Definitive Rules are silent — only the use
+attribution records them.
 _Avoid_: announcement, notice, trace
 
 ## Evaluation
