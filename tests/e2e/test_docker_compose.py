@@ -133,7 +133,7 @@ class TestDockerComposeStack:
         try:
             conn = await asyncpg.connect(
                 host="localhost",
-                port=5432,
+                port=int(os.environ.get("POSTGRES_HOST_PORT", "5433")),
                 user="cortex",
                 password="cortex",
                 database="cortex",
