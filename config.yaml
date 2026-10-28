@@ -1,8 +1,16 @@
 # Cortex Configuration
 # Copy this file to config.yaml and customize as needed
+#
+# Precedence (ADR-0019): OS environment > this file > .env > defaults. A
+# DATABASE_URL in .env therefore does NOT override the url below — to move the
+# database, edit this file or export DATABASE_URL in the shell.
+#
+# The compose Postgres publishes POSTGRES_HOST_PORT (default 5433) so it does
+# not collide with another project's Postgres on the usual 5432; keep the url
+# below in sync when you change it.
 
 database:
-  url: "postgresql://cortex:cortex@localhost:5432/cortex"
+  url: "postgresql://cortex:cortex@localhost:5433/cortex"
   pool_min_size: 5
   pool_max_size: 20
   pool_timeout: 30
