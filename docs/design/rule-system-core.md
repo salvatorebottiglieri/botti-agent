@@ -1,4 +1,5 @@
 # Program design — rule system v1, core (issue #130, slice A)
+> Not a source of truth: docs/specs/rule-system.md owns the behaviour; this file owns the shapes for issue #130 and expires when the slice lands.
 
 Slice A delivers the rule system **without the LLM classifier**: schema, pure
 score, repository, lifecycle service (create / record use / promote / demote /
@@ -7,9 +8,13 @@ tests. Slice B (feedback classifier, use attribution, proposals, conflict
 check, eval fixtures) is designed separately and reuses these signatures.
 
 Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned-rules.md`
-(why). Vocabulary: `CONTEXT.md` (`## Rules`).
+(why). Vocabulary: `CONTEXT.md` (`## Rules`). Behaviour, data model and
+lifecycle live in the spec; this file records only the shapes and the
+decisions the spec left to the implementation.
 
 ## Deviations from the spec, decided here
+
+These are shape decisions only; the spec stays the owner of the behaviour.
 
 1. **Module home** — the spec names `cortex/learning/rules/scoring.py` as the
    home of the shared update function. The rule system is its own subsystem
@@ -19,15 +24,14 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
    mirroring `src/cortex/trace/`. The spec is updated in the same PR.
 2. **One prior** — the spec's "prior (dictated) 0.95" is implemented as
    `PRIOR = 0.5` plus one `approval` use written with the rule
-   (`logit(0.5) + ln(20) ≈ 0.95`). There is no second prior constant, and the
-   dictation expires with the 6-month window as the spec requires.
+   (`logit(0.5) + ln(20) ≈ 0.95`). There is no second prior constant.
 3. **Split/merge do not call an LLM in slice A.** The classifier (slice B)
    decides *which* child each use belongs to; `RuleService.split` takes that
    decision as a mapping and only performs the mechanical redistribution. This
    keeps the lifecycle testable without a provider.
-4. **Universal-condition rules** are not modelled in v1 (the spec's "always
-   enter" guarantee needs a field the schema does not have). The budget is a
-   plain confidence-ordered cap of `CONTEXT_BUDGET = 40`; noted in the spec.
+4. **Universal-condition rules** are not modelled in v1: the schema has no
+   field for the spec's "always enter" guarantee, so the budget is a plain
+   confidence-ordered cap of `CONTEXT_BUDGET = 40` (noted in the spec).
 
 ## Call-stack tree
 
@@ -36,7 +40,7 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
 +  RuleService.create_dictated(session_id, spec)
 +    PostgresRuleRepository.create(rule)
 +    PostgresRuleRepository.add_use(dictation use)
-+  RuleService.create_from_correction(session_id, spec)
++  RuleService.create_from_correction(spec)
 +    PostgresRuleRepository.create(rule)
 +  RuleService.record_use(rule_id, session_id, situation, outcome)
 +    PostgresRuleRepository.get(rule_id)
@@ -47,7 +51,10 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
 +  RuleService.list_active()
 +    PostgresRuleRepository.list_by_states([STAGING, DEFINITIVE])
 +      (per rule: list_uses → posterior → next_state → refresh)
-+  RuleService.split(rule_id, children, assignments)
++      (then: sort by the recomputed confidence, trim to CONTEXT_BUDGET)
++  RuleService.list_children(rule_id)
++    PostgresRuleRepository.list_children(rule_id)
++  RuleService.split(rule_id, children, assignments)   # exactly two children
 +  RuleService.merge(parent_ids, spec)
  ContextProvider.get_memory_context(session_id, query, ...)
 +    get_rules_context()
@@ -100,7 +107,7 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
     {
       "module": "src/cortex/rules/models.py",
       "language": "python",
-      "code": "class RuleState(StrEnum):\n    STAGING = \"staging\"\n    DEFINITIVE = \"definitive\"\n    ARCHIVED = \"archived\"\n\nclass RuleOrigin(StrEnum):\n    DICTATED = \"dictated\"\n    CORRECTION = \"correction\"\n    MERGE = \"merge\"\n\nclass UseOutcome(StrEnum):\n    APPROVAL = \"approval\"\n    IMPLICIT = \"implicit\"\n    CORRECTION = \"correction\"\n    SCOPE_CORRECTION = \"scope_correction\"\n    NEUTRAL = \"neutral\"\n\nclass RuleNotFoundError(LookupError):\n    pass\n\n@dataclass(frozen=True)\nclass RuleSpec:\n    condition: str\n    action: str\n    rationale: str = \"\"\n\n@dataclass\nclass Rule:\n    id: UUID = field(default_factory=uuid.uuid4)\n    condition: str = \"\"\n    action: str = \"\"\n    rationale: str = \"\"\n    state: RuleState = RuleState.STAGING\n    confidence: float = 0.5\n    origin: RuleOrigin = RuleOrigin.CORRECTION\n    superseded_by: UUID | None = None\n    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))\n    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))\n    archived_at: datetime | None = None\n\n    def declares_itself(self) -> bool:\n        ...\n\n@dataclass\nclass RuleUse:\n    rule_id: UUID\n    session_id: UUID\n    situation: str\n    outcome: UseOutcome\n    occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))\n    id: int | None = None"
+      "code": "class RuleState(StrEnum):\n    STAGING = \"staging\"\n    DEFINITIVE = \"definitive\"\n    ARCHIVED = \"archived\"\n\nclass RuleOrigin(StrEnum):\n    DICTATED = \"dictated\"\n    CORRECTION = \"correction\"\n    MERGE = \"merge\"\n\nclass UseOutcome(StrEnum):\n    APPROVAL = \"approval\"\n    IMPLICIT = \"implicit\"\n    CORRECTION = \"correction\"\n    SCOPE_CORRECTION = \"scope_correction\"\n    NEUTRAL = \"neutral\"\n\nclass RuleNotFoundError(LookupError):\n    pass\n\n@dataclass(frozen=True)\nclass RuleSpec:\n    condition: str\n    action: str\n    rationale: str = \"\"\n\n@dataclass\nclass Rule:\n    id: UUID = field(default_factory=uuid.uuid4)\n    condition: str = \"\"\n    action: str = \"\"\n    rationale: str = \"\"\n    state: RuleState = RuleState.STAGING\n    confidence: float = 0.5\n    origin: RuleOrigin = RuleOrigin.CORRECTION\n    superseded_by: UUID | None = None\n    parent_id: UUID | None = None\n    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))\n    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))\n    archived_at: datetime | None = None\n\n    def declares_itself(self) -> bool:\n        ...\n\n@dataclass\nclass RuleUse:\n    rule_id: UUID\n    session_id: UUID\n    situation: str\n    outcome: UseOutcome\n    occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))\n    id: int | None = None"
     },
     {
       "module": "src/cortex/rules/scoring.py",
@@ -110,17 +117,17 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
     {
       "module": "src/cortex/rules/interfaces.py",
       "language": "python",
-      "code": "class RuleRepository(ABC):\n    async def create(self, rule: Rule) -> Rule:\n        ...\n\n    async def get(self, rule_id: UUID) -> Rule | None:\n        ...\n\n    async def add_use(self, use: RuleUse) -> RuleUse:\n        ...\n\n    async def list_uses(self, rule_id: UUID) -> list[RuleUse]:\n        ...\n\n    async def list_by_states(self, states: Sequence[RuleState], *, limit: int = 500) -> list[Rule]:\n        ...\n\n    async def refresh(self, rule: Rule) -> Rule:\n        ...\n\n    async def reassign_uses(self, use_ids: Sequence[int], rule_id: UUID) -> int:\n        ..."
+      "code": "class RuleRepository(ABC):\n    async def create(self, rule: Rule) -> Rule:\n        ...\n\n    async def get(self, rule_id: UUID) -> Rule | None:\n        ...\n\n    async def add_use(self, use: RuleUse) -> RuleUse:\n        ...\n\n    async def list_uses(self, rule_id: UUID) -> list[RuleUse]:\n        ...\n\n    async def list_by_states(self, states: Sequence[RuleState], *, limit: int = 500) -> list[Rule]:\n        ...\n\n    async def list_children(self, rule_id: UUID) -> list[Rule]:\n        ...\n\n    async def refresh(self, rule: Rule) -> Rule | None:\n        ...\n\n    async def reassign_uses(self, use_ids: Sequence[int], rule_id: UUID) -> None:\n        ..."
     },
     {
       "module": "src/cortex/rules/repository.py",
       "language": "python",
-      "code": "class PostgresRuleRepository(RuleRepository):\n    def __init__(self, session_factory: Callable[[], AsyncContextManager[Any]] = DbSession) -> None:\n        ...\n\n    async def create(self, rule: Rule) -> Rule:\n        ...\n\n    async def get(self, rule_id: UUID) -> Rule | None:\n        ...\n\n    async def add_use(self, use: RuleUse) -> RuleUse:\n        ...\n\n    async def list_uses(self, rule_id: UUID) -> list[RuleUse]:\n        ...\n\n    async def list_by_states(self, states: Sequence[RuleState], *, limit: int = 500) -> list[Rule]:\n        ...\n\n    async def refresh(self, rule: Rule) -> Rule:\n        ...\n\n    async def reassign_uses(self, use_ids: Sequence[int], rule_id: UUID) -> int:\n        ..."
+      "code": "class PostgresRuleRepository(RuleRepository):\n    def __init__(self, session_factory: Callable[[], AsyncContextManager[Any]] = DbSession) -> None:\n        ...\n\n    async def create(self, rule: Rule) -> Rule:\n        ...\n\n    async def get(self, rule_id: UUID) -> Rule | None:\n        ...\n\n    async def add_use(self, use: RuleUse) -> RuleUse:\n        ...\n\n    async def list_uses(self, rule_id: UUID) -> list[RuleUse]:\n        ...\n\n    async def list_by_states(self, states: Sequence[RuleState], *, limit: int = 500) -> list[Rule]:\n        ...\n\n    async def list_children(self, rule_id: UUID) -> list[Rule]:\n        ...\n\n    async def refresh(self, rule: Rule) -> Rule | None:\n        ...\n\n    async def reassign_uses(self, use_ids: Sequence[int], rule_id: UUID) -> None:\n        ..."
     },
     {
       "module": "src/cortex/rules/service.py",
       "language": "python",
-      "code": "class RuleService:\n    def __init__(self, repository: RuleRepository, *, clock: Callable[[], datetime] = _utcnow) -> None:\n        ...\n\n    async def create_dictated(self, session_id: UUID, spec: RuleSpec) -> Rule:\n        ...\n\n    async def create_from_correction(self, session_id: UUID, spec: RuleSpec) -> Rule:\n        ...\n\n    async def record_use(self, rule_id: UUID, session_id: UUID, situation: str, outcome: UseOutcome) -> Rule:\n        ...\n\n    async def list_active(self) -> list[Rule]:\n        ...\n\n    async def get(self, rule_id: UUID) -> Rule | None:\n        ...\n\n    async def archive(self, rule_id: UUID) -> Rule | None:\n        ...\n\n    async def split(self, rule_id: UUID, children: Sequence[RuleSpec], assignments: Mapping[int, int]) -> list[Rule]:\n        ...\n\n    async def merge(self, parent_ids: Sequence[UUID], spec: RuleSpec) -> Rule:\n        ..."
+      "code": "class RuleService:\n    def __init__(self, repository: RuleRepository, *, clock: Callable[[], datetime] = _utcnow) -> None:\n        ...\n\n    async def create_dictated(self, session_id: UUID, spec: RuleSpec) -> Rule:\n        ...\n\n    async def create_from_correction(self, spec: RuleSpec) -> Rule:\n        ...\n\n    async def record_use(self, rule_id: UUID, session_id: UUID, situation: str, outcome: UseOutcome) -> Rule:\n        ...\n\n    async def list_active(self) -> list[Rule]:\n        ...\n\n    async def get(self, rule_id: UUID) -> Rule | None:\n        ...\n\n    async def list_children(self, rule_id: UUID) -> list[Rule]:\n        ...\n\n    async def archive(self, rule_id: UUID) -> Rule | None:\n        ...\n\n    async def split(self, rule_id: UUID, children: Sequence[RuleSpec], assignments: Mapping[int, int]) -> list[Rule]:\n        ...\n\n    async def merge(self, parent_ids: Sequence[UUID], spec: RuleSpec) -> Rule:\n        ..."
     },
     {
       "module": "src/cortex/rules/render.py",
@@ -150,6 +157,7 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
       {"id": "RuleService.record_use", "kind": "add", "module": "src/cortex/rules/service.py"},
       {"id": "RuleService.list_active", "kind": "add", "module": "src/cortex/rules/service.py"},
       {"id": "RuleService.get", "kind": "add", "module": "src/cortex/rules/service.py"},
+      {"id": "RuleService.list_children", "kind": "add", "module": "src/cortex/rules/service.py"},
       {"id": "RuleService.archive", "kind": "add", "module": "src/cortex/rules/service.py"},
       {"id": "RuleService.split", "kind": "add", "module": "src/cortex/rules/service.py"},
       {"id": "RuleService.merge", "kind": "add", "module": "src/cortex/rules/service.py"},
@@ -157,6 +165,7 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
       {"id": "PostgresRuleRepository.get", "kind": "add", "module": "src/cortex/rules/repository.py"},
       {"id": "PostgresRuleRepository.add_use", "kind": "add", "module": "src/cortex/rules/repository.py"},
       {"id": "PostgresRuleRepository.list_uses", "kind": "add", "module": "src/cortex/rules/repository.py"},
+      {"id": "PostgresRuleRepository.list_children", "kind": "add", "module": "src/cortex/rules/repository.py"},
       {"id": "PostgresRuleRepository.list_by_states", "kind": "add", "module": "src/cortex/rules/repository.py"},
       {"id": "PostgresRuleRepository.refresh", "kind": "add", "module": "src/cortex/rules/repository.py"},
       {"id": "PostgresRuleRepository.reassign_uses", "kind": "add", "module": "src/cortex/rules/repository.py"},
@@ -185,6 +194,7 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
       {"from": "RuleService.list_active", "to": "next_state"},
       {"from": "RuleService.list_active", "to": "PostgresRuleRepository.refresh"},
       {"from": "RuleService.get", "to": "PostgresRuleRepository.get"},
+      {"from": "RuleService.list_children", "to": "PostgresRuleRepository.list_children"},
       {"from": "RuleService.archive", "to": "PostgresRuleRepository.get"},
       {"from": "RuleService.archive", "to": "PostgresRuleRepository.refresh"},
       {"from": "RuleService.split", "to": "PostgresRuleRepository.get"},
@@ -202,6 +212,8 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
       {"from": "Reasoner._build_prompt", "to": "render_rules"},
       {"from": "rules_list", "to": "RuleService.list_active"},
       {"from": "rules_show", "to": "RuleService.get"},
+      {"from": "rules_show", "to": "PostgresRuleRepository.list_uses"},
+      {"from": "rules_show", "to": "RuleService.list_children"},
       {"from": "rules_archive", "to": "RuleService.archive"}
     ]
   },
@@ -212,7 +224,7 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
       "exits": [
         {"kind": "returns", "type": "Rule (definitive, confidence 0.95)", "handled_at": "RuleService caller — slice B dictation path and tests/unit/rules/test_service.py"},
         {"kind": "absent", "type": "—", "handled_at": "impossible: a dictated rule always yields a Rule; a blank condition or action raises before any write"},
-        {"kind": "raises", "type": "ValueError on blank condition/action", "handled_at": "cortex/cli.py rules_list error path (typer exits 1); slice B proposal path logs and drops"},
+        {"kind": "raises", "type": "ValueError on blank condition/action", "handled_at": "no v1 caller catches it: no CLI command creates rules. The slice B proposal path is the first handler (logs and drops); tests call it directly"},
         {"kind": "effect", "type": "inserts one rules row plus one approval rule_uses row (the dictation)"}
       ]
     },
@@ -222,7 +234,7 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
       "exits": [
         {"kind": "returns", "type": "Rule (staging, confidence 0.5, no use)", "handled_at": "RuleService caller — slice B proposal path and tests/unit/rules/test_service.py"},
         {"kind": "absent", "type": "—", "handled_at": "impossible: a correction-born rule always yields a Rule"},
-        {"kind": "raises", "type": "ValueError on blank condition/action", "handled_at": "cortex/cli.py rules_list error path; slice B proposal path logs and drops"},
+        {"kind": "raises", "type": "ValueError on blank condition/action", "handled_at": "no v1 caller catches it: no CLI command creates rules. The slice B proposal path is the first handler (logs and drops); tests call it directly"},
         {"kind": "effect", "type": "inserts one rules row in staging"}
       ]
     },
@@ -240,19 +252,29 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
       "site": "RuleService.list_active",
       "callees": ["PostgresRuleRepository.list_by_states", "PostgresRuleRepository.list_uses", "posterior", "next_state", "PostgresRuleRepository.refresh"],
       "exits": [
-        {"kind": "returns", "type": "list[Rule] (staging + definitive, confidence desc, at most 40)", "handled_at": "ContextProvider.get_rules_context and CLI rules:list"},
+        {"kind": "returns", "type": "list[Rule] (staging + definitive, recomputed confidence desc, at most 40)", "handled_at": "ContextProvider.get_rules_context and CLI rules:list"},
         {"kind": "absent", "type": "[]", "handled_at": "returned as an empty list; render_rules then yields None and the prompt has no rules section"},
         {"kind": "raises", "type": "asyncpg.PostgresError", "handled_at": "ContextProvider.get_memory_context catches it per dimension and records 'rules' in degraded_dimensions"},
-        {"kind": "effect", "type": "refreshes rules whose recomputed state or confidence changed (expiry, promotion, demotion, archive)"}
+        {"kind": "effect", "type": "loads every staging+definitive rule (the DAO limit is a safety cap, not the budget), refreshes rules whose recomputed state or confidence changed (expiry, promotion, demotion, archive), then sorts by the recomputed confidence and trims to CONTEXT_BUDGET"}
       ]
     },
     {
       "site": "RuleService.get",
       "callee": "PostgresRuleRepository.get",
       "exits": [
-        {"kind": "returns", "type": "Rule", "handled_at": "cortex/cli.py rules_show prints the fields, uses and superseded_by"},
+        {"kind": "returns", "type": "Rule", "handled_at": "cortex/cli.py rules_show prints the fields, uses, superseded_by and the replaced section"},
         {"kind": "absent", "type": "None for an unknown id", "handled_at": "cortex/cli.py rules_show prints 'rule not found' and exits 1"},
         {"kind": "raises", "type": "asyncpg.PostgresError", "handled_at": "cortex/cli.py rules_show runs under asyncio.run; the exception reaches typer and exits non-zero with the message"},
+        {"kind": "effect", "type": "read-only"}
+      ]
+    },
+    {
+      "site": "RuleService.list_children",
+      "callee": "PostgresRuleRepository.list_children",
+      "exits": [
+        {"kind": "returns", "type": "list[Rule] — both directions of the history edge: a split parent's two children (parent_id), a merge product's parents (superseded_by); a split's first child also sees the parent that records it as successor", "handled_at": "cortex/cli.py rules_show prints them under 'replaced:'"},
+        {"kind": "absent", "type": "[] for a plain rule, and for a split's second child", "handled_at": "rules_show prints '  (none)' under 'replaced:'"},
+        {"kind": "raises", "type": "asyncpg.PostgresError", "handled_at": "cortex/cli.py rules_show exits non-zero with the message"},
         {"kind": "effect", "type": "read-only"}
       ]
     },
@@ -272,8 +294,8 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
       "exits": [
         {"kind": "returns", "type": "list[Rule] — the children, index 0 preserving the parent's state", "handled_at": "RuleService caller — slice B scope-correction path and tests/unit/rules/test_service.py"},
         {"kind": "absent", "type": "RuleNotFoundError for an unknown parent", "handled_at": "raised here; slice B logs and leaves the correction unanswered, CLI never splits"},
-        {"kind": "raises", "type": "RuleNotFoundError, ValueError on fewer than two children or an assignment out of range", "handled_at": "raised before any write; slice B logs and drops the proposal"},
-        {"kind": "effect", "type": "archives the parent (superseded_by = first child), creates the children, reassigns each use to its assigned child"}
+        {"kind": "raises", "type": "RuleNotFoundError, ValueError unless there are exactly two children, an unassigned or id-less use, or an assignment out of range", "handled_at": "raised before any write; slice B logs and drops the proposal"},
+        {"kind": "effect", "type": "archives the parent (superseded_by = first child), creates the two children (parent_id = the parent), reassigns each use to its assigned child"}
       ]
     },
     {
@@ -283,7 +305,7 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
         {"kind": "returns", "type": "Rule — the fused rule, definitive only if every parent was", "handled_at": "RuleService caller — slice B user-approved merge and tests/unit/rules/test_service.py"},
         {"kind": "absent", "type": "RuleNotFoundError", "handled_at": "raised here; slice B logs and drops the merge proposal"},
         {"kind": "raises", "type": "RuleNotFoundError, ValueError on fewer than two parents", "handled_at": "raised before any write; slice B logs and drops"},
-        {"kind": "effect", "type": "creates the fused rule, reassigns every parent's uses to it, archives the parents with superseded_by = the fused rule, refreshes the fused confidence from the union"}
+        {"kind": "effect", "type": "creates the fused rule (parent_id NULL), reassigns every parent's uses to it, archives the parents with superseded_by = the fused rule, refreshes the fused confidence from the union"}
       ]
     },
     {
@@ -314,7 +336,7 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
         {"kind": "returns", "type": "Rule mapped from the RETURNING row", "handled_at": "RuleService.create_dictated / create_from_correction"},
         {"kind": "absent", "type": "—", "handled_at": "impossible: INSERT ... RETURNING always yields one row"},
         {"kind": "raises", "type": "asyncpg.PostgresError, ConnectionError", "handled_at": "propagates to RuleService and its caller; no retry in v1"},
-        {"kind": "effect", "type": "one rules row"}
+        {"kind": "effect", "type": "one rules row, including parent_id (NULL for a rule created on its own)"}
       ],
       "residual": "asyncpg exceptions not enumerated (UniqueViolationError on the primary key, pool exhaustion, serialization failures) propagate unchanged — the repository never swallows or rewraps."
     },
@@ -353,9 +375,9 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
     },
     {
       "site": "PostgresRuleRepository.list_by_states",
-      "call": "asyncpg conn.fetch of SELECT ... FROM rules WHERE state = ANY $1 ORDER BY confidence DESC LIMIT $2",
+      "call": "asyncpg conn.fetch of SELECT ... FROM rules WHERE state = ANY $1 ORDER BY confidence DESC LIMIT $2 (the default limit is a safety cap, not the context budget)",
       "exits": [
-        {"kind": "returns", "type": "list[Rule] confidence desc", "handled_at": "RuleService.list_active trims to CONTEXT_BUDGET"},
+        {"kind": "returns", "type": "list[Rule] by stored confidence desc, at most `limit`", "handled_at": "RuleService.list_active re-sorts by the recomputed confidence and trims to CONTEXT_BUDGET"},
         {"kind": "absent", "type": "[]", "handled_at": "RuleService.list_active returns []; the prompt gets no rules section"},
         {"kind": "raises", "type": "asyncpg.PostgresError, ConnectionError", "handled_at": "propagates to RuleService.list_active and then to the dimension isolation in ContextProvider"},
         {"kind": "effect", "type": "read-only"}
@@ -363,13 +385,24 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
       "residual": "asyncpg exceptions not enumerated propagate unchanged."
     },
     {
+      "site": "PostgresRuleRepository.list_children",
+      "call": "asyncpg conn.fetch of SELECT ... FROM rules WHERE superseded_by = $1 OR parent_id = $1 ORDER BY created_at",
+      "exits": [
+        {"kind": "returns", "type": "list[Rule] oldest first — both directions of the history edge", "handled_at": "RuleService.list_children returns it to rules:show"},
+        {"kind": "absent", "type": "[]", "handled_at": "rules_show prints '  (none)' under 'replaced:'"},
+        {"kind": "raises", "type": "asyncpg.PostgresError, ConnectionError", "handled_at": "propagates to RuleService.list_children and to rules_show, which exits non-zero"},
+        {"kind": "effect", "type": "read-only"}
+      ],
+      "residual": "asyncpg exceptions not enumerated propagate unchanged."
+    },
+    {
       "site": "PostgresRuleRepository.refresh",
-      "call": "asyncpg conn.fetchrow of UPDATE rules SET state = $2, confidence = $3, archived_at = $4, updated_at = NOW() WHERE id = $1 RETURNING ...",
+      "call": "asyncpg conn.fetchrow of UPDATE rules SET state = $2, confidence = $3, archived_at = $4, superseded_by = $5, updated_at = NOW() WHERE id = $1 RETURNING ...",
       "exits": [
         {"kind": "returns", "type": "Rule from the RETURNING row", "handled_at": "RuleService.record_use / list_active / archive return it"},
         {"kind": "absent", "type": "None for a row deleted concurrently", "handled_at": "RuleService raises RuleNotFoundError on None; list_active skips the rule and logs"},
         {"kind": "raises", "type": "asyncpg.PostgresError, ConnectionError", "handled_at": "propagates to RuleService and its caller"},
-        {"kind": "effect", "type": "rewrites state, confidence, archived_at, updated_at"}
+        {"kind": "effect", "type": "rewrites state, confidence, archived_at, superseded_by, updated_at; parent_id is written on create only"}
       ],
       "residual": "asyncpg exceptions not enumerated propagate unchanged."
     },
@@ -377,12 +410,12 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
       "site": "PostgresRuleRepository.reassign_uses",
       "call": "asyncpg conn.execute of UPDATE rule_uses SET rule_id = $1 WHERE id = ANY $2",
       "exits": [
-        {"kind": "returns", "type": "int — rows reassigned", "handled_at": "RuleService.split / merge use it only as a post-condition check in tests"},
-        {"kind": "absent", "type": "0 when the id list is empty", "handled_at": "RuleService.split / merge tolerate it: a child with no uses simply scores at the prior"},
-        {"kind": "raises", "type": "asyncpg.PostgresError, ConnectionError", "handled_at": "propagates to RuleService and its caller; the split/merge has already written rows, so the caller sees the failure and the next sweep converges"},
+        {"kind": "returns", "type": "None", "handled_at": "RuleService.split / merge call it for the write only; tests assert the SQL and the parameters"},
+        {"kind": "absent", "type": "—", "handled_at": "impossible: the statement always completes; an empty id list is a no-op UPDATE"},
+        {"kind": "raises", "type": "asyncpg.PostgresError, ConnectionError", "handled_at": "propagates to RuleService.split / merge and their caller. Split and merge are NOT transactional (each repository call opens its own session), so a failure here leaves children created and the parent still active: nothing repairs it, the operator must re-run the split/merge"},
         {"kind": "effect", "type": "rewrites rule_uses.rule_id"}
       ],
-      "residual": "asyncpg exceptions not enumerated propagate unchanged."
+      "residual": "asyncpg exceptions not enumerated propagate unchanged. A partial split/merge is not self-healing: the next sweep only recomputes scores and states, so the caller has to treat the failure as needing repair."
     },
     {
       "site": "ContextProvider.get_rules_context",
@@ -426,9 +459,9 @@ Sources of truth: `docs/specs/rule-system.md` (contract), `docs/adr/0020-learned
     },
     {
       "site": "rules_show",
-      "callee": "RuleService.get",
+      "callees": ["RuleService.get", "PostgresRuleRepository.list_uses", "RuleService.list_children"],
       "exits": [
-        {"kind": "returns", "type": "—", "handled_at": "prints fields, last 10 uses and superseded_by with typer.echo"},
+        {"kind": "returns", "type": "—", "handled_at": "prints fields, last 10 uses, superseded_by and the 'replaced:' section (children of a split parent, parents of a merge product) with typer.echo"},
         {"kind": "absent", "type": "None", "handled_at": "prints 'rule not found: <id>' and raises typer.Exit(1)"},
         {"kind": "raises", "type": "ValueError for a non-UUID id, asyncpg.PostgresError", "handled_at": "typer exits non-zero with the message"},
         {"kind": "effect", "type": "read-only"}
@@ -460,12 +493,16 @@ demote, correction-born rule stays staging, promotion needs 3 positives across
 `InMemoryRuleRepository`: create dictated / from correction, record use,
 promotion, demotion by expiry, archive, split redistribution (each use lands
 with exactly one child, children disjoint by construction of the test data),
-merge union and "definitive only if all parents were", render (staged marked,
-definitive silent).
+split refuses anything but exactly two children, `list_children` reports the
+children under their parent and nothing under a child, `list_active` orders by
+the recomputed confidence (an expired rule sorts below a promoted one) and a
+rule the sweep archives frees its budget slot, merge union and "definitive only
+if all parents were", render (staged marked, definitive silent).
 
 `tests/unit/rules/test_repository.py` mocks the session factory and asserts
 the SQL shape and row mapping (repo convention: `AsyncMock` over `DbSession`).
 
 `tests/memory/test_context_provider.py` gains the rules dimension and its
 degradation. `tests/unit/agentic/` gains the prompt section assertion.
-`tests/unit/rules/test_cli_rules.py` pins the three commands.
+`tests/unit/rules/test_cli_rules.py` pins the three commands, including the
+`replaced:` section (a split parent's children, `(none)` for a child).

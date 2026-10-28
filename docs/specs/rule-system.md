@@ -42,8 +42,9 @@ mathematics and nothing else.
 - `rules` (new): `id`, `condition`, `action`, `rationale`, `state`
   (`staging` | `definitive` | `archived`), `confidence`, `origin`
   (`dictated` | `correction` | `merge`), `superseded_by` (FK, nullable),
-  `created_at`, `updated_at`, `archived_at`. Indexed on `(state)` and
-  `(confidence)`.
+  `parent_id` (FK to `rules`, nullable; set on a Split's children, null on a
+  Merge product), `created_at`, `updated_at`, `archived_at`. Indexed on
+  `(state)` and `(confidence)`.
 - `rule_uses` (new): one row per application — `rule_id` (FK), `session_id`,
   `situation` (the request the rule was applied to), `outcome`
   (`approval` | `implicit` | `correction` | `scope_correction` | `neutral`),
@@ -143,6 +144,24 @@ proposes. Both outputs come from the same call, because both need the same
 context — the active rules and the user's message — and splitting them would
 mean two LLM calls to read the same message.
 
+### Not in slice A
+
+Slice A implements the mechanics of the rows above; these rows are contract,
+not code, and are deferred to slice B of issue #130 (the feedback classifier
+and the loop that consumes it):
+
+- **Promotion notification line** ("Cortex notifies with one line"): the sweep
+  promotes silently; the notification needs the turn loop.
+- **Manual edit** (a new dictated rule replaces and archives the old one): no
+  code path archives the predecessor yet.
+- **Conflict check at creation** (the "active rules never contradict each
+  other" invariant): it compares a new rule with the active set through the
+  LLM, which is the classifier's call.
+- **Use attribution** (the "Applied in a turn" row): the feedback classifier
+  writes the `rule_uses` row and its outcome category.
+- **Proposals** (a correction that reveals a rule no existing rule covers): the
+  classifier's proposal output.
+
 ## Split
 
 A correction that shows a rule is too broad ("asking me before booking is
@@ -155,10 +174,18 @@ conditions are disjoint, together covering the parent's situations.
   condition** (judged once, at split time).
 - The new child starts in `staging` and takes the parent's uses that fall
   inside its own condition.
+- Both children carry `parent_id` = the parent, so the split is reconstructible
+  from either end; the parent records the first child as its `superseded_by`.
 - The parent is archived.
 
 Filtering rather than copying is what keeps the two children's scores honest:
 a pizza accepted in silence belongs to the pizza rule, not to the dinner rule.
+
+Split and merge are **not transactional** in v1: each repository call opens its
+own session, so a failure part-way leaves the children (or the fused rule)
+created and the parent still active. Nothing repairs it — the next sweep only
+recomputes scores and states — so the operator must re-run the split/merge. A
+transaction spanning the repository calls is future work.
 
 ## Use attribution and the feedback classifier
 
@@ -233,9 +260,9 @@ If the classifier is down, the feedback queues and is not lost.
   confidence-ordered cap of 40 (`CONTEXT_BUDGET`): the highest-confidence rules
   enter, the rest do not.
 - Rules reach the prompt through the memory bundle (`MemoryContext`), which
-  today carries three dimensions — facts, personality, ambient — and is
+  now carries four dimensions — facts, personality, ambient, rules — and is
   assembled by `ContextProvider` with per-dimension failure isolation
-  (`degraded_dimensions`). Rules are a fourth dimension of that bundle, built
+  (`degraded_dimensions`). Rules are the fourth dimension of that bundle, built
   with the same isolation: a failure to load the rules degrades the dimension
   and leaves the rest of the context intact.
 
@@ -255,7 +282,10 @@ tasks.
 ## Manual management
 
 - `cortex rules:list` / `cortex rules:show <id>` — state, confidence, recent
-  uses, history (splits, merges, replacements). The colon form follows the
+  uses, history (splits, merges, replacements). The `replaced:` section of
+  `rules:show` lists both directions of the history edge: a split parent's
+  children, a merge product's parents, and — for a split's first child — the
+  parent that records it as its successor. The colon form follows the
   existing CLI convention (`token:create`, `traces:cleanup`).
 - Archiving is an explicit command and prevails over the classifier.
 - There is no way to edit confidence or state directly: promotion and demotion
@@ -271,7 +301,7 @@ tasks.
 | An expired use contributes nothing | posterior unchanged after the window passes |
 | Silence never moves the score | a turn with no user reply leaves confidence unchanged |
 | A rule only scores on uses it actually applied to | a rule present in context but not applied has no use row |
-| A split's children have disjoint conditions and cover the parent's | condition check on both children |
+| A split's children have disjoint conditions and cover the parent's | condition check on both children — verified by construction in slice A: every use is assigned to exactly one child and the parent is archived (`tests/unit/rules/test_service.py::TestSplit::test_split_redistributes_each_use_to_exactly_one_child`); condition disjointness is the slice-B classifier's responsibility |
 | Archived rules are never applied | no rule in context has state `archived` |
 | The Golden Set never enters the learning loop | during eval, no rule is created and no use is recorded |
 | A dictated rule starts definitive and does not immediately demote | a fresh dictated rule's confidence is ≥ 0.9 |
