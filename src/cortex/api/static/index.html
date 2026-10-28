@@ -338,17 +338,13 @@ function openText() {
   toolGroup = null;  // tools after this text start a new row below it
   return curTextEl;
 }
-// Closing a segment stops its caret: every exit path (tool, ask_user, done,
-// error) goes through here, so a closed bubble must not keep blinking.
+// Closing a segment stops its caret and opens the reasoning of a text-less one.
 function closeText() {
   if (!curTextEl) return;
   curTextEl.classList.remove("streaming");
-  // A segment that produced only reasoning has no visible text: hide its empty
-  // bubble and open the reasoning in place (ask_user and every tool round
-  // produce one such segment). Hidden, not removed: the toggle and the
-  // reasoning block are siblings anchored to this bubble.
-  const hasText = (curTextEl.dataset.raw || "").trim().length > 0;
-  if (!hasText && curThink) {
+  // Hidden, not removed: the toggle and reasoning block are siblings anchored
+  // to this bubble.
+  if (!curTextEl.dataset.raw && curThink) {
     curTextEl.style.display = "none";
     curThink.classList.add("visible");
     curToggle.textContent = "▾ nascondi ragionamento";
@@ -374,9 +370,9 @@ function ensureThink() {
   curThink.className = "think-block";
   curTextEl.after(curToggle);
   curToggle.after(curThink);
-  // Capture this segment's own nodes: the module-level cursors move on to the
-  // next segment (openText() nulls them), so reading them in the handler made
-  // an earlier segment's toggle a no-op or a TypeError.
+  // Capture this segment's own nodes: the module-level cursors move on, so
+  // reading them in the handler toggled the newest segment's block, or threw
+  // TypeError when that segment had none.
   const block = curThink;
   const button = curToggle;
   button.addEventListener("click", () => {
@@ -499,8 +495,8 @@ function handleFrame(frame, onDone) {
         // Except: ask_user emits the question twice by design (AskUserEvent, then
         // the short-circuit ResponseDoneEvent carrying it as final_message), so
         // skip the duplicate below the option buttons. curRaw still holds the
-        // question the ask_user branch just rendered — closeText() only nulls
-        // curTextEl — so the equality check catches it without extra state.
+        // question the ask_user branch just rendered — closeText() never
+        // touches it — so the equality check catches it without extra state.
         openText();
         curRaw = data.final_message;
         renderCurrent();
