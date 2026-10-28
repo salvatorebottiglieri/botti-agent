@@ -43,6 +43,7 @@ class CortexApp:
     context_provider: Any = field(default=None)
     fact_store: Any = field(default=None)
     fact_extractor: Any = field(default=None)
+    rule_service: Any = field(default=None)
     minion_service: Any = field(default=None)
     llm_client: Any = field(default=None)
 
@@ -178,6 +179,14 @@ async def initialize_app() -> CortexApp:
     fact_repo: FactRepository = PostgresFactRepository()
     concept_repo: ConceptRepository = PostgresConceptRepository()
 
+    # 5c'. Create the rule service (issue #130). Learning is wired here, not in
+    # the agentic core: the reasoner only reads the rendered rules off the
+    # context bundle.
+    from cortex.rules.repository import PostgresRuleRepository
+    from cortex.rules.service import RuleService
+
+    cortex.rule_service = RuleService(PostgresRuleRepository())
+
     # 5d. Create LLM client
     from cortex.llm.factory import LLMClientFactory
     llm_factory = LLMClientFactory(settings.llm)
@@ -222,6 +231,7 @@ async def initialize_app() -> CortexApp:
         fact_repository=fact_repo,
         fact_store=fact_store,
         concept_repository=concept_repo,
+        rule_service=cortex.rule_service,
     )
 
     context_builder = ContextBuilder(
