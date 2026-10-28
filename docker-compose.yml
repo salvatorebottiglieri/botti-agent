@@ -1,4 +1,7 @@
-version: "3.9"
+# Stable project name: compose otherwise derives it from the directory, so a
+# session working in its own worktree (../<repo>-<feature>) would fork a second
+# set of containers and volumes invisible to `git worktree list`.
+name: botti-agent
 
 services:
   postgres:
