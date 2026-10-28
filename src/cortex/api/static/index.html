@@ -340,7 +340,21 @@ function openText() {
 }
 // Closing a segment stops its caret: every exit path (tool, ask_user, done,
 // error) goes through here, so a closed bubble must not keep blinking.
-function closeText() { if (curTextEl) curTextEl.classList.remove("streaming"); curTextEl = null; }
+function closeText() {
+  if (!curTextEl) return;
+  curTextEl.classList.remove("streaming");
+  // A segment that produced only reasoning has no visible text: hide its empty
+  // bubble and open the reasoning in place (ask_user and every tool round
+  // produce one such segment). Hidden, not removed: the toggle and the
+  // reasoning block are siblings anchored to this bubble.
+  const hasText = (curTextEl.dataset.raw || "").trim().length > 0;
+  if (!hasText && curThink) {
+    curTextEl.style.display = "none";
+    curThink.classList.add("visible");
+    curToggle.textContent = "▾ nascondi ragionamento";
+  }
+  curTextEl = null;
+}
 
 // Render the current segment's raw text, splitting off any <think> block into a
 // collapsible toggle attached to the current bubble.
