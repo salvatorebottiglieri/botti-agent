@@ -1,5 +1,6 @@
 # Program design — rule system v1, core (issue #130, slice A)
 > Not a source of truth: docs/specs/rule-system.md owns the behaviour; this file owns the shapes for issue #130 and expires when the slice lands.
+> Status: contract for the open PR of slice A. It is superseded — not updated — once that PR merges; anything that survives it belongs in the spec or the ADR.
 
 Slice A delivers the rule system **without the LLM classifier**: schema, pure
 score, repository, lifecycle service (create / record use / promote / demote /
@@ -15,6 +16,8 @@ decisions the spec left to the implementation.
 ## Deviations from the spec, decided here
 
 These are shape decisions only; the spec stays the owner of the behaviour.
+Where this list and the spec's `## Calibration constants` / `## Context` disagree,
+this file is wrong by construction — read the spec.
 
 1. **Module home** — the spec names `cortex/learning/rules/scoring.py` as the
    home of the shared update function. The rule system is its own subsystem
@@ -22,16 +25,10 @@ These are shape decisions only; the spec stays the owner of the behaviour.
    is the Echo State Network module (ADR-0001) which has no LLM client and is
    not mounted in the composition root. The package is `src/cortex/rules/`,
    mirroring `src/cortex/trace/`. The spec is updated in the same PR.
-2. **One prior** — the spec's "prior (dictated) 0.95" is implemented as
-   `PRIOR = 0.5` plus one `approval` use written with the rule
-   (`logit(0.5) + ln(20) ≈ 0.95`). There is no second prior constant.
-3. **Split/merge do not call an LLM in slice A.** The classifier (slice B)
-   decides *which* child each use belongs to; `RuleService.split` takes that
-   decision as a mapping and only performs the mechanical redistribution. This
-   keeps the lifecycle testable without a provider.
-4. **Universal-condition rules** are not modelled in v1: the schema has no
-   field for the spec's "always enter" guarantee, so the budget is a plain
-   confidence-ordered cap of `CONTEXT_BUDGET = 40` (noted in the spec).
+2. **No LLM inside split/merge in slice A.** The classifier (slice B) decides
+   *which* child each use belongs to; `RuleService.split` takes that decision
+   as a mapping and only performs the mechanical redistribution. This keeps
+   the lifecycle testable without a provider.
 
 ## Call-stack tree
 
@@ -255,7 +252,7 @@ These are shape decisions only; the spec stays the owner of the behaviour.
         {"kind": "returns", "type": "list[Rule] (staging + definitive, recomputed confidence desc, at most 40)", "handled_at": "ContextProvider.get_rules_context and CLI rules:list"},
         {"kind": "absent", "type": "[]", "handled_at": "returned as an empty list; render_rules then yields None and the prompt has no rules section"},
         {"kind": "raises", "type": "asyncpg.PostgresError", "handled_at": "ContextProvider.get_memory_context catches it per dimension and records 'rules' in degraded_dimensions"},
-        {"kind": "effect", "type": "loads every staging+definitive rule (the DAO limit is a safety cap, not the budget), refreshes rules whose recomputed state or confidence changed (expiry, promotion, demotion, archive), then sorts by the recomputed confidence and trims to CONTEXT_BUDGET"}
+        {"kind": "effect", "type": "loads the staging+definitive rules (the DAO's 500-row safety cap applies, not the context budget), refreshes rules whose recomputed state or confidence changed (expiry, promotion, demotion, archive), then sorts by the recomputed confidence and trims to CONTEXT_BUDGET"}
       ]
     },
     {
@@ -415,7 +412,7 @@ These are shape decisions only; the spec stays the owner of the behaviour.
         {"kind": "raises", "type": "asyncpg.PostgresError, ConnectionError", "handled_at": "propagates to RuleService.split / merge and their caller. Split and merge are NOT transactional (each repository call opens its own session), so a failure here leaves children created and the parent still active: nothing repairs it, the operator must re-run the split/merge"},
         {"kind": "effect", "type": "rewrites rule_uses.rule_id"}
       ],
-      "residual": "asyncpg exceptions not enumerated propagate unchanged. A partial split/merge is not self-healing: the next sweep only recomputes scores and states, so the caller has to treat the failure as needing repair."
+      "residual": "asyncpg exceptions not enumerated propagate unchanged. A partial split/merge is not self-healing: the next sweep only recomputes scores and states, so the caller has to treat the failure as needing repair (the spec's ## Split states that split/merge are not transactional in v1)."
     },
     {
       "site": "ContextProvider.get_rules_context",
