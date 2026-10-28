@@ -37,3 +37,14 @@ logging:
   level: "INFO"
   format: "console"
   include_trace_id: true
+
+tools:
+  # Deny-by-default meta-tool allow-list (#134). Only these names are
+  # advertised to the model; anything else is not registered at all.
+  # `shell` and `file_write` are opt-in until #120 owns path/argument policy
+  # and per-call approval — add them here (or via TOOLS_ALLOW) to grant the
+  # process user's hands back to the agent.
+  allow:
+    - file_read
+    - grep
+    - ask_user

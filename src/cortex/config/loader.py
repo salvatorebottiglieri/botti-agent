@@ -29,7 +29,16 @@ _YAML_KEY_TO_FIELD: dict[str, dict[str, str]] = {
 }
 
 #: YAML sections that map onto a slice of the composed ``Settings``.
-_SETTINGS_SECTIONS = ("database", "llm", "mqtt", "app", "logging", "trace", "learning")
+_SETTINGS_SECTIONS = (
+    "database",
+    "llm",
+    "mqtt",
+    "app",
+    "logging",
+    "trace",
+    "learning",
+    "tools",
+)
 
 
 def find_config_file() -> Path | None:

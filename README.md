@@ -84,6 +84,16 @@ See [`docs/specs/agentic-loop.md`](docs/specs/agentic-loop.md) for the full desi
   (battery, network, screen, keyboard) over **MQTT with encrypted events**.
   `laptop-minion/` is a full sub-package with its own tests.
 
+## Host access
+
+Meta tools are **deny-by-default**: only the names in `tools.allow`
+(`TOOLS_ALLOW`) are registered, and the default set is read-only —
+`file_read`, `grep`, `ask_user`. `shell` and `file_write` are not advertised
+until you opt in: `TOOLS_ALLOW=file_read,grep,ask_user,shell`. An unknown name
+aborts startup. Path/argument policy, sandboxing and per-call approval are
+[#120](https://github.com/salvatorebottiglieri/botti-agent/issues/120) — this
+allow-list is the phase-0 mitigation, not a security boundary.
+
 ## Design decisions (ADRs)
 
 Every non-obvious call is written down with its rationale in

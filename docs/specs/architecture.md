@@ -206,7 +206,7 @@ Event types (`EventTypes`):
 |---|---|---|
 | Event bus | `src/cortex/events/` | The River (above) |
 | LLM | `src/cortex/llm/` | Provider-agnostic `LLMClient`; `LLMClientFactory`; `CircuitBreaker` wrapper (ADR-0009) |
-| Tools | `src/cortex/tools/` | `ToolRegistry` / `ToolExecutor` interfaces, `InMemoryToolRegistry`; meta tools `file_read`, `file_write`, `grep`, `shell`, `ask_user` |
+| Tools | `src/cortex/tools/` | `ToolRegistry` / `ToolExecutor` interfaces, `InMemoryToolRegistry`; meta tools `file_read`, `file_write`, `grep`, `shell`, `ask_user`, registered deny-by-default from the `ToolsSettings` allow-list (`TOOLS_ALLOW`) |
 
 ### Layer 2 — standalone modules
 

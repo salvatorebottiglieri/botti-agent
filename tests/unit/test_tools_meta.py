@@ -6,6 +6,7 @@ import tempfile
 
 import pytest
 
+from cortex.config.tools import DEFAULT_ALLOWED_TOOLS
 from cortex.tools.meta import (
     AskUserTool,
     FileReadTool,
@@ -349,3 +350,47 @@ class TestRegisterMetaTools:
         # Check all can be retrieved
         for name in ["file_read", "file_write", "shell", "grep", "ask_user"]:
             assert registry.get(name) is not None
+
+    def test_allowed_list_registers_only_those_tools(self):
+        """An explicit allow-list is deny-by-default: the two host-mutating
+        tools never reach the registry unless named."""
+        registry = InMemoryToolRegistry()
+
+        registered = register_meta_tools(registry, allowed=["grep", "file_read"])
+
+        assert registered == ["file_read", "grep"]
+        assert registry.get("shell") is None
+        assert registry.get("file_write") is None
+        assert registry.tool_count == 2
+
+    def test_default_allow_list_names_real_tools(self):
+        """``DEFAULT_ALLOWED_TOOLS`` is not validated by the settings slice —
+        an unknown name there would abort startup for every operator with no
+        opt-in, so the constant must name the read-only tools exactly."""
+        registry = InMemoryToolRegistry()
+
+        registered = register_meta_tools(registry, allowed=list(DEFAULT_ALLOWED_TOOLS))
+
+        assert registered == ["file_read", "grep", "ask_user"]
+
+    def test_empty_allowed_list_registers_nothing(self):
+        """An explicit empty list advertises no tool (chat still works)."""
+        registry = InMemoryToolRegistry()
+
+        assert register_meta_tools(registry, allowed=[]) == []
+        assert registry.list_all() == []
+
+    def test_unknown_name_raises_before_registering_anything(self):
+        """The whole list is validated up front: a typo in ``TOOLS_ALLOW`` must
+        fail startup with an untouched registry.
+
+        Witness: validating inside the registration loop would leave
+        ``file_read`` registered before raising on ``nope``."""
+        registry = InMemoryToolRegistry()
+
+        with pytest.raises(ValueError) as excinfo:
+            register_meta_tools(registry, allowed=["file_read", "nope"])
+
+        assert "nope" in str(excinfo.value)
+        assert "file_read" in str(excinfo.value)  # the known names are listed
+        assert registry.list_all() == []
