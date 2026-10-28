@@ -283,6 +283,25 @@ tasks.
 - A dedicated UI for the rules — v1 exposes them through the CLI and the
   chat, like everything else.
 
+## Open questions
+
+Deliberately left undecided (2026-10-28). They are not blockers for the
+implementation: each one has a defensible default that the issue can pick.
+
+- **The shape of a rule's text.** Is `condition` / `action` / `rationale` three
+  fields or one string? Three fields make the conflict check and the Split
+  mechanical; one string is simpler to store and to show. The data model above
+  writes them as three columns, which is a choice, not a decision.
+- **Does a dictated rule's evidence expire?** A dictation is strong evidence
+  with a 6-month window, like everything else — but "d'ora in poi chiedi
+  conferma" is an instruction, not an observation, and expiring it demotes the
+  rule back to staging. Permanent would need a separate mechanism.
+- **What happens beyond the context budget of 40 rules.** ADR-0008's retrieval
+  does not exist in code, so the budget has no enforcement behind it yet. The
+  candidates are: exceed the budget, refuse to create rules past it, or treat
+  it as a merge trigger (the ADR already calls it "the signal that the rules
+  need consolidation").
+
 ## Sources of truth
 
 - `docs/adr/0020-learned-rules.md` — why (rejected alternatives, rationale).
