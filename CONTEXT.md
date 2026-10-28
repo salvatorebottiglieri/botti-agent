@@ -122,10 +122,18 @@ _Avoid_: declared use, cited rules, relevance
 **Feedback classifier**:
 The asynchronous LLM component that attributes uses and categorises the user's
 next message per Rule — approval, implicit acceptance, correction of the
-decision, scope correction, or neutral. It returns a category, never a number:
-the weight comes from the table, because a model's confidence in itself is not
-calibrated.
+decision, scope correction, or neutral. It reads the turn's reasoning as well
+as its text, where the model produced any. It returns a category, never a
+number: the weight comes from the table, because a model's confidence in
+itself is not calibrated.
 _Avoid_: grader, evaluator, scorer
+
+**Reasoning**:
+The model's own account of why it acted, produced out of band by reasoning
+models and normalised by the provider into an inline `<think>...</think>` block
+(ADR-0018). Distinct from the loop's `thinking` event, which carries a
+placeholder and no model thought.
+_Avoid_: thinking event, chain of thought, scratchpad
 
 **Rule declaration**:
 The one-line notice Cortex adds to its response when it applies a staged Rule,

@@ -135,11 +135,38 @@ schema, ADR-0018 removed the text-marker convention. So attribution happens
 `CircuitBreakerLLMClient` (there is no LLM priority queue in the codebase;
 each module gets its own breaker).
 
-Per turn, the classifier receives the active rules, the response, and the
-user's next message, and returns per rule: *was it applied* and *what is the
-outcome category*. It returns a category, never a number — the weight comes
-from the table above, because a model's confidence in itself is not calibrated.
-It does not read the model's thinking tokens.
+Per turn, the classifier receives the active rules, the assistant turn's
+content, and the user's next message, and returns per rule: *was it applied*
+and *what is the outcome category*. It returns a category, never a number —
+the weight comes from the table above, because a model's confidence in itself
+is not calibrated.
+
+**The classifier reads the model's reasoning.** Reasoning reaches Cortex out
+of band (`reasoning_content` / `reasoning` on the provider delta); the OpenAI
+provider normalises it into a single inline `<think>...</think>` block
+(ADR-0018), so it rides on the assistant turn's content and the classifier
+receives the turn as the model produced it. The reasoning is where the model
+explains *why* it acted — "the user wants confirmation before booking, so I
+asked" — which is the strongest available signal that a Rule was applied,
+stronger than inferring it from the response text. Where the provider surfaces
+no reasoning, the classifier falls back to the text alone and attributes less;
+it never invents an attribution.
+
+Only the streaming path carries the reasoning today: `LLMClient.chat_stream()`
+normalises the provider's reasoning field into the content deltas, while
+`LLMClient.chat()` reads `message.content` and drops it. The implementation
+must normalise the reasoning on the non-streaming path too (or give the
+classifier the streamed content), otherwise the reasoning is available only on
+the SSE path. On the streaming path the reasoning is already persisted: the
+provider yields the `<think>` block as content deltas, so the assistant message
+in `messages` contains it inline and the classifier can read the turn from the
+session without a new column. The reasoning adds no new PII surface — it was
+produced by the provider and already sits in that table; the classifier runs on
+the same provider and the rule system stores no copy of it.
+
+The loop's `ThinkingEvent` is **not** this reasoning: `Decision.reasoning` is
+a placeholder ("Direct response to user"), so the `thinking` event carries no
+model thought and must not be used as the classifier's input.
 
 Explicit user commands always win over the classifier: `R-14b no`, a 👍/👎 on
 a rule, or the archive command.
@@ -188,7 +215,8 @@ If the classifier is down, the feedback queues and is not lost.
 - Embedding-based conflict detection — with a budget of 40 rules the new rule
   is compared against the whole active set with an LLM.
 - Embedding-based retrieval of rules in the context (ADR-0008).
-- Reasoning-token feedback.
+- Reading the reasoning of a turn the classifier did not attribute (the
+  classifier sees the reasoning of the turn it is judging, not of past turns).
 
 ## Sources of truth
 

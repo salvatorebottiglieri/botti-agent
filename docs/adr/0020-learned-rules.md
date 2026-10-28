@@ -48,10 +48,10 @@ the turn by an asynchronous feedback classifier, not by the reasoner. The
 reasoner's final output is free text or a tool call; there is no structured
 field to carry Rule IDs, and the text conventions ADR-0005 rejected and
 ADR-0018 replaced are exactly what we do not want back. The classifier already
-exists to categorise user feedback; it now also sees the active Rules and the
-response, and returns, per Rule, whether it was applied and what the user's
-next message says about it. One extra async call, no extra loop iteration, no
-new convention on the wire.
+exists to categorise user feedback; it now also sees the active Rules, the
+response and the model's reasoning, and returns, per Rule, whether it was
+applied and what the user's next message says about it. One extra async call,
+no extra loop iteration, no new convention on the wire.
 
 ## What "used" means
 
@@ -61,6 +61,14 @@ dinner), and not "the model said so" (the model has no structured field in
 which to say it). A use also records the *situation* — the request it was
 applied to — which is what makes Split able to redistribute history instead of
 copying it.
+
+The classifier reads the turn's **reasoning** as well as its text, wherever the
+model produced any. The reasoning is where the model states *why* it did what
+it did ("the user always wants confirmation before booking, so I asked"), and
+that is the closest thing to a declaration of use that exists without putting
+a new field on the wire. Where the provider surfaces no reasoning, the
+classifier falls back to the text alone and attributes less — a weaker signal,
+never a fabricated one.
 
 Feedback is categorised, never scored by the model's own confidence:
 
@@ -138,8 +146,26 @@ enter. The budget is also the signal that the set needs consolidation.
   `CircuitBreakerLLMClient` through `LLMClientFactory.create_for_module`, and
   the classifier is asynchronous with its own breaker. If the classifier is
   down, the feedback queues and is not lost.
-- **The classifier does not read the model's thinking tokens.** It sees the
-  turn's messages and the response.
+- **The classifier reads the model's reasoning where the provider surfaces it.**
+  Reasoning arrives out of band (`reasoning_content` / `reasoning`) and the
+  OpenAI provider normalises it into a single inline `<think>...</think>` block
+  (ADR-0018), so it rides on the assistant turn's content. The classifier is
+  given the turn as the model produced it; where no reasoning was produced,
+  attribution falls back to the text alone.
+- **Only the streaming path carries the reasoning today.**
+  `LLMClient.chat_stream()` normalises the provider's reasoning field into the
+  content deltas; `LLMClient.chat()` (the non-streaming path) reads
+  `message.content` and drops it. The implementation must normalise the
+  reasoning there too — or the classifier must read the turn's streamed
+  content — otherwise the reasoning is available only on the SSE path.
+- **The reasoning adds no new PII surface.** It was produced by the provider
+  and already sits in the `messages` table; the classifier runs on the same
+  provider as the reasoner and reads the turn from that table. No new copy of
+  the reasoning is stored by the rule system.
+- **The `ThinkingEvent` is not the reasoning.** `Decision.reasoning` is a
+  short placeholder ("Direct response to user"), so the loop's `thinking`
+  event carries no model thought and must not be used as the classifier's
+  input. The reasoning is the inline block in the content.
 - **The Golden Set never enters the learning loop** (`CONTEXT.md`): during
   evaluations Rule learning is off, no Rule is created and no evidence is
   recorded. Active Rules are loaded as fixtures, so an eval measures behaviour
