@@ -7,6 +7,7 @@ same logit-space odds update ADR-0013 uses for Facts. Mechanism:
 """
 
 from cortex.rules.constants import CONTEXT_BUDGET, PRIOR
+from cortex.rules.interfaces import RuleRepository
 from cortex.rules.models import (
     Rule,
     RuleNotFoundError,
@@ -16,7 +17,10 @@ from cortex.rules.models import (
     RuleUse,
     UseOutcome,
 )
+from cortex.rules.render import render_rules
+from cortex.rules.repository import PostgresRuleRepository
 from cortex.rules.scoring import active_uses, next_state, posterior, use_counts
+from cortex.rules.service import RuleService
 
 __all__ = [
     # Constants
@@ -35,4 +39,11 @@ __all__ = [
     "next_state",
     "posterior",
     "use_counts",
+    # Interfaces
+    "RuleRepository",
+    # Implementations
+    "PostgresRuleRepository",
+    "RuleService",
+    # Rendering
+    "render_rules",
 ]
