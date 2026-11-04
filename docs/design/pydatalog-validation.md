@@ -178,7 +178,7 @@ LogicEngine.load_facts ───────────► pyDatalog.clear / py
           { "name": "_ClauseParser.parse / _parse_proof", "note": "strict Datalog grammar; rejects anything PyDatalog would exec as Python" },
           { "name": "_required_values", "note": "ground body atoms on functional predicates" },
           { "name": "_reset_engine", "note": "clear + re-assert the stored active facts" },
-          { "name": "_find_conflicts", "note": "structural over the value -> Fact index" }
+          { "name": "_find_conflicts", "note": "structural over the fact index" }
         ]
       }
     ]
@@ -242,7 +242,7 @@ LogicEngine.load_facts ───────────► pyDatalog.clear / py
     },
     {
       "site": "logic_engine.validate_derivation",
-      "call": "pyParser.ask(query) — external PyDatalog query engine",
+      "call": "pyDatalog.ask(query) — external PyDatalog query engine",
       "residual": "undefined predicates raise AttributeError and are treated as no answer; every other exception is caught and returned as ValidationResult(valid=False)",
       "exits": [
         { "kind": "returns", "type": "ValidationResult", "handled_at": "src/cortex/validation/logic_engine.py:validate_derivation" },

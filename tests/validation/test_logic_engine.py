@@ -7,7 +7,11 @@ from datetime import UTC, datetime
 import pytest
 
 from cortex.memory.models import Concept, ConceptDerivation, Fact, FactType
-from cortex.validation.logic_engine import FUNCTIONAL_PREDICATES, LogicEngine
+from cortex.validation.logic_engine import (
+    FUNCTIONAL_PREDICATES,
+    LogicEngine,
+    _is_unsafe_predicate,
+)
 from cortex.validation.models import ValidationResult
 
 
@@ -492,3 +496,38 @@ class TestFunctionalPredicates:
     def test_registry_contains_location_and_activity(self):
         """Witness: both documented functional predicates are present."""
         assert FUNCTIONAL_PREDICATES == frozenset({"location", "activity"})
+
+
+class TestUnsafePredicateGuard:
+    """The pre-PyDatalog guard rejects names that could call Python code."""
+
+    @pytest.mark.parametrize(
+        "predicate",
+        [
+            "open",
+            "exec",
+            "eval",
+            "compile",
+            "globals",
+            "locals",
+            "print",
+            "input",
+            "exit",
+            "quit",
+            "__import__",
+            "_hidden",
+            "and",
+            "class",
+            "lambda",
+        ],
+    )
+    def test_unsafe_predicates_are_rejected(self, predicate):
+        """Witness: each name is unsafe on its own, so the guard must say True."""
+        assert _is_unsafe_predicate(predicate) is True
+
+    @pytest.mark.parametrize(
+        "predicate", ["location", "activity", "payment", "user_preference"]
+    )
+    def test_normal_predicates_are_allowed(self, predicate):
+        """Witness: ordinary domain predicates stay usable."""
+        assert _is_unsafe_predicate(predicate) is False
