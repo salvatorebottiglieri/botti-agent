@@ -204,3 +204,12 @@ class Concept:
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(UTC),
             retracted_at=datetime.fromisoformat(data["retracted_at"]) if data.get("retracted_at") else None,
         )
+
+
+@dataclass
+class ConceptDerivation:
+    """An LLM-proposed concept with the symbolic proof chain that supports it."""
+
+    concept: Concept
+    proof_chain: list[str]
+    source_fact_ids: list[uuid.UUID] = field(default_factory=list)
