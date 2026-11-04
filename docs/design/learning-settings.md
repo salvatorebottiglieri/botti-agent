@@ -44,7 +44,7 @@ constructor path that builds its ESN from them.
 +  Reservoir.__init__                              # n_input from encoder, rest from settings
 +  EchoStateNetwork.__init__                       # wraps the reservoir
 +  LearningModule.__init__                         # existing injection seam
- LearningModule.__init__                           # MODIFIED — stores the ESN it already received
+ LearningModule.__init__                           # unchanged — stores the ESN it already received
 ```
 
 ## File-tree diff
@@ -57,7 +57,7 @@ constructor path that builds its ESN from them.
 ~  reservoir.py         # MODIFIED — default spectral_radius 0.9 (ADR-0001)
  tests/learning
 +  test_settings.py     # NEW — defaults, validation, module built from settings
-~  test_module.py       # MODIFIED — call sites use from_settings; mismatch test removed
+ test_module.py        # unchanged — the existing injected-ESN path and its mismatch test remain valid
 ~  test_reservoir.py    # MODIFIED — default radius expectation 0.9
  tests/config
 ~  test_models.py       # MODIFIED — stub test becomes the wired-settings test
@@ -131,7 +131,7 @@ from_settings ──► Reservoir.__init__
 
 | site | callee | returns | absent | raises | effect |
 |---|---|---|---|---|---|
-| `from_settings` | `Reservoir.__init__` | `None` | never — both objects are always constructed | `ValueError` if `n_input < 1`; impossible, `encoder.n_features >= 1` | allocates a new reservoir |
+| `from_settings` | `Reservoir.__init__` | `None` | never — both objects are always constructed | `ValueError` on a negative `n_input` (numpy rejects it); `n_input=0` is accepted but impossible here because `encoder.n_features >= 9` | allocates a new reservoir |
 | `from_settings` | `EchoStateNetwork.__init__` | `None` | never — `Reservoir` is passed positionally | none — plain attribute assignment | wraps the reservoir |
 | `from_settings` | `LearningModule.__init__` | `LearningModule` | never — the only branch returns the module | `ValueError` on encoder/reservoir mismatch; impossible here, both come from the same encoder | stores bus, ESN, encoder |
 
@@ -151,7 +151,7 @@ from_settings ──► Reservoir.__init__
     { "kind": "mod", "path": "src/cortex/learning/module.py", "note": "from_settings classmethod + esn property" },
     { "kind": "mod", "path": "src/cortex/learning/reservoir.py", "note": "default spectral_radius 1.0 -> 0.9" },
     { "kind": "add", "path": "tests/learning/test_settings.py", "note": "defaults, ranges, module built from settings" },
-    { "kind": "mod", "path": "tests/learning/test_module.py", "note": "call sites move to from_settings" },
+    { "kind": "keep", "path": "tests/learning/test_module.py", "note": "unchanged — the existing injected-ESN path and its mismatch test remain valid" },
     { "kind": "mod", "path": "tests/learning/test_reservoir.py", "note": "default radius expectation" },
     { "kind": "mod", "path": "tests/config/test_models.py", "note": "stub test becomes wired test" },
     { "kind": "mod", "path": "config.yaml", "note": "learning section" },
@@ -194,7 +194,7 @@ from_settings ──► Reservoir.__init__
       "exits": [
         { "kind": "returns", "type": "None", "handled_at": "src/cortex/learning/module.py:from_settings" },
         { "kind": "absent", "type": "never", "handled_at": "both objects are always constructed; no optional branch" },
-        { "kind": "raises", "type": "ValueError", "handled_at": "impossible: n_input = encoder.n_features >= 1" },
+        { "kind": "raises", "type": "ValueError", "handled_at": "impossible: numpy rejects a negative n_input; n_input = encoder.n_features >= 9" },
         { "kind": "effect", "type": "allocates a new Reservoir", "handled_at": null }
       ]
     },

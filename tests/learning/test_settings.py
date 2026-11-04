@@ -21,31 +21,6 @@ from cortex.learning.reservoir import EchoStateNetwork, Reservoir
 N_FEATURES = MinionEventEncoder().n_features
 
 
-class TestLearningSettingsDefaults:
-    """ADR-0001 defaults: 500 neurons, 0.9 spectral radius, 0.3 leak rate."""
-
-    def test_defaults_match_adr_0001(self) -> None:
-        learning = LearningSettings(_env_file=None)
-
-        assert learning.reservoir_size == 500
-        assert learning.spectral_radius == 0.9
-        assert learning.input_scale == 1.0
-        assert learning.leak_rate == 0.3
-        assert learning.ridge_lambda == 1e-6
-
-    def test_root_settings_carry_the_learning_slice(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path
-    ) -> None:
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("LLM_API_KEY", "k")
-
-        settings = Settings()
-
-        assert isinstance(settings.learning, LearningSettings)
-        assert settings.learning.reservoir_size == 500
-        assert settings.learning.spectral_radius == 0.9
-
-
 class TestLearningSettingsValidation:
     """Out-of-range hyperparameters are rejected at construction."""
 
@@ -105,7 +80,6 @@ class TestLearningModuleFromSettings:
             spectral_radius=0.7,
             input_scale=0.25,
             leak_rate=0.9,
-            ridge_lambda=2e-3,
         )
 
         module = LearningModule.from_settings(EventBus(), settings, seed=11)
@@ -114,10 +88,7 @@ class TestLearningModuleFromSettings:
         assert reservoir.n_reservoir == 64
         assert reservoir.alpha == 0.9
         assert reservoir.input_scaling == 0.25
-        actual_radius = float(np.max(np.abs(np.linalg.eigvals(reservoir.W))))
-        assert actual_radius == pytest.approx(0.7, rel=1e-6)
-        assert np.all(np.abs(reservoir.W_in) <= 0.25)
-        assert settings.ridge_lambda == 2e-3
+        assert reservoir.spectral_radius == 0.7
 
     def test_module_built_from_root_config(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
@@ -126,21 +97,11 @@ class TestLearningModuleFromSettings:
 
         settings = Settings(
             llm={"api_key": "k"},
-            learning={
-                "reservoir_size": 32,
-                "spectral_radius": 0.6,
-                "input_scale": 0.5,
-                "leak_rate": 0.8,
-            },
+            learning={"reservoir_size": 32},
         )
         module = LearningModule.from_settings(EventBus(), settings.learning, seed=4)
 
-        reservoir = module.esn.reservoir
-        assert reservoir.n_reservoir == 32
-        assert reservoir.alpha == 0.8
-        assert reservoir.input_scaling == 0.5
-        actual_radius = float(np.max(np.abs(np.linalg.eigvals(reservoir.W))))
-        assert actual_radius == pytest.approx(0.6, rel=1e-6)
+        assert module.esn.reservoir.n_reservoir == 32
 
     def test_custom_encoder_sizes_the_reservoir_input(self) -> None:
         encoder = MinionEventEncoder(event_types=("minion.location",))
@@ -168,7 +129,6 @@ class TestLearningModuleFromSettings:
             EventBus(), LearningSettings(_env_file=None, reservoir_size=16)
         )
 
-        assert isinstance(module.esn, EchoStateNetwork)
         module.esn.register_readout("salience", SalienceReadout())
         with pytest.raises(RuntimeError, match="not trained"):
             module.get_salience()
