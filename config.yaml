@@ -42,6 +42,14 @@ logging:
   format: "console"
   include_trace_id: true
 
+learning:
+  # ESN reservoir hyperparameters (ADR-0001)
+  reservoir_size: 500
+  spectral_radius: 0.9
+  input_scale: 1.0
+  leak_rate: 0.3
+  ridge_lambda: 0.000001
+
 tools:
   # Deny-by-default meta-tool allow-list (#134): only these names are
   # advertised to the model. Left unset, the code default

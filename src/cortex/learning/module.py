@@ -5,13 +5,16 @@ expected to be registered on the ESN before the getters are called; they are
 resolved lazily by name so late registration stays supported.
 """
 
+from __future__ import annotations
+
 from typing import TypeVar
 
+from cortex.config.learning import LearningSettings
 from cortex.events.base import BaseEvent
 from cortex.events.bus import EventBus
 from cortex.learning.encoding import MINION_EVENT_TYPES, MinionEventEncoder
 from cortex.learning.readouts import AnomalyReadout, PatternReadout, SalienceReadout
-from cortex.learning.reservoir import EchoStateNetwork, Readout
+from cortex.learning.reservoir import EchoStateNetwork, Readout, Reservoir
 
 _ReadoutT = TypeVar("_ReadoutT", bound=Readout)
 
@@ -40,6 +43,40 @@ class LearningModule:
                 f"esn.reservoir.n_input ({self._esn.reservoir.n_input})"
             )
         self._subscribed = False
+
+    @classmethod
+    def from_settings(
+        cls,
+        event_bus: EventBus,
+        settings: LearningSettings,
+        *,
+        encoder: MinionEventEncoder | None = None,
+        seed: int | None = None,
+    ) -> LearningModule:
+        """Build a module whose ESN is configured by ``settings`` (ADR-0001).
+
+        The production construction path: the reservoir size, spectral radius,
+        input scale and leak rate all come from the learning settings slice.
+        ``ridge_lambda`` is carried by the slice and consumed by the training
+        flow that constructs readouts (#13).
+        """
+        resolved_encoder = encoder if encoder is not None else MinionEventEncoder()
+        esn = EchoStateNetwork(
+            Reservoir(
+                n_input=resolved_encoder.n_features,
+                n_reservoir=settings.reservoir_size,
+                alpha=settings.leak_rate,
+                spectral_radius=settings.spectral_radius,
+                input_scaling=settings.input_scale,
+                seed=seed,
+            )
+        )
+        return cls(event_bus, esn, encoder=resolved_encoder)
+
+    @property
+    def esn(self) -> EchoStateNetwork:
+        """The ESN this module drives; #13 registers readouts on it."""
+        return self._esn
 
     async def subscribe(self) -> None:
         """Subscribe to every minion event type (one subscription each).
