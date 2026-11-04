@@ -7,6 +7,8 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, call
 
+import pytest
+
 from cortex.llm.base import LLMClient
 from cortex.llm.models import ChatMessage, ChatResult, Role
 from cortex.memory.context_provider import ContextProvider
@@ -162,41 +164,20 @@ class TestValidatedStorage:
         assert result is validated
         assert result.validated is True
 
-
-class TestLegacyStorage:
-    async def test_no_derivation_service_stores_the_legacy_concept_unvalidated(self):
-        """Witness: build_concept's old path must keep working: the concept is stored and
-        returned even though validated=False, and no fact lookup happens."""
-        concept = Concept(symbolic_repr="concept.legacy", validated=False)
-        derivation = _derivation(concept=concept)
-        fact_repo = _fact_repo()
+    async def test_store_concept_without_service_raises(self):
+        """Witness: a provider without the derivation service cannot store anything; the
+        guard fires before the repository so no unvalidated concept reaches it."""
         concept_repo = _concept_repo()
-        stored = Concept(symbolic_repr="concept.legacy", validated=False)
-        concept_repo.store = AsyncMock(return_value=stored)
         provider = _provider(
-            fact_repo=fact_repo,
+            fact_repo=_fact_repo(),
             concept_repo=concept_repo,
             derivation_service=None,
         )
 
-        result = await provider.store_concept(derivation)
+        with pytest.raises(RuntimeError, match="derivation service"):
+            await provider.store_concept(_derivation())
 
-        fact_repo.get.assert_not_awaited()
-        concept_repo.store.assert_awaited_once_with(concept)
-        assert result is stored
-
-    async def test_no_derivation_service_and_no_repository_returns_the_concept(self):
-        """Witness: the legacy path returns the unvalidated concept without storage."""
-        concept = Concept(symbolic_repr="concept.legacy")
-        provider = _provider(
-            fact_repo=_fact_repo(),
-            concept_repo=None,
-            derivation_service=None,
-        )
-
-        result = await provider.store_concept(_derivation(concept=concept))
-
-        assert result is concept
+        concept_repo.store.assert_not_awaited()
 
 
 class TestRealValidationPipeline:

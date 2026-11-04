@@ -250,17 +250,15 @@ class ContextProvider:
     async def store_concept(self, derivation: ConceptDerivation) -> Concept | None:
         """Store a concept only after it passes the validation pipeline.
 
-        Without a derivation service this keeps the legacy behaviour and stores
-        ``derivation.concept`` as-is. With one, the active source facts are
-        loaded into the validator, the derivation is validated, and the concept
-        is written only when the outcome is valid. Rejected concepts are never
-        stored.
+        The active source facts are loaded into the validator, the derivation
+        is validated, and the concept is written only when the outcome is
+        valid. Rejected concepts are never stored. A provider constructed
+        without a derivation service refuses the call: there is no unvalidated
+        store path.
         """
         service = self._concept_derivation_service
         if service is None:
-            if self._concept_repo:
-                return await self._concept_repo.store(derivation.concept)
-            return derivation.concept
+            raise RuntimeError("concept derivation service is not configured")
 
         facts: list[Fact] = []
         for fact_id in derivation.source_fact_ids:

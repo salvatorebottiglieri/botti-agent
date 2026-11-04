@@ -19,6 +19,12 @@ unchanged.
 - **The validated entry point is a new `ContextProvider.store_concept(derivation: ConceptDerivation)`.**
   `build_concept` stays the legacy/manual builder (it cannot produce Datalog
   clauses); callers that have a proof chain use `store_concept`.
+- **`store_concept` requires the derivation service.** `ContextProvider` still
+  accepts `concept_derivation_service=None` so existing constructions keep
+  working, but `store_concept` raises
+  `RuntimeError("concept derivation service is not configured")` when it is
+  absent. There is no unvalidated store path; `build_concept` remains the only
+  legacy direct-store builder.
 - **The derivation carries its own sources.** `store_concept` fetches each
   `source_fact_ids` entry through the `FactRepository`, keeps only active
   facts, and loads them into the validation engine. Concepts are stored only
@@ -95,6 +101,7 @@ unchanged.
 +    EventBus.publish(BaseEvent)                        # external side effect
  ConceptValidationService.load_facts                    # NEW — delegates to LogicEngine
  ContextProvider.store_concept                          # NEW — validated entry point
++  raise RuntimeError(...)                              # service absent: no unvalidated store path
 +  FactRepository.get(fact_id)                          # active sources only
 +  ConceptDerivationService.load_facts
 +  ConceptDerivationService.derive_and_validate
@@ -117,7 +124,9 @@ unchanged.
  tests/validation
 +  test_event_emission.py   # NEW — validated/rejected payloads, no bus, publish failure
  tests/memory
-+  test_concept_validation.py   # NEW — store only valid, source loading, legacy path
++  test_concept_validation.py   # NEW — store only valid, source loading, missing service raises
+ tests/unit
+~  test_events.py          # MODIFIED — EventTypes concept constants
  docs/design
 +  concept-events.md        # this design
  docs/specs
@@ -168,6 +177,7 @@ class ContextProvider:
 
 ```
 ContextProvider.store_concept
+        ├── no derivation service ──► RuntimeError, nothing loaded or stored
         │  fetch active facts by id
         ▼
 ConceptDerivationService.load_facts ──► ConceptValidationService.load_facts ──► LogicEngine.load_facts
@@ -191,6 +201,7 @@ event's pre-storage `concept_id` (follow-up).
 
 | site | callee | returns | absent | raises | effect |
 |---|---|---|---|---|---|
+| `store_concept` | `self._concept_derivation_service` (own state) | `ConceptDerivationService` | `None` → raises before any fact lookup or store | `RuntimeError("concept derivation service is not configured")` | no facts loaded, nothing stored |
 | `store_concept` | `derivation_service.derive_and_validate` | `DerivationOutcome` | never — always returns | none — the derivation service catches LLM/validation errors | stores only on valid |
 | `store_concept` | `FactRepository.get` (external) | `Fact | None` | `None` = the fact was deleted, skipped | repository errors propagate (storage path) | reads |
 | `derive_and_validate` | `EventEmitter.emit` (external bus) | `None` | never — a failure is logged | publish errors are caught and logged; they do not change the outcome | emits an event |
@@ -214,7 +225,8 @@ event's pre-storage `concept_id` (follow-up).
     { "kind": "mod", "path": "src/cortex/main.py", "note": "wire the validation pipeline" },
     { "kind": "mod", "path": "src/cortex/events/types.py", "note": "concept.validated/concept.rejected constants" },
     { "kind": "add", "path": "tests/validation/test_event_emission.py", "note": "validated/rejected payloads, no bus, publish failure" },
-    { "kind": "add", "path": "tests/memory/test_concept_validation.py", "note": "store only valid, source loading, legacy path" },
+    { "kind": "add", "path": "tests/memory/test_concept_validation.py", "note": "store only valid, source loading, missing service raises" },
+    { "kind": "mod", "path": "tests/unit/test_events.py", "note": "EventTypes concept constants" },
     { "kind": "add", "path": "docs/design/concept-events.md", "note": "this design" },
     { "kind": "mod", "path": "docs/specs/architecture.md", "note": "module map, event table, composition, graph" }
   ],
@@ -247,6 +259,17 @@ event's pre-storage `concept_id` (follow-up).
     ]
   },
   "contracts": [
+    {
+      "site": "context_provider.store_concept",
+      "call": "raise RuntimeError(...) when self._concept_derivation_service is None",
+      "residual": "the guard runs before any FactRepository.get or ConceptRepository.store; an unconfigured provider cannot store an unvalidated concept",
+      "exits": [
+        { "kind": "returns", "type": "ConceptDerivationService", "handled_at": "src/cortex/memory/context_provider.py:store_concept" },
+        { "kind": "absent", "type": "None", "handled_at": "src/cortex/memory/context_provider.py:store_concept raises RuntimeError before any lookup or store" },
+        { "kind": "raises", "type": "RuntimeError", "handled_at": "src/cortex/memory/context_provider.py:store_concept" },
+        { "kind": "effect", "type": "nothing loaded or stored", "handled_at": null }
+      ]
+    },
     {
       "site": "context_provider.store_concept",
       "callee": "derivation_service.derive_and_validate",
