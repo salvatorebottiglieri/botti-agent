@@ -164,6 +164,11 @@ class TestRevisionLoop:
         assert validator.seen[1].proof_chain == ["location(user, home)", "commutes(user, home)"]
 
         llm.chat.assert_awaited_once()
+        messages: list[ChatMessage] = llm.chat.await_args.args[0]
+        assert messages[0].role == Role.SYSTEM
+        system = messages[0].content or ""
+        assert "strict JSON" in system
+        assert "proof_chain" in system
         prompt = _prompt_of(llm)
         assert "Your proposed concept was rejected by the logic validator." in prompt
         assert "User is at home" in prompt
@@ -291,13 +296,14 @@ class TestRevisionLoop:
 class TestOptionalFieldFallbacks:
     @pytest.mark.parametrize(
         ("raw", "expected"),
-        [(1.7, 1.0), (-0.3, 0.0)],
-        ids=["above-one", "below-zero"],
+        [(1.7, 1.0), (-0.3, 0.0), (float("nan"), 0.42)],
+        ids=["above-one", "below-zero", "non-finite"],
     )
     async def test_confidence_is_clamped_to_unit_interval(
         self, raw: float, expected: float
     ):
-        """Witness: 1.7 becomes 1.0 and -0.3 becomes 0.0; passthrough would keep the raw value."""
+        """Witness: 1.7 becomes 1.0, -0.3 becomes 0.0 and NaN falls back to 0.42;
+        passthrough or clamping alone would keep the raw value."""
         original = Concept(symbolic_repr="concept.original", confidence=0.42)
         validator = ScriptedValidationService(
             [ValidationResult(valid=False, suggested_fix="revise"), ValidationResult(valid=True)]
@@ -309,20 +315,6 @@ class TestOptionalFieldFallbacks:
 
         assert outcome.concept is not None
         assert outcome.concept.confidence == expected
-
-    async def test_non_finite_confidence_falls_back_to_the_original(self):
-        """Witness: NaN falls back to 0.42; float() passthrough or clamping alone keeps NaN."""
-        original = Concept(symbolic_repr="concept.original", confidence=0.42)
-        validator = ScriptedValidationService(
-            [ValidationResult(valid=False, suggested_fix="revise"), ValidationResult(valid=True)]
-        )
-        llm = _llm_returning(_revision(["new(user, x)"], confidence=float("nan")))
-        service = ConceptDerivationService(validator, llm)
-
-        outcome = await service.derive_and_validate(_derivation(concept=original))
-
-        assert outcome.concept is not None
-        assert outcome.concept.confidence == 0.42
 
     async def test_empty_optional_strings_fall_back_to_the_original(self):
         """Witness: "" is missing, so both strings stay the original; passthrough would blank them."""
@@ -343,25 +335,6 @@ class TestOptionalFieldFallbacks:
         assert outcome.concept is not None
         assert outcome.concept.symbolic_repr == "concept.original"
         assert outcome.concept.natural_lang_repr == "Original concept"
-
-
-class TestPromptContract:
-    async def test_system_message_pins_strict_json_and_proof_chain(self):
-        """Witness: the system turn names strict JSON and proof_chain; a prompt without the
-        contract cannot produce a parseable revision."""
-        validator = ScriptedValidationService(
-            [ValidationResult(valid=False, suggested_fix="revise"), ValidationResult(valid=True)]
-        )
-        llm = _llm_returning(_revision(["new(user, x)"]))
-        service = ConceptDerivationService(validator, llm)
-
-        await service.derive_and_validate(_derivation())
-
-        messages: list[ChatMessage] = llm.chat.await_args.args[0]
-        assert messages[0].role == Role.SYSTEM
-        system = messages[0].content or ""
-        assert "strict JSON" in system
-        assert "proof_chain" in system
 
 
 class TestExhaustion:
