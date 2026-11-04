@@ -9,11 +9,12 @@ from uuid import UUID
 from cortex.agentic.models import AmbientContext, MemoryContext, PersonalityContext
 from cortex.memory.fact_store import FactStore
 from cortex.memory.interfaces import ConceptRepository, FactRepository
-from cortex.memory.models import Concept, Fact, FactType
+from cortex.memory.models import Concept, ConceptDerivation, Fact, FactType
 
 if TYPE_CHECKING:
     from cortex.rules.models import Rule
     from cortex.rules.service import RuleService
+    from cortex.validation.derivation_service import ConceptDerivationService
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +32,13 @@ class ContextProvider:
         fact_store: FactStore,
         concept_repository: ConceptRepository | None = None,
         rule_service: RuleService | None = None,
+        concept_derivation_service: ConceptDerivationService | None = None,
     ):
         self._fact_repo = fact_repository
         self._fact_store = fact_store
         self._concept_repo = concept_repository
         self._rule_service = rule_service
+        self._concept_derivation_service = concept_derivation_service
 
         self._min_relevant_confidence = 0.4
 
@@ -243,6 +246,37 @@ class ContextProvider:
         return deleted
 
     # ─── Concept Management ───────────────────────────────────────────────
+
+    async def store_concept(self, derivation: ConceptDerivation) -> Concept | None:
+        """Store a concept only after it passes the validation pipeline.
+
+        Without a derivation service this keeps the legacy behaviour and stores
+        ``derivation.concept`` as-is. With one, the active source facts are
+        loaded into the validator, the derivation is validated, and the concept
+        is written only when the outcome is valid. Rejected concepts are never
+        stored.
+        """
+        service = self._concept_derivation_service
+        if service is None:
+            if self._concept_repo:
+                return await self._concept_repo.store(derivation.concept)
+            return derivation.concept
+
+        facts: list[Fact] = []
+        for fact_id in derivation.source_fact_ids:
+            fact = await self._fact_repo.get(fact_id)
+            if fact is not None and fact.is_active():
+                facts.append(fact)
+
+        service.load_facts(facts)
+        outcome = await service.derive_and_validate(derivation)
+        if outcome.status != "valid" or outcome.concept is None:
+            return None
+
+        concept = outcome.concept
+        if self._concept_repo:
+            concept = await self._concept_repo.store(concept)
+        return concept
 
     async def build_concept(
         self,
