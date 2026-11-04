@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import math
 import re
 import time
@@ -11,15 +10,14 @@ from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
-from cortex.events.base import BaseEvent
 from cortex.events.bus import EventBus
+from cortex.events.emitter import EventEmitter
+from cortex.events.types import EventTypes
 from cortex.llm.base import LLMClient
 from cortex.llm.models import ChatMessage, Role
 from cortex.memory.models import Concept, ConceptDerivation, Fact
 from cortex.validation.models import DerivationOutcome, ValidationResult
 from cortex.validation.service import ConceptValidationService
-
-logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "You revise concept derivations rejected by a symbolic logic validator.\n"
@@ -50,7 +48,7 @@ class ConceptDerivationService:
     ) -> None:
         self._validation_service = validation_service
         self._llm_client = llm_client
-        self._event_bus = event_bus
+        self._emitter = EventEmitter(event_bus, source_module="validation")
 
     def load_facts(self, facts: list[Fact]) -> None:
         """Replace the validator's loaded axioms with ``facts``."""
@@ -119,31 +117,20 @@ class ConceptDerivationService:
             concept = outcome.concept
             if concept is None:
                 return
-            await self._emit(
-                "concept.validated",
+            await self._emitter.emit(
+                EventTypes.CONCEPT_VALIDATED,
                 _validated_payload(concept, derivation.source_fact_ids, outcome.attempts),
             )
             return
 
-        await self._emit(
-            "concept.rejected",
+        await self._emitter.emit(
+            EventTypes.CONCEPT_REJECTED,
             _rejected_payload(
                 derivation,
                 outcome.rejection_reason,
                 outcome.attempts,
             ),
         )
-
-    async def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
-        """Publish one event, logging and swallowing failures (best effort)."""
-        if self._event_bus is None:
-            return
-        try:
-            await self._event_bus.publish(
-                BaseEvent.create(event_type, payload, source_module="validation")
-            )
-        except Exception as exc:  # observational only: the outcome stands
-            logger.warning(f"Failed to publish {event_type} event: {exc}")
 
 
 def _validated_payload(

@@ -26,6 +26,11 @@ unchanged.
 - **Events are emitted by `ConceptDerivationService`, not by `ContextProvider`.**
   The derivation service gains an optional `event_bus`; the memory layer does
   not know about event payloads. No bus → no emission.
+- **Emission precedes storage.** `derive_and_validate` emits the terminal event
+  before `store_concept` persists the concept, so `concept.validated` means
+  "validation passed", not "row persisted". The event carries the pre-storage
+  concept id, which may differ from the id the repository assigns on insert
+  (follow-up below).
 - **Event emission is best-effort.** A publish failure is logged and does not
   change the validation outcome; the events are observational, not a
   transactional part of storage.
@@ -70,14 +75,23 @@ unchanged.
 }
 ```
 
-`BaseEvent.create(event_type, payload, source_module="validation")`.
+`BaseEvent.create(event_type, payload, source_module="validation")` is owned by
+`EventEmitter(event_bus, source_module="validation")`.
+
+> **Validation-scoped, not storage-scoped.** Both events are emitted inside
+> `derive_and_validate`, before `ContextProvider.store_concept` calls
+> `ConceptRepository.store`. `concept.validated` therefore reports that the
+> concept passed validation; it does not prove the row was persisted. The
+> `concept_id` in the payload is the pre-storage, in-memory concept id; the
+> stored row may receive a different id. Aligning the event id with the stored
+> id is tracked as a follow-up (the parent opens the issue).
 
 ## Call-stack tree
 
 ```diff
  ConceptDerivationService.derive_and_validate           # MODIFIED — emit terminal events
-+  _emit("concept.validated", payload)                  # valid outcome
-+  _emit("concept.rejected", payload)                   # after the budget
++  _emitter.emit(EventTypes.CONCEPT_VALIDATED, payload) # valid outcome
++  _emitter.emit(EventTypes.CONCEPT_REJECTED, payload)  # after the budget
 +    EventBus.publish(BaseEvent)                        # external side effect
  ConceptValidationService.load_facts                    # NEW — delegates to LogicEngine
  ContextProvider.store_concept                          # NEW — validated entry point
@@ -91,19 +105,23 @@ unchanged.
 
 ```diff
  src/cortex/validation
-~  derivation_service.py   # MODIFIED — event_bus, _emit, validate/store outcomes
+~  derivation_service.py   # MODIFIED — EventEmitter, terminal events, validate/store outcomes
 ~  service.py              # MODIFIED — load_facts delegation
  ~  __init__.py             # unchanged exports (DerivationOutcome already public)
  src/cortex/memory
 ~  context_provider.py     # MODIFIED — optional derivation service + store_concept
  src/cortex
 ~  main.py                 # MODIFIED — wire LogicEngine/validation/derivation into ContextProvider
+ src/cortex/events
+~  types.py                # MODIFIED — concept.validated/concept.rejected constants
  tests/validation
 +  test_event_emission.py   # NEW — validated/rejected payloads, no bus, publish failure
  tests/memory
 +  test_concept_validation.py   # NEW — store only valid, source loading, legacy path
  docs/design
 +  concept-events.md        # this design
+ docs/specs
+~  architecture.md         # MODIFIED — module map, event table, composition, graph
 ```
 
 ## Type signatures
@@ -156,10 +174,18 @@ ConceptDerivationService.load_facts ──► ConceptValidationService.load_fact
         │
         ▼
 ConceptDerivationService.derive_and_validate
-        ├── valid ──► ConceptRepository.store(validated concept)
-        │             └── _emit("concept.validated", ...)
-        └── rejected ──► _emit("concept.rejected", ...) ──► return None
+        ├── valid ──► emit concept.validated ──► return valid outcome
+        └── rejected ──► emit concept.rejected ──► return rejected outcome
+        │
+        ▼
+ContextProvider.store_concept (after derive_and_validate returns)
+        ├── valid ──► ConceptRepository.store(concept)
+        └── rejected ──► return None, never stored
 ```
+
+`concept.validated` means "validation passed", not "row persisted": the event is
+already on the bus when storage runs, and the stored id may differ from the
+event's pre-storage `concept_id` (follow-up).
 
 ## Contracts
 
@@ -167,7 +193,7 @@ ConceptDerivationService.derive_and_validate
 |---|---|---|---|---|---|
 | `store_concept` | `derivation_service.derive_and_validate` | `DerivationOutcome` | never — always returns | none — the derivation service catches LLM/validation errors | stores only on valid |
 | `store_concept` | `FactRepository.get` (external) | `Fact | None` | `None` = the fact was deleted, skipped | repository errors propagate (storage path) | reads |
-| `derive_and_validate` | `EventBus.publish` (external) | `None` | never — a failure is logged | publish errors are caught and logged; they do not change the outcome | emits an event |
+| `derive_and_validate` | `EventEmitter.emit` (external bus) | `None` | never — a failure is logged | publish errors are caught and logged; they do not change the outcome | emits an event |
 
 ```json design
 {
@@ -182,13 +208,15 @@ ConceptDerivationService.derive_and_validate
     ]
   },
   "file_tree": [
-    { "kind": "mod", "path": "src/cortex/validation/derivation_service.py", "note": "event_bus, _emit, terminal events" },
+    { "kind": "mod", "path": "src/cortex/validation/derivation_service.py", "note": "EventEmitter, event types, terminal events" },
     { "kind": "mod", "path": "src/cortex/validation/service.py", "note": "load_facts delegation" },
     { "kind": "mod", "path": "src/cortex/memory/context_provider.py", "note": "optional derivation service + store_concept" },
     { "kind": "mod", "path": "src/cortex/main.py", "note": "wire the validation pipeline" },
+    { "kind": "mod", "path": "src/cortex/events/types.py", "note": "concept.validated/concept.rejected constants" },
     { "kind": "add", "path": "tests/validation/test_event_emission.py", "note": "validated/rejected payloads, no bus, publish failure" },
     { "kind": "add", "path": "tests/memory/test_concept_validation.py", "note": "store only valid, source loading, legacy path" },
-    { "kind": "add", "path": "docs/design/concept-events.md", "note": "this design" }
+    { "kind": "add", "path": "docs/design/concept-events.md", "note": "this design" },
+    { "kind": "mod", "path": "docs/specs/architecture.md", "note": "module map, event table, composition, graph" }
   ],
   "signatures": [
     {
@@ -241,12 +269,12 @@ ConceptDerivationService.derive_and_validate
     },
     {
       "site": "derivation_service.derive_and_validate",
-      "call": "await event_bus.publish(BaseEvent.create(...)) — external event bus",
+      "call": "await self._emitter.emit(...) — EventEmitter over the external event bus",
       "residual": "publish failures are caught and logged; the validation outcome is unchanged, and no bus means no emission",
       "exits": [
-        { "kind": "returns", "type": "None", "handled_at": "src/cortex/validation/derivation_service.py:_emit" },
+        { "kind": "returns", "type": "None", "handled_at": "src/cortex/validation/derivation_service.py:_emitter.emit" },
         { "kind": "absent", "type": "never", "handled_at": "a bus either publishes or raises" },
-        { "kind": "raises", "type": "Exception", "handled_at": "caught in _emit and logged; the outcome is unchanged" },
+        { "kind": "raises", "type": "Exception", "handled_at": "caught in EventEmitter.emit and logged; the outcome is unchanged" },
         { "kind": "effect", "type": "emits concept.validated or concept.rejected", "handled_at": null }
       ]
     }

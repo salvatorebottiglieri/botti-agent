@@ -184,6 +184,7 @@ Event types (`EventTypes`):
 | Sensor | `location`, `payment`, `activity`, `calendar`, `call_log`, `app_usage` |
 | Learning | `pattern.detected`, `preference.learned`, `recommendation.generated`, `recommendation.executed` |
 | Tools / goals | `tool.request`, `tool.result`, `goal.created`, `goal.status`, `goal.completed`, `goal.failed`, `goal.resumed` |
+| Validation | `concept.validated`, `concept.rejected` |
 | Lifecycle | `module.spawn`, `module.terminate` |
 | Wildcard | `*` |
 
@@ -214,7 +215,7 @@ Event types (`EventTypes`):
 |---|---|---|
 | Sessions | `src/cortex/sessions/` | `SessionRepository`; lifecycle free functions in `policy.py` (`create_session`, `resume_session`, `add_user_message`, `end_session`, `get_or_create_session`, ADR-0011) |
 | Memory | `src/cortex/memory/` | `FactStore` (CRUD + dedup), `ContextProvider` (bundle seam, personality/ambient), `FactExtractor` (ingestion); split from `MemoryService` per ADR-0003 |
-| Validation | `src/cortex/validation/` | LogicEngine (strict Datalog parser + PyDatalog), ConceptValidationService (ADR-0007) and ConceptDerivationService (LLM revision loop, #28) |
+| Validation | `src/cortex/validation/` | LogicEngine (strict Datalog parser + PyDatalog), ConceptValidationService (ADR-0007) and ConceptDerivationService (LLM revision loop, `concept.validated`/`concept.rejected` events, #28/#29); `ContextProvider.store_concept` stores only validated concepts |
 | Goals | `src/cortex/goals/` | `GoalRepository`, persistent/resumable goals (ADR-0004) |
 | Minions | `src/cortex/minions/` | `MinionGateway`, `MinionRegistry`, `MinionEventHandler`; `MinionMQTTClient`. See [minion-protocol.md](minion-protocol.md) |
 | Trace | `src/cortex/trace/` | `TraceRepository`, `TraceRecorder`, `Pseudonymizer`, `audit`. See [trace-system.md](trace-system.md) |
@@ -303,6 +304,7 @@ flowchart TB
     Mem --> DB
     Mem --> Events
     Val --> Mem
+    Val --> Events
     Sess --> DB
     Goals --> DB
     Min --> Events
@@ -323,10 +325,13 @@ flowchart TB
 ## Composition root
 
 `initialize_app()` in `src/cortex/main.py` applies migrations, then wires in order:
-sessions → goals → trace → memory → rules → LLM factory → tool registry →
-`ToolExecutorService` → `ContextBuilder`/`Reasoner`/`LoopExecutor`/`AgentLoop` →
-`ExecutionModule` → `InteractionService` → optional `MinionService`. Repositories
-and services are injected; the agentic core constructs nothing itself.
+sessions → goals → trace → memory → rules → LLM factory → validation pipeline
+(`LogicEngine` → `ConceptValidationService` → `ConceptDerivationService`) →
+tool registry → `ToolExecutorService` → `ContextBuilder`/`Reasoner`/`LoopExecutor`/`AgentLoop`
+→ `ExecutionModule` → `InteractionService` → optional `MinionService`. The
+`ContextProvider` receives the `ConceptDerivationService` (validated concept
+storage). Repositories and services are injected; the agentic core constructs
+nothing itself.
 
 ## Persistence
 

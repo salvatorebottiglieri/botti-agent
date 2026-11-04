@@ -124,7 +124,7 @@ class TestValidatedStorage:
         service = _derivation_service(
             DerivationOutcome(
                 status="rejected",
-                concept=None,
+                concept=Concept(symbolic_repr="concept.rejected"),
                 rejection_reason="conflict with location.home",
                 attempts=3,
             )
