@@ -82,14 +82,14 @@ The current code has no `src/cortex/validation/` package, no
 +    _required_values (ground body atoms on functional predicates)
 +    _reset_engine
 +      pyDatalog.clear
-+      pyDatalog.load (facts)
-+    pyDatalog.load (rules)
++      pyParser.load (facts)
++    pyParser.load (rules)
 +    pyDatalog.ask (conclusion)
 +    _find_conflicts (structural, over the fact index)
 +  ValidationResult(valid, conflicting_facts, suggested_fix)
  LogicEngine.load_facts                               # NEW
 +  pyDatalog.clear
-+  pyDatalog.load (one atom per active fact)
++  pyParser.load (one atom per active fact)
 ```
 
 ## File-tree diff
@@ -151,10 +151,10 @@ class ConceptValidationService:
 ConceptValidationService.validate
         │
         ▼
-LogicEngine.validate_derivation ──► pyDatalog.load / pyDatalog.ask   (external)
+LogicEngine.validate_derivation ──► pyParser.load / pyDatalog.ask   (external)
         ▲
         │ stored active facts
-LogicEngine.load_facts ───────────► pyDatalog.clear / pyDatalog.load (external)
+LogicEngine.load_facts ───────────► pyDatalog.clear / pyParser.load (external)
 ```
 
 ## Contracts

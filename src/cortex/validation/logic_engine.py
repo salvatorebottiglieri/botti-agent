@@ -216,10 +216,8 @@ def _is_unsafe_predicate(predicate: str) -> bool:
 def _sanitize_predicate(predicate: object) -> str:
     """Coerce a fact predicate into the character set PyDatalog transports safely."""
     sanitized = _PREDICATE_SANITIZE_RE.sub("_", str(predicate).lower())
-    if not sanitized:
-        return ""
-    if not sanitized[0].isalpha():
-        return f"p_{sanitized}"
+    if sanitized and not sanitized[0].isalpha():
+        sanitized = f"p_{sanitized}"
     return sanitized
 
 
@@ -276,8 +274,9 @@ class LogicEngine:
                     conflicting_facts=conflicting_facts,
                     suggested_fix=(
                         f"Conflict with loaded fact(s) for functional predicate(s) "
-                        f"{predicates}: the derivation requires a different value. "
-                        "Retract the conflicting facts or revise the proof chain."
+                        f"{predicates}: the loaded facts are mutually exclusive or "
+                        "contradict the derivation. Retract the conflicting facts or "
+                        "revise the proof chain."
                     ),
                 )
 
@@ -344,23 +343,15 @@ class LogicEngine:
     ) -> list[tuple[Fact, str]]:
         """Return loaded facts that contradict the proof, structurally."""
         conflicts: list[tuple[Fact, str]] = []
-        for predicate, values in self._by_predicate.items():
+        for fact, predicate, value in self._facts:
             if predicate not in FUNCTIONAL_PREDICATES:
                 continue
-            if len(values) > 1:
-                conflicts.extend(
-                    (fact, predicate)
-                    for fact, fact_predicate, _ in self._facts
-                    if fact_predicate == predicate
-                )
+            if len(self._by_predicate[predicate]) > 1:
+                conflicts.append((fact, predicate))
                 continue
             required_values = required.get(predicate)
-            if required_values:
-                conflicts.extend(
-                    (fact, predicate)
-                    for fact, fact_predicate, value in self._facts
-                    if fact_predicate == predicate and value not in required_values
-                )
+            if required_values and value not in required_values:
+                conflicts.append((fact, predicate))
         return conflicts
 
     def _reset_engine(self) -> None:
