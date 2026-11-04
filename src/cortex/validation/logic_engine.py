@@ -25,27 +25,14 @@ FUNCTIONAL_PREDICATES: frozenset[str] = frozenset({"location", "activity"})
 _MAX_CLAUSES: Final = 20
 _MAX_CLAUSE_LENGTH: Final = 500
 _SUBJECT: Final = "user"
-_PREDICATE_DENYLIST: Final = frozenset(
-    {
-        "import",
-        "exec",
-        "eval",
-        "lambda",
-        "open",
-        "compile",
-        "globals",
-        "locals",
-    }
-)
 # ``exit``/``quit`` raise SystemExit from the Python builtins that
 # ``pyParser.load`` leaves callable; the grammar must reject them too.
-_UNSAFE_PREDICATES: Final = _PREDICATE_DENYLIST | frozenset({"exit", "quit"})
+_UNSAFE_PREDICATES: Final = frozenset({"exit", "quit"})
 
 _PREDICATE_RE = re.compile(r"[a-z_][a-zA-Z0-9_]*")
 _VARIABLE_RE = re.compile(r"[A-Z][a-zA-Z0-9_]*")
 _BARE_CONSTANT_RE = re.compile(r"[a-z][a-zA-Z0-9_]*")
 _NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
-_IDENTIFIER_RE = re.compile(r"[A-Za-z_][a-zA-Z0-9_]*")
 _PREDICATE_SANITIZE_RE = re.compile(r"[^a-z0-9_]")
 _VALUE_SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_.-]")
 
@@ -64,11 +51,6 @@ class _Term:
     serialized: str
     ground_value: str | None
 
-    @property
-    def is_variable(self) -> bool:
-        """Whether the term is a variable rather than a constant."""
-        return self.ground_value is None
-
 
 @dataclass(frozen=True)
 class _Atom:
@@ -80,12 +62,6 @@ class _Atom:
     def to_datalog(self) -> str:
         """Serialise the atom in PyDatalog syntax."""
         return f"{self.predicate}({','.join(term.serialized for term in self.arguments)})"
-
-    def ground_argument(self, index: int) -> str | None:
-        """Return the sanitised constant at ``index``, or None if not ground."""
-        if index >= len(self.arguments):
-            return None
-        return self.arguments[index].ground_value
 
 
 @dataclass(frozen=True)
@@ -123,11 +99,7 @@ class _ClauseParser:
             raise _ProofError(f"unexpected input at position {self._pos}")
 
         body = [self._parse_atom()]
-        while True:
-            self._skip_whitespace()
-            if not self._text.startswith("&", self._pos):
-                break
-            self._pos += 1
+        while self._accept("&"):
             body.append(self._parse_atom())
 
         self._skip_whitespace()
@@ -137,13 +109,11 @@ class _ClauseParser:
 
     def _parse_atom(self) -> _Atom:
         self._skip_whitespace()
-        match = _IDENTIFIER_RE.match(self._text, self._pos)
+        match = _PREDICATE_RE.match(self._text, self._pos)
         if match is None:
             raise _ProofError(f"expected a predicate at position {self._pos}")
         predicate = match.group(0)
         self._pos = match.end()
-        if not _PREDICATE_RE.fullmatch(predicate):
-            raise _ProofError(f"invalid predicate {predicate!r}")
         if _is_unsafe_predicate(predicate):
             raise _ProofError(f"predicate {predicate!r} is not allowed")
 
@@ -202,15 +172,15 @@ class _ClauseParser:
         return _Term(f"'{sanitized}'", sanitized)
 
     def _parse_identifier_argument(self) -> _Term:
-        match = _IDENTIFIER_RE.match(self._text, self._pos)
-        assert match is not None
-        identifier = match.group(0)
-        self._pos = match.end()
-        if _VARIABLE_RE.fullmatch(identifier):
-            return _Term(identifier, None)
-        if _BARE_CONSTANT_RE.fullmatch(identifier):
-            return _Term(identifier, _sanitize_value(identifier))
-        raise _ProofError(f"invalid constant or variable {identifier!r}")
+        variable = _VARIABLE_RE.match(self._text, self._pos)
+        if variable is not None:
+            self._pos = variable.end()
+            return _Term(variable.group(0), None)
+        constant = _BARE_CONSTANT_RE.match(self._text, self._pos)
+        if constant is not None:
+            self._pos = constant.end()
+            return _Term(constant.group(0), _sanitize_value(constant.group(0)))
+        raise _ProofError(f"invalid constant or variable at position {self._pos}")
 
     def _expect(self, token: str) -> None:
         self._skip_whitespace()
@@ -255,10 +225,7 @@ def _sanitize_predicate(predicate: object) -> str:
 
 def _sanitize_value(value: object) -> str:
     """Coerce a fact value into the character set PyDatalog transports safely."""
-    raw = str(value).strip()
-    if not raw:
-        return ""
-    return _VALUE_SANITIZE_RE.sub("_", raw)
+    return _VALUE_SANITIZE_RE.sub("_", str(value).strip())
 
 
 class LogicEngine:
@@ -266,7 +233,7 @@ class LogicEngine:
 
     def __init__(self) -> None:
         self._facts: list[tuple[Fact, str, str]] = []
-        self._by_predicate: dict[str, dict[str, list[Fact]]] = {}
+        self._by_predicate: dict[str, set[str]] = {}
 
     def load_facts(self, facts: list[Fact]) -> None:
         """Replace the loaded axioms with the active facts in ``facts``."""
@@ -281,7 +248,7 @@ class LogicEngine:
                     continue
                 predicate, value = atom
                 self._facts.append((fact, predicate, value))
-                self._by_predicate.setdefault(predicate, {}).setdefault(value, []).append(fact)
+                self._by_predicate.setdefault(predicate, set()).add(value)
             self._reset_engine()
 
     def validate_derivation(self, derivation: ConceptDerivation) -> ValidationResult:
@@ -289,25 +256,11 @@ class LogicEngine:
         with _ENGINE_LOCK:
             try:
                 clauses = self._parse_proof(derivation.proof_chain)
-            except _ProofError as exc:
-                return ValidationResult(valid=False, suggested_fix=f"Invalid proof chain: {exc}")
-            except Exception as exc:  # validation must never crash
-                return ValidationResult(valid=False, suggested_fix=f"Invalid proof chain: {exc}")
-
-            required = self._required_values(clauses)
-            try:
+                required = self._required_values(clauses)
                 self._reset_engine()
                 self._load_supporting_clauses(clauses[:-1])
                 answer = self._ask(clauses[-1].head)
-            except SyntaxError as exc:
-                return ValidationResult(
-                    valid=False, suggested_fix=f"Invalid proof chain: {exc}"
-                )
-            except DatalogError as exc:
-                return ValidationResult(
-                    valid=False, suggested_fix=f"Invalid proof chain: {exc}"
-                )
-            except SystemExit as exc:  # a builtin in a rule body must not exit the process
+            except (_ProofError, SyntaxError, DatalogError, SystemExit) as exc:
                 return ValidationResult(
                     valid=False, suggested_fix=f"Invalid proof chain: {exc}"
                 )
@@ -364,7 +317,7 @@ class LogicEngine:
         conclusion = clauses[-1]
         if conclusion.body:
             raise _ProofError("the conclusion must be a fact, not a rule")
-        if any(term.is_variable for term in conclusion.head.arguments):
+        if any(term.ground_value is None for term in conclusion.head.arguments):
             raise _ProofError("the conclusion must be ground")
         return clauses
 
@@ -379,9 +332,9 @@ class LogicEngine:
 
     @staticmethod
     def _collect_required(atom: _Atom, required: dict[str, set[str]]) -> None:
-        if atom.predicate not in FUNCTIONAL_PREDICATES:
+        if atom.predicate not in FUNCTIONAL_PREDICATES or len(atom.arguments) < 2:
             return
-        value = atom.ground_argument(1)
+        value = atom.arguments[1].ground_value
         if value is None:
             return
         required.setdefault(atom.predicate, set()).add(value)
@@ -391,8 +344,15 @@ class LogicEngine:
     ) -> list[tuple[Fact, str]]:
         """Return loaded facts that contradict the proof, structurally."""
         conflicts: list[tuple[Fact, str]] = []
-        for predicate, values_by_value in self._by_predicate.items():
+        for predicate, values in self._by_predicate.items():
             if predicate not in FUNCTIONAL_PREDICATES:
+                continue
+            if len(values) > 1:
+                conflicts.extend(
+                    (fact, predicate)
+                    for fact, fact_predicate, _ in self._facts
+                    if fact_predicate == predicate
+                )
                 continue
             required_values = required.get(predicate)
             if required_values:
@@ -401,22 +361,13 @@ class LogicEngine:
                     for fact, fact_predicate, value in self._facts
                     if fact_predicate == predicate and value not in required_values
                 )
-            elif len(values_by_value) > 1:
-                conflicts.extend(
-                    (fact, predicate)
-                    for fact, fact_predicate, _ in self._facts
-                    if fact_predicate == predicate
-                )
         return conflicts
 
     def _reset_engine(self) -> None:
         """Clear the process-global engine and re-assert the stored facts."""
         pyDatalog.clear()
         for _, predicate, value in self._facts:
-            self._assert_fact(predicate, value)
-
-    def _assert_fact(self, predicate: str, value: str) -> None:
-        self._assert_atom(f"{predicate}('{_SUBJECT}','{value}')")
+            self._assert_atom(f"{predicate}('{_SUBJECT}','{value}')")
 
     def _load_supporting_clauses(self, clauses: list[_Clause]) -> None:
         for clause in clauses:

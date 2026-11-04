@@ -60,10 +60,9 @@ The current code has no `src/cortex/validation/` package, no
   normalised to PyDatalog's `<=`. This is the minimal convention that makes
   "does the conclusion follow?" a single `ask`.
 - **Conflict model.** For each functional predicate with loaded facts:
-  - if the proof grounds a value, every loaded fact with a different value is
-    conflicting;
-  - if the proof grounds no value and the facts have more than one distinct
-    value, all those facts are conflicting.
+  - more than one distinct fact value for a functional predicate is a cross-fact
+    contradiction; every loaded fact for that predicate is conflicting;
+  - a single fact value conflicts only when the proof grounds a different value.
   Non-functional predicates may legitimately have several values (two payments,
   two preferences) and never conflict.
 - **`load_facts` replaces the loaded set.** It stores the active facts and
@@ -79,7 +78,7 @@ The current code has no `src/cortex/validation/` package, no
 ```diff
  ConceptValidationService.validate                    # NEW — pure delegation seam
 +  LogicEngine.validate_derivation
-+    _parse_clause (strict Datalog grammar, injection guard)
++    _ClauseParser.parse / _parse_proof (strict Datalog grammar, injection guard)
 +    _required_values (ground body atoms on functional predicates)
 +    _reset_engine
 +      pyDatalog.clear
@@ -163,7 +162,7 @@ LogicEngine.load_facts ───────────► pyDatalog.clear / py
 | site | callee | returns | absent | raises | effect |
 |---|---|---|---|---|---|
 | `service.validate` | `logic_engine.validate_derivation` | `ValidationResult` | never — delegation always returns | none — engine catches parser/PyDatalog errors | none |
-| `logic_engine.load_facts` | `pyDatalog.load` (external) | `None` | never — a fact either yields an atom or is skipped | `DatalogError` — residual: the atom is generated from sanitised values, never raw user text | resets the process-global engine |
+| `logic_engine.load_facts` | `pyParser.load(atom, newglobals={})` (external) | `None` | never — a fact either yields an atom or is skipped | `DatalogError` — residual: the atom is generated from sanitised values, never raw user text | resets the process-global engine |
 | `logic_engine.validate_derivation` | `pyDatalog.ask` (external) | `Answer | None`; `ValidationResult` externally | `None` = not derivable, handled as invalid | `AttributeError` for an undefined predicate is caught and treated as no answer; other exceptions are caught and returned as invalid | mutates the global engine |
 
 ```json design
@@ -176,7 +175,7 @@ LogicEngine.load_facts ───────────► pyDatalog.clear / py
         "name": "LogicEngine.validate_derivation",
         "note": "parse the proof, reset the engine, load rules, ask the conclusion, find conflicts",
         "children": [
-          { "name": "_parse_clause", "note": "strict Datalog grammar; rejects anything PyDatalog would exec as Python" },
+          { "name": "_ClauseParser.parse / _parse_proof", "note": "strict Datalog grammar; rejects anything PyDatalog would exec as Python" },
           { "name": "_required_values", "note": "ground body atoms on functional predicates" },
           { "name": "_reset_engine", "note": "clear + re-assert the stored active facts" },
           { "name": "_find_conflicts", "note": "structural over the value -> Fact index" }

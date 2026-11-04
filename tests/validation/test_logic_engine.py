@@ -92,6 +92,14 @@ class TestFactsAsAxioms:
 
         assert result.valid is True
 
+    def test_payload_activity_is_a_fallback_for_value(self):
+        """Witness: empty symbolic_repr + payload activity=working -> activity(user, working)."""
+        fact = make_fact(FactType.ACTIVITY, payload={"activity": "working"})
+
+        result = load_and_validate([fact], ["activity(user, working)"])
+
+        assert result.valid is True
+
     def test_natural_language_is_the_last_fallback_for_value(self):
         """Witness: empty symbolic_repr/payload, natural language 'home' -> home."""
         fact = make_fact(FactType.LOCATION, natural_lang_repr="home")
@@ -116,11 +124,20 @@ class TestFactsAsAxioms:
 
         assert result.valid is True
 
-    def test_fact_without_any_value_is_skipped(self):
-        """Witness: a CUSTOM fact with no content cannot support custom(user, x)."""
+    @pytest.mark.parametrize(
+        "proof_chain",
+        [["custom(user, anything)"], ["custom(user, '')"]],
+        ids=["no-matching-value", "would-match-a-loaded-empty-constant"],
+    )
+    def test_fact_without_any_value_is_skipped(self, proof_chain):
+        """Witness: a CUSTOM fact with no content cannot support a conclusion.
+
+        The quoted empty constant discriminates a mutant that loads the empty
+        fact as custom('user','').
+        """
         fact = make_fact(FactType.CUSTOM)
 
-        result = load_and_validate([fact], ["custom(user, anything)"])
+        result = load_and_validate([fact], proof_chain)
 
         assert result.valid is False
         assert result.conflicting_facts == []
@@ -208,14 +225,21 @@ class TestConflicts:
         assert result.valid is False
         assert result.conflicting_facts == [home, office]
 
-    def test_conflict_wins_over_an_unanswerable_conclusion(self):
-        """Witness: office conclusion is not derivable, yet home is still reported."""
+    def test_two_functional_values_contradict_even_when_the_proof_names_both(self):
+        """Witness: loaded home+office are a cross-fact contradiction regardless of the proof."""
         home = make_fact(FactType.LOCATION, "location.home")
+        office = make_fact(FactType.LOCATION, "location.office")
 
-        result = load_and_validate([home], ["location(user, office)"])
+        result = load_and_validate(
+            [home, office],
+            [
+                "at_office(X) :- location(X, home) & location(X, office)",
+                "at_office(user)",
+            ],
+        )
 
         assert result.valid is False
-        assert result.conflicting_facts == [home]
+        assert result.conflicting_facts == [home, office]
 
 
 class TestUnsupportedDerivations:
