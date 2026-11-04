@@ -131,7 +131,7 @@ from_settings ──► Reservoir.__init__
 
 | site | callee | returns | absent | raises | effect |
 |---|---|---|---|---|---|
-| `from_settings` | `Reservoir.__init__` | `None` | never — both objects are always constructed | `ValueError` on a negative `n_input` (numpy rejects it); `n_input=0` is accepted but impossible here because `encoder.n_features >= 9` | allocates a new reservoir |
+| `from_settings` | `Reservoir.__init__` | `None` | never — both objects are always constructed | `ValueError` on a negative `n_input` (numpy rejects it); `n_input=0` is accepted but impossible here because `encoder.n_features >= 8` | allocates a new reservoir |
 | `from_settings` | `EchoStateNetwork.__init__` | `None` | never — `Reservoir` is passed positionally | none — plain attribute assignment | wraps the reservoir |
 | `from_settings` | `LearningModule.__init__` | `LearningModule` | never — the only branch returns the module | `ValueError` on encoder/reservoir mismatch; impossible here, both come from the same encoder | stores bus, ESN, encoder |
 
@@ -194,7 +194,7 @@ from_settings ──► Reservoir.__init__
       "exits": [
         { "kind": "returns", "type": "None", "handled_at": "src/cortex/learning/module.py:from_settings" },
         { "kind": "absent", "type": "never", "handled_at": "both objects are always constructed; no optional branch" },
-        { "kind": "raises", "type": "ValueError", "handled_at": "impossible: numpy rejects a negative n_input; n_input = encoder.n_features >= 9" },
+        { "kind": "raises", "type": "ValueError", "handled_at": "impossible: numpy rejects a negative n_input; n_input = encoder.n_features >= 8" },
         { "kind": "effect", "type": "allocates a new Reservoir", "handled_at": null }
       ]
     },
