@@ -18,7 +18,7 @@ class Reservoir:
         n_reservoir: int = 500,
         *,
         alpha: float = 0.3,
-        spectral_radius: float = 1.0,
+        spectral_radius: float = 0.9,
         input_scaling: float = 1.0,
         seed: int | None = None,
     ) -> None:

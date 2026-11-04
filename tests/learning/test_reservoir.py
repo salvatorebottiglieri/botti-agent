@@ -33,9 +33,9 @@ class TestReservoirSpectralRadius:
     def _spectral_radius(self, res):
         return float(np.max(np.abs(np.linalg.eigvals(res.W))))
 
-    def test_default_spectral_radius(self):
+    def test_default_spectral_radius_matches_adr_0001(self):
         res = Reservoir(n_input=2, n_reservoir=100, seed=11)
-        assert np.isclose(self._spectral_radius(res), 1.0, rtol=1e-6)
+        assert np.isclose(self._spectral_radius(res), 0.9, rtol=1e-6)
 
     def test_non_default_spectral_radius(self):
         res = Reservoir(n_input=2, n_reservoir=100, spectral_radius=0.7, seed=11)

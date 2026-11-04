@@ -386,15 +386,17 @@ class TestAmbientEnvGuard:
         assert root_field_names <= SETTINGS_ENV_NAMES
 
 
-class TestLearningSettingsStub:
-    """#35 ships the stub only; wiring the ESN onto it is #12."""
+class TestLearningSettings:
+    """#12 wires the ESN hyperparameters through the slice (ADR-0001)."""
 
     def test_defaults_match_adr_0001(self) -> None:
         learning = LearningSettings(_env_file=None)
 
         assert learning.reservoir_size == 500
         assert learning.spectral_radius == 0.9
+        assert learning.input_scale == 1.0
         assert learning.leak_rate == 0.3
+        assert learning.ridge_lambda == 1e-6
 
     def test_reachable_from_root(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         monkeypatch.chdir(tmp_path)
@@ -411,12 +413,20 @@ class TestLearningSettingsStub:
         aliases were restricted to avoid.
         """
         monkeypatch.setenv("LEARNING_RESERVOIR_SIZE", "128")
+        monkeypatch.setenv("LEARNING_SPECTRAL_RADIUS", "0.5")
+        monkeypatch.setenv("LEARNING_INPUT_SCALE", "0.25")
+        monkeypatch.setenv("LEARNING_LEAK_RATE", "0.75")
+        monkeypatch.setenv("LEARNING_RIDGE_LAMBDA", "0.001")
         monkeypatch.setenv("RESERVOIR_SIZE", "999")
 
         learning = LearningSettings(_env_file=None)
 
         assert learning.reservoir_size == 128
         assert learning.reservoir_size != 999
+        assert learning.spectral_radius == 0.5
+        assert learning.input_scale == 0.25
+        assert learning.leak_rate == 0.75
+        assert learning.ridge_lambda == 0.001
 
 
 class TestImportGraph:
