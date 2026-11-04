@@ -109,6 +109,7 @@ The current code has no `src/cortex/validation/` package, no
 +    test_service.py        # NEW — delegation contract
  pyproject.toml         # MODIFIED — pydatalog dependency
  uv.lock                # MODIFIED — resolved lock
+ .github/workflows/ci.yml  # MODIFIED — run tests/validation in the test and coverage jobs
 ```
 
 ## Type signatures
@@ -193,7 +194,8 @@ LogicEngine.load_facts ───────────► pyDatalog.clear / py
     { "kind": "add", "path": "tests/validation/test_logic_engine.py", "note": "valid, contradiction, unsupported, malformed, injection" },
     { "kind": "add", "path": "tests/validation/test_service.py", "note": "delegation contract" },
     { "kind": "mod", "path": "pyproject.toml", "note": "pydatalog dependency + mypy override" },
-    { "kind": "mod", "path": "uv.lock", "note": "resolved lock" }
+    { "kind": "mod", "path": "uv.lock", "note": "resolved lock" },
+    { "kind": "mod", "path": ".github/workflows/ci.yml", "note": "run tests/validation in the test and coverage jobs" }
   ],
   "signatures": [
     {
