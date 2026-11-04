@@ -5,12 +5,17 @@ from __future__ import annotations
 import json
 import math
 import re
+import time
 from dataclasses import replace
 from typing import Any
+from uuid import UUID
 
+from cortex.events.bus import EventBus
+from cortex.events.emitter import EventEmitter
+from cortex.events.types import EventTypes
 from cortex.llm.base import LLMClient
 from cortex.llm.models import ChatMessage, Role
-from cortex.memory.models import Concept, ConceptDerivation
+from cortex.memory.models import Concept, ConceptDerivation, Fact
 from cortex.validation.models import DerivationOutcome, ValidationResult
 from cortex.validation.service import ConceptValidationService
 
@@ -39,9 +44,15 @@ class ConceptDerivationService:
         self,
         validation_service: ConceptValidationService,
         llm_client: LLMClient,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._validation_service = validation_service
         self._llm_client = llm_client
+        self._emitter = EventEmitter(event_bus, source_module="validation")
+
+    def load_facts(self, facts: list[Fact]) -> None:
+        """Replace the validator's loaded axioms with ``facts``."""
+        self._validation_service.load_facts(facts)
 
     async def derive_and_validate(
         self,
@@ -59,7 +70,9 @@ class ConceptDerivationService:
 
         result = self._validation_service.validate(proposed_derivation)
         if result.valid:
-            return _valid_outcome(proposed_derivation.concept, attempts=0)
+            outcome = _valid_outcome(proposed_derivation.concept, attempts=0)
+            await self._emit_outcome(outcome, proposed_derivation)
+            return outcome
 
         attempts = 0
         last_result = result
@@ -81,14 +94,82 @@ class ConceptDerivationService:
             last_error = None
             last_result = self._validation_service.validate(revised)
             if last_result.valid:
-                return _valid_outcome(revised.concept, attempts=attempt)
+                outcome = _valid_outcome(revised.concept, attempts=attempt)
+                await self._emit_outcome(outcome, revised)
+                return outcome
 
-        return DerivationOutcome(
+        outcome = DerivationOutcome(
             status="rejected",
             concept=None,
             rejection_reason=_rejection_reason(last_result, attempts, last_error),
             attempts=attempts,
         )
+        await self._emit_outcome(outcome, current_derivation)
+        return outcome
+
+    async def _emit_outcome(
+        self,
+        outcome: DerivationOutcome,
+        derivation: ConceptDerivation,
+    ) -> None:
+        """Emit the terminal event for ``outcome``; never changes the outcome."""
+        if outcome.status == "valid":
+            concept = outcome.concept
+            if concept is None:
+                return
+            await self._emitter.emit(
+                EventTypes.CONCEPT_VALIDATED,
+                _validated_payload(concept, derivation.source_fact_ids, outcome.attempts),
+            )
+            return
+
+        await self._emitter.emit(
+            EventTypes.CONCEPT_REJECTED,
+            _rejected_payload(
+                derivation,
+                outcome.rejection_reason,
+                outcome.attempts,
+            ),
+        )
+
+
+def _validated_payload(
+    concept: Concept,
+    source_fact_ids: list[UUID],
+    attempts: int,
+) -> dict[str, Any]:
+    """Build the ``concept.validated`` payload."""
+    return {
+        "concept_id": str(concept.id),
+        "symbolic_repr": concept.symbolic_repr,
+        "natural_lang_repr": concept.natural_lang_repr,
+        "confidence": concept.confidence,
+        "source_facts": _source_fact_strings(source_fact_ids),
+        "attempts": attempts,
+        "timestamp": time.time(),
+    }
+
+
+def _rejected_payload(
+    derivation: ConceptDerivation,
+    rejection_reason: str | None,
+    attempts: int,
+) -> dict[str, Any]:
+    """Build the ``concept.rejected`` payload from the last attempted concept."""
+    concept = derivation.concept
+    return {
+        "concept_id": str(concept.id),
+        "symbolic_repr": concept.symbolic_repr,
+        "rejection_reason": rejection_reason or "concept rejected",
+        "source_facts": _source_fact_strings(derivation.source_fact_ids),
+        "attempts": attempts,
+        "timestamp": time.time(),
+    }
+
+
+def _source_fact_strings(source_fact_ids: list[UUID]) -> list[str]:
+    """Serialise source fact ids for the JSON event payload."""
+    return [str(fact_id) for fact_id in source_fact_ids]
 
 
 def _valid_outcome(concept: Concept, attempts: int) -> DerivationOutcome:

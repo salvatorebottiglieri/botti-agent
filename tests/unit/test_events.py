@@ -252,6 +252,8 @@ class TestBaseEvent:
         assert EventTypes.USER_MESSAGE == "user.message"
         assert EventTypes.GOAL_CREATED == "goal.created"
         assert EventTypes.LOCATION == "location"
+        assert EventTypes.CONCEPT_VALIDATED == "concept.validated"
+        assert EventTypes.CONCEPT_REJECTED == "concept.rejected"
 
 
 class TestSubscription:

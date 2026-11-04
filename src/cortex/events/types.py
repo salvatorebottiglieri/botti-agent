@@ -34,6 +34,10 @@ class EventTypes(StrEnum):
     GOAL_FAILED = "goal.failed"
     GOAL_RESUMED = "goal.resumed"
 
+    # ─── Validation ───────────────────────────────────────────
+    CONCEPT_VALIDATED = "concept.validated"
+    CONCEPT_REJECTED = "concept.rejected"
+
     # ─── Orchestration ────────────────────────────────────────
     MODULE_SPAWN = "module.spawn"
     MODULE_TERMINATE = "module.terminate"

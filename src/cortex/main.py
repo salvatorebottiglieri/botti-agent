@@ -46,6 +46,7 @@ class CortexApp:
     rule_service: Any = field(default=None)
     minion_service: Any = field(default=None)
     llm_client: Any = field(default=None)
+    concept_derivation_service: Any = field(default=None)
 
     async def shutdown(self) -> None:
         """Shutdown all components in reverse order."""
@@ -197,6 +198,19 @@ async def initialize_app() -> CortexApp:
     from cortex.memory.fact_extractor import FactExtractor
     memory_extractor = FactExtractor(llm_client=cortex.llm_client)
 
+    # 5d''. Wire the concept validation pipeline (issue #29): the validator
+    # loads source facts, the derivation service owns the LLM revision loop
+    # and emits concept.validated / concept.rejected on the bus.
+    from cortex.validation.derivation_service import ConceptDerivationService
+    from cortex.validation.logic_engine import LogicEngine
+    from cortex.validation.service import ConceptValidationService
+
+    cortex.concept_derivation_service = ConceptDerivationService(
+        validation_service=ConceptValidationService(LogicEngine()),
+        llm_client=cortex.llm_client,
+        event_bus=cortex.event_bus,
+    )
+
     # 5e. Create tool registry and executor
     from cortex.tools.executor import DefaultToolExecutor
     from cortex.tools.interfaces import ToolRegistry
@@ -233,6 +247,7 @@ async def initialize_app() -> CortexApp:
         fact_store=fact_store,
         concept_repository=concept_repo,
         rule_service=cortex.rule_service,
+        concept_derivation_service=cortex.concept_derivation_service,
     )
 
     context_builder = ContextBuilder(
