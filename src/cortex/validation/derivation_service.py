@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import replace
 from typing import Any
 
 from cortex.llm.base import LLMClient
 from cortex.llm.models import ChatMessage, Role
-from cortex.memory.models import ConceptDerivation
+from cortex.memory.models import Concept, ConceptDerivation
 from cortex.validation.models import DerivationOutcome, ValidationResult
 from cortex.validation.service import ConceptValidationService
 
@@ -58,35 +59,29 @@ class ConceptDerivationService:
 
         result = self._validation_service.validate(proposed_derivation)
         if result.valid:
-            return DerivationOutcome(
-                status="valid",
-                concept=replace(proposed_derivation.concept, validated=True),
-                attempts=0,
-            )
+            return _valid_outcome(proposed_derivation.concept, attempts=0)
 
         attempts = 0
         last_result = result
         last_error: str | None = None
+        current_derivation = proposed_derivation
         for attempt in range(1, max_retries + 1):
             attempts = attempt
-            messages = _revision_messages(proposed_derivation, last_result)
+            messages = _revision_messages(current_derivation, last_result)
             try:
                 chat_result = await self._llm_client.chat(messages)
                 revised = _parse_revision(
-                    chat_result.message.content, proposed_derivation
+                    chat_result.message.content, current_derivation
                 )
             except Exception as exc:  # provider/transport failures must not escape
                 last_error = f"revision attempt {attempt} failed: {exc}"
                 continue
 
+            current_derivation = revised
             last_error = None
             last_result = self._validation_service.validate(revised)
             if last_result.valid:
-                return DerivationOutcome(
-                    status="valid",
-                    concept=replace(revised.concept, validated=True),
-                    attempts=attempt,
-                )
+                return _valid_outcome(revised.concept, attempts=attempt)
 
         return DerivationOutcome(
             status="rejected",
@@ -94,6 +89,15 @@ class ConceptDerivationService:
             rejection_reason=_rejection_reason(last_result, attempts, last_error),
             attempts=attempts,
         )
+
+
+def _valid_outcome(concept: Concept, attempts: int) -> DerivationOutcome:
+    """Build the outcome for a concept the validator accepted."""
+    return DerivationOutcome(
+        status="valid",
+        concept=replace(concept, validated=True),
+        attempts=attempts,
+    )
 
 
 def _revision_messages(
@@ -180,7 +184,7 @@ def _strip_markdown_fence(text: str) -> str:
 
 def _optional_str(data: dict[str, Any], key: str, fallback: str) -> str:
     value = data.get(key)
-    if value is None:
+    if value is None or value == "":
         return fallback
     if not isinstance(value, str):
         raise ValueError(f"Revision {key} must be a string")
@@ -193,7 +197,10 @@ def _optional_confidence(data: dict[str, Any], fallback: float) -> float:
         return fallback
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("Revision confidence must be a number")
-    return float(value)
+    confidence = float(value)
+    if not math.isfinite(confidence):
+        return fallback
+    return min(1.0, max(0.0, confidence))
 
 
 def _conflicts_text(result: ValidationResult) -> str:

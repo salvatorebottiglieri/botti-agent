@@ -36,9 +36,18 @@ Current code:
   the budget, the outcome is `rejected` with the last reason.
 - **Strict revision contract.** The LLM must answer JSON with a non-empty
   `proof_chain: list[str]`; `symbolic_repr`, `natural_lang_repr` and
-  `confidence` are optional and fall back to the original concept. Markdown
-  fences are stripped before `json.loads`. Anything else is a malformed
-  attempt.
+  `confidence` are optional and fall back to the current concept. An empty
+  string counts as missing; a finite `confidence` is clamped to `[0.0, 1.0]`
+  and a non-finite one falls back. Markdown fences are stripped before
+  `json.loads`. Anything else is a malformed attempt.
+- **Each retry sees the last revision, not the initial one.** The prompt for
+  revision *n* carries the rejection of revision *n−1* and the concept of that
+  revision; a failed parse leaves the current derivation unchanged.
+- **`source_facts` come from the derivation.** `ConceptDerivation.source_fact_ids`
+  is authoritative for the revised `Concept.source_facts` — they are the facts
+  the validation actually used. A divergent `concept.source_facts` is replaced;
+  `id`, `created_at`, `derivation_method`, `payload` and the other metadata are
+  preserved.
 - **The returned concept is validated, not stored.** A valid outcome sets
   `validated=True` on the returned `Concept`; persistence and events are #29.
   A rejected outcome returns `concept=None`.
@@ -52,9 +61,9 @@ Current code:
  ConceptDerivationService.derive_and_validate          # NEW — async
 +  ConceptValidationService.validate                   # first attempt, 0 LLM calls
 +  loop attempt in 1..max_retries:
-+    _revision_messages(derivation, last_result)        # rejection context
++    _revision_messages(current_derivation, last_result) # rejection context
 +    LLMClient.chat(messages)                           # await, external
-+    _parse_revision(content, original)                 # strict JSON
++    _parse_revision(content, current_derivation)       # strict JSON
 +    ConceptValidationService.validate(revised)         # re-validate
 +  DerivationOutcome(status, concept, rejection_reason, attempts)
 ```
@@ -179,7 +188,7 @@ derive_and_validate ──► ConceptValidationService.validate   (internal)
       "call": "await llm_client.chat(messages) — external LLM provider",
       "residual": "provider, transport and circuit-breaker exceptions are caught; the attempt is counted and recorded, the loop continues, and after the budget the outcome is rejected — no exception escapes derive_and_validate",
       "exits": [
-        { "kind": "returns", "type": "ChatResult", "handled_at": "src/cortex/validation/derivation_service.py:_revision" },
+        { "kind": "returns", "type": "ChatResult", "handled_at": "src/cortex/validation/derivation_service.py:derive_and_validate" },
         { "kind": "absent", "type": "never", "handled_at": "a call returns a ChatResult or raises" },
         { "kind": "raises", "type": "Exception", "handled_at": "caught in derive_and_validate; counted as a failed attempt and returned as rejected after the budget" },
         { "kind": "effect", "type": "none (no events, no storage)", "handled_at": null }

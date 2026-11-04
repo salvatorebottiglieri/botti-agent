@@ -171,25 +171,55 @@ class TestRevisionLoop:
         assert "Please propose a revised concept that is consistent with the facts." in prompt
         assert "location(user, office)" in prompt
 
-    async def test_markdown_fenced_revision_json_is_parsed(self):
-        """Witness: a fenced payload is accepted where a raw json.loads would fail."""
-        validator = ScriptedValidationService(
-            [ValidationResult(valid=False, suggested_fix="revise"), ValidationResult(valid=True)]
+    async def test_retry_prompts_carry_the_previous_revision_and_its_rejection(self):
+        """Witness: prompt 2 carries fix 1 and revision v1's symbolic repr, not v0's; reusing
+        proposed_derivation shows v0 and reusing the initial result shows fix 0."""
+        original = Concept(
+            symbolic_repr="concept.v0",
+            natural_lang_repr="Version zero",
         )
-        payload = _revision(["location(user, home)"], symbolic_repr="concept.fenced")
-        llm = _llm_returning(f"```json\n{payload}\n```")
+        derivation = _derivation(concept=original)
+        revisions = [
+            _revision(
+                [f"location(user, place{index})"],
+                symbolic_repr=f"concept.v{index}",
+                natural_lang_repr=f"Version {index}",
+            )
+            for index in (1, 2, 3)
+        ]
+        validator = ScriptedValidationService(
+            [
+                ValidationResult(valid=False, suggested_fix="fix 0"),
+                ValidationResult(valid=False, suggested_fix="fix 1"),
+                ValidationResult(valid=False, suggested_fix="fix 2"),
+                ValidationResult(valid=True),
+            ]
+        )
+        llm = _llm_returning(*revisions)
         service = ConceptDerivationService(validator, llm)
 
-        outcome = await service.derive_and_validate(_derivation())
+        outcome = await service.derive_and_validate(derivation)
 
         assert outcome.status == "valid"
-        assert outcome.attempts == 1
-        assert outcome.concept is not None
-        assert outcome.concept.symbolic_repr == "concept.fenced"
+        assert outcome.attempts == 3
+        assert llm.chat.await_count == 3
+
+        prompts = [
+            "\n".join(message.content or "" for message in call.args[0])
+            for call in llm.chat.await_args_list
+        ]
+        assert "Suggested fix: fix 0" in prompts[0]
+        assert "concept.v0" in prompts[0]
+        assert "Suggested fix: fix 1" in prompts[1]
+        assert "concept.v1" in prompts[1]
+        assert "concept.v0" not in prompts[1]
+        assert "Suggested fix: fix 2" in prompts[2]
+        assert "concept.v2" in prompts[2]
 
     async def test_optional_fields_fall_back_and_metadata_is_preserved(self):
-        """Witness: confidence 0.42 (not the 0.5 default), two source ids and a two-clause
-        chain distinguish fallback-and-join from resetting metadata."""
+        """Witness: a markdown-fenced payload is parsed, and confidence 0.42 (not the 0.5
+        default), two source ids and a two-clause chain distinguish fallback-and-join from
+        resetting metadata."""
         concept_id = uuid.uuid4()
         created_at = datetime(2025, 1, 2, 3, 4, tzinfo=UTC)
         source_fact_ids = [uuid.uuid4(), uuid.uuid4()]
@@ -212,7 +242,8 @@ class TestRevisionLoop:
         validator = ScriptedValidationService(
             [ValidationResult(valid=False, suggested_fix="revise"), ValidationResult(valid=True)]
         )
-        llm = _llm_returning(_revision(["new(user, x)", "done(user, x)"]))
+        payload = _revision(["new(user, x)", "done(user, x)"])
+        llm = _llm_returning(f"```json\n{payload}\n```")
         service = ConceptDerivationService(validator, llm)
 
         outcome = await service.derive_and_validate(derivation)
@@ -230,6 +261,107 @@ class TestRevisionLoop:
         assert revised.proof_chain == "new(user, x)\ndone(user, x)"
         assert revised.validated is True
         assert validator.seen[1].source_fact_ids == source_fact_ids
+
+    async def test_revised_concept_source_facts_come_from_the_derivation(self):
+        """Witness: concept.source_facts=[A] but derivation ids [B]; the revised concept carries
+        [B], the fact set validation used, not [A]."""
+        concept_fact_id = uuid.uuid4()
+        derivation_fact_id = uuid.uuid4()
+        original = Concept(
+            symbolic_repr="concept.original",
+            source_facts=[concept_fact_id],
+        )
+        derivation = _derivation(
+            concept=original,
+            source_fact_ids=[derivation_fact_id],
+        )
+        validator = ScriptedValidationService(
+            [ValidationResult(valid=False, suggested_fix="revise"), ValidationResult(valid=True)]
+        )
+        llm = _llm_returning(_revision(["new(user, x)"]))
+        service = ConceptDerivationService(validator, llm)
+
+        outcome = await service.derive_and_validate(derivation)
+
+        assert outcome.concept is not None
+        assert outcome.concept.source_facts == [derivation_fact_id]
+        assert validator.seen[1].source_fact_ids == [derivation_fact_id]
+
+
+class TestOptionalFieldFallbacks:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [(1.7, 1.0), (-0.3, 0.0)],
+        ids=["above-one", "below-zero"],
+    )
+    async def test_confidence_is_clamped_to_unit_interval(
+        self, raw: float, expected: float
+    ):
+        """Witness: 1.7 becomes 1.0 and -0.3 becomes 0.0; passthrough would keep the raw value."""
+        original = Concept(symbolic_repr="concept.original", confidence=0.42)
+        validator = ScriptedValidationService(
+            [ValidationResult(valid=False, suggested_fix="revise"), ValidationResult(valid=True)]
+        )
+        llm = _llm_returning(_revision(["new(user, x)"], confidence=raw))
+        service = ConceptDerivationService(validator, llm)
+
+        outcome = await service.derive_and_validate(_derivation(concept=original))
+
+        assert outcome.concept is not None
+        assert outcome.concept.confidence == expected
+
+    async def test_non_finite_confidence_falls_back_to_the_original(self):
+        """Witness: NaN falls back to 0.42; float() passthrough or clamping alone keeps NaN."""
+        original = Concept(symbolic_repr="concept.original", confidence=0.42)
+        validator = ScriptedValidationService(
+            [ValidationResult(valid=False, suggested_fix="revise"), ValidationResult(valid=True)]
+        )
+        llm = _llm_returning(_revision(["new(user, x)"], confidence=float("nan")))
+        service = ConceptDerivationService(validator, llm)
+
+        outcome = await service.derive_and_validate(_derivation(concept=original))
+
+        assert outcome.concept is not None
+        assert outcome.concept.confidence == 0.42
+
+    async def test_empty_optional_strings_fall_back_to_the_original(self):
+        """Witness: "" is missing, so both strings stay the original; passthrough would blank them."""
+        original = Concept(
+            symbolic_repr="concept.original",
+            natural_lang_repr="Original concept",
+        )
+        validator = ScriptedValidationService(
+            [ValidationResult(valid=False, suggested_fix="revise"), ValidationResult(valid=True)]
+        )
+        llm = _llm_returning(
+            _revision(["new(user, x)"], symbolic_repr="", natural_lang_repr="")
+        )
+        service = ConceptDerivationService(validator, llm)
+
+        outcome = await service.derive_and_validate(_derivation(concept=original))
+
+        assert outcome.concept is not None
+        assert outcome.concept.symbolic_repr == "concept.original"
+        assert outcome.concept.natural_lang_repr == "Original concept"
+
+
+class TestPromptContract:
+    async def test_system_message_pins_strict_json_and_proof_chain(self):
+        """Witness: the system turn names strict JSON and proof_chain; a prompt without the
+        contract cannot produce a parseable revision."""
+        validator = ScriptedValidationService(
+            [ValidationResult(valid=False, suggested_fix="revise"), ValidationResult(valid=True)]
+        )
+        llm = _llm_returning(_revision(["new(user, x)"]))
+        service = ConceptDerivationService(validator, llm)
+
+        await service.derive_and_validate(_derivation())
+
+        messages: list[ChatMessage] = llm.chat.await_args.args[0]
+        assert messages[0].role == Role.SYSTEM
+        system = messages[0].content or ""
+        assert "strict JSON" in system
+        assert "proof_chain" in system
 
 
 class TestExhaustion:
@@ -261,6 +393,28 @@ class TestExhaustion:
         assert "fix 3" in outcome.rejection_reason
         assert "User is at home" in outcome.rejection_reason
         llm.chat.assert_awaited()
+        assert llm.chat.await_count == 3
+        assert len(validator.seen) == 4
+
+    async def test_default_max_retries_is_three(self):
+        """Witness: no max_retries argument yields three LLM calls; a default of 2 yields two."""
+        results = [
+            ValidationResult(valid=False, suggested_fix=f"fix {index}")
+            for index in range(4)
+        ]
+        validator = ScriptedValidationService(results)
+        llm = _llm_returning(
+            *[_revision([f"location(user, place{index})"]) for index in range(3)]
+        )
+        service = ConceptDerivationService(validator, llm)
+
+        outcome = await service.derive_and_validate(_derivation())
+
+        assert outcome.status == "rejected"
+        assert outcome.concept is None
+        assert outcome.attempts == 3
+        assert outcome.rejection_reason is not None
+        assert "after 3 revision attempt(s)" in outcome.rejection_reason
         assert llm.chat.await_count == 3
         assert len(validator.seen) == 4
 
