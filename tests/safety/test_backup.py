@@ -15,6 +15,7 @@ The contract under test:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import stat
 from datetime import UTC
@@ -221,6 +222,39 @@ class TestCreate:
         assert "s3cret" not in caplog.text
         assert DATABASE_URL not in caplog.text
 
+    async def test_chowns_the_backup_to_the_store_owner(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        service = _service(tmp_path)
+        calls: list[tuple[Path, int, int]] = []
+
+        def record_chown(path: str, uid: int, gid: int) -> None:
+            calls.append((Path(path), uid, gid))
+
+        monkeypatch.setattr(os, "chown", record_chown)
+
+        backup = await service.create()
+
+        store = service.backups_dir.stat()
+        assert calls == [(backup.path, store.st_uid, store.st_gid)]
+
+    async def test_chown_failure_does_not_fail_the_backup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+    ) -> None:
+        service = _service(tmp_path)
+
+        def deny_chown(path: str, uid: int, gid: int) -> None:
+            raise OSError("operation not permitted")
+
+        monkeypatch.setattr(os, "chown", deny_chown)
+
+        with caplog.at_level(logging.WARNING):
+            backup = await service.create()
+
+        assert backup.path.exists()
+        assert stat.S_IMODE(backup.path.stat().st_mode) == 0o600
+        assert f"could not chown backup {backup.path}" in caplog.text
+
 
 class TestRetention:
     async def test_keeps_the_newest_n_and_the_just_created_file(self, tmp_path: Path) -> None:
@@ -299,6 +333,7 @@ class TestRestore:
         assert "pg_stat_activity" in (factory.connection.query or "")
         assert "current_database()" in (factory.connection.query or "")
         assert "pid <> pg_backend_pid()" in (factory.connection.query or "")
+        assert "backend_type = 'client backend'" in (factory.connection.query or "")
         assert pg.restore_calls == []
 
     async def test_force_skips_the_in_use_check(self, tmp_path: Path) -> None:

@@ -41,16 +41,17 @@ services:
       retries: 3
 
   # One-shot: the host safety store (ADR-0021) must exist and belong to the
-  # user Cortex runs as. Docker creates a missing bind source as root, which a
-  # non-root container could then not write; this chowns it before the app
-  # starts. The path is the same one the host CLI uses by default.
+  # host user. Docker creates a missing bind source as root; this creates the
+  # subdirectories and chowns the whole store before the app starts. The path
+  # is the same one the host CLI uses by default. The app container still runs
+  # as root (the mosquitto passwd volume write needs it); non-root is #120.
   safety-store:
     image: busybox:1.36
     container_name: cortex-safety-store
     user: "0:0"
     volumes:
       - ${HOME}/.local/share/cortex:/store
-    command: ["sh", "-c", "mkdir -p /store && chown ${UID:-1000}:${GID:-1000} /store"]
+    command: ["sh", "-c", "mkdir -p /store/backups /store/snapshots && chown -R ${UID:-1000}:${GID:-1000} /store"]
     restart: "no"
 
   cortex:
@@ -58,9 +59,6 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: cortex-app
-    # Match the host user so backups/snapshots written through the mounted
-    # safety store stay readable by the host CLI (ADR-0021).
-    user: "${UID:-1000}:${GID:-1000}"
     # Every settings slice reads its own env; without this, only the variables
     # hand-copied below are reachable in the container (TOOLS_ALLOW could never
     # be widened, TRACE_SIDECAR_URL could never point at the rizzo-pii service).

@@ -361,7 +361,7 @@ SSE wire contract for `/chat/stream` is in [agentic-loop.md](agentic-loop.md).
 |---|---|---|
 | `postgres` | `pgvector/pgvector:pg16` | Port 5432 (host: `${POSTGRES_HOST_PORT:-5433}`) |
 | `mosquitto` | `eclipse-mosquitto:2` | Port 1883; broker config in `docker/mosquitto.conf` |
-| `cortex` | built from `Dockerfile` | Port 8000; runs as `${UID:-1000}:${GID:-1000}`; host safety store mounted at `/var/lib/cortex/safety`; depends on healthy postgres + mosquitto and the one-shot `safety-store` |
+| `cortex` | built from `Dockerfile` | Port 8000; runs as root for now (non-root is #120); host safety store mounted at `/var/lib/cortex/safety`; depends on healthy postgres + mosquitto and the one-shot `safety-store` |
 | `rizzo-pii` | pinned upstream `Rizzo-AI-Academy/rizzo-pii@v2.0.0` | Opt-in `--profile trace`; pseudonymization sidecar for trace capture |
 
 CLI (`cortex <command>`, `src/cortex/cli.py`): `token:create`, `traces:cleanup`,
@@ -370,7 +370,11 @@ CLI (`cortex <command>`, `src/cortex/cli.py`): `token:create`, `traces:cleanup`,
 
 Backups and the safety store live at `SAFETY_STORE_DIR`
 (`~/.local/share/cortex`), outside the repo and outside every Compose volume:
-a backup inside the volume dies with `docker compose down -v`. `backup:*`
+a backup inside the volume dies with `docker compose down -v`. The one-shot
+`safety-store` service creates `backups/` and `snapshots/` and chowns the store
+to the host user; each new dump is chowned to the store owner, mode `0600`.
+The `cortex` container still runs as root for now — the mosquitto passwd volume
+write needs it; non-root is #120's companion change. `backup:*`
 prefers a host `pg_dump`/`pg_restore` and falls back to
 `docker compose exec` for the local Postgres; the pre-migration dump runs
 inside the Cortex image, which ships PostgreSQL 16 client tools

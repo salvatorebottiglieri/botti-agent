@@ -19,6 +19,9 @@ from cortex.safety.backup import BackupError
 
 DATABASE_URL = "postgresql://cortex:s3cret@localhost:5433/cortex"
 
+#: Cross-seam ordering log: the fake backup service and connection append here.
+EVENTS: list[str] = []
+
 
 class _AsyncNullContext:
     def __init__(self, value: object = None) -> None:
@@ -38,6 +41,7 @@ class FakeConnection:
         self.fetched: list[str] = []
 
     async def execute(self, query: str, *args: object) -> str:
+        EVENTS.append(f"execute:{query.strip()}")
         self.executed.append((query, args))
         return "OK"
 
@@ -79,6 +83,7 @@ class FakeBackupService:
 
     async def create(self, *, reason: str | None = None) -> SimpleNamespace:
         self.reasons.append(reason)
+        EVENTS.append("backup")
         if FakeBackupService.error is not None:
             raise FakeBackupService.error
         return SimpleNamespace(path=Path("/store/backups/cortex-test.dump"))
@@ -113,6 +118,7 @@ def fake_services(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeBackupService.error = None
     FakeBackupService.init_error = None
     FakePgClient.instances = []
+    EVENTS.clear()
     monkeypatch.setattr(runner, "BackupService", FakeBackupService)
     monkeypatch.setattr(runner, "PgClient", FakePgClient)
 
@@ -188,6 +194,16 @@ class TestPendingMigrationDump:
         assert len(FakePgClient.instances) == 1
         assert FakePgClient.instances[0].allow_docker_fallback is False
         assert _inserted_versions(connection) == [("002_pending",)]
+
+    async def test_dump_happens_before_the_first_migration_is_applied(
+        self, migrations: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A reorder mutant that applies first and dumps afterwards must fail."""
+        await _run({"001_initial"}, monkeypatch=monkeypatch)
+
+        assert "backup" in EVENTS
+        assert "execute:SELECT 2;" in EVENTS
+        assert EVENTS.index("backup") < EVENTS.index("execute:SELECT 2;")
 
     async def test_backup_on_migration_false_skips_the_dump(
         self, migrations: Path, monkeypatch: pytest.MonkeyPatch

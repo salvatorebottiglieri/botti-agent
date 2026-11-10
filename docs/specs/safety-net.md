@@ -55,11 +55,15 @@ The agent acts through three seams; each needs a net.
 A backup id is the file stem (`cortex-20261110T101500Z`). `backup:restore`
 accepts an id or a path.
 
-The compose `cortex` service runs as `${UID:-1000}:${GID:-1000}` and mounts the
-host store at `/var/lib/cortex/safety`; a one-shot `safety-store` service
-creates and chowns the host directory first. The host CLI uses the same
-directory (`SAFETY_STORE_DIR`, default `~/.local/share/cortex`), so a
-pre-migration dump taken in the container is restorable from the host.
+The compose `cortex` service still runs as root for now: it writes
+`/mosquitto/config/passwd.conf`, a volume owned by mosquitto, and the
+non-root container is #120's companion change. A one-shot `safety-store`
+service creates `backups/` and `snapshots/` and chowns the host store to the
+host user; `BackupService` then best-effort chowns each new dump to the store
+directory's owner (mode `0600`) so the host CLI can read it.
+The host CLI uses the same directory (`SAFETY_STORE_DIR`, default
+`~/.local/share/cortex`), so a pre-migration dump taken in the container is
+restorable from the host.
 
 ## Configuration (`SAFETY_` namespace)
 

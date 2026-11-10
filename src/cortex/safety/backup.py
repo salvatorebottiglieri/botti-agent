@@ -351,9 +351,23 @@ class BackupService:
             temp.unlink(missing_ok=True)
             raise
 
+        self._chown_to_store_owner(final)
         logger.info("Created backup %s%s", final, f" ({reason})" if reason else "")
         self._prune(keep=final)
         return Backup(final, size, created_at)
+
+    def _chown_to_store_owner(self, path: Path) -> None:
+        """Best-effort: a root container writes files owned by root, while the
+        host CLI needs them owned by the mounted store's user.
+
+        On a host run the file is already the user's; a failed chown (to self,
+        or on a filesystem that refuses it) must not fail the backup.
+        """
+        try:
+            store = self.backups_dir.stat()
+            os.chown(path, store.st_uid, store.st_gid)
+        except OSError as exc:
+            logger.warning("could not chown backup %s: %s", path, exc)
 
     def list_backups(self) -> list[Backup]:
         """Every dump in the store, newest first (name order, then mtime)."""
@@ -398,7 +412,8 @@ class BackupService:
                 in_use = await connection.fetchval(
                     "SELECT count(*) FROM pg_stat_activity "
                     "WHERE datname = current_database() "
-                    "AND pid <> pg_backend_pid()"
+                    "AND pid <> pg_backend_pid() "
+                    "AND backend_type = 'client backend'"
                 )
             finally:
                 await connection.close()
