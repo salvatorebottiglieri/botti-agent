@@ -101,6 +101,24 @@ class TestFrozenEnvNames:
             input_per_mtok=1.5, output_per_mtok=2.5
         )
 
+    def test_llm_embedding_names_and_defaults(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Embedding model and dimension have documented defaults and their own
+        ``LLM_`` env names (issue #30)."""
+        defaults = LLMSettings(api_key="k", _env_file=None)
+        assert defaults.embedding_model == "text-embedding-3-small"
+        assert defaults.embedding_dimensions == 1536
+
+        monkeypatch.setenv("LLM_API_KEY", "frozen-key")
+        monkeypatch.setenv("LLM_EMBEDDING_MODEL", "frozen-embed")
+        monkeypatch.setenv("LLM_EMBEDDING_DIMENSIONS", "768")
+
+        llm = LLMSettings(_env_file=None)
+
+        assert llm.embedding_model == "frozen-embed"
+        assert llm.embedding_dimensions == 768
+
     def test_app_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("APP_HOST", "127.0.0.1")
         monkeypatch.setenv("APP_PORT", "8123")
