@@ -17,8 +17,16 @@ _SYSTEM_PROMPT = (
     "You are a fact extraction engine. Extract structured facts from the given text.\n"
     "Valid fact types: user_preference, user_fact, location, time, activity, calendar, "
     "weather, device_status, entity, relationship, custom.\n"
+    "For every fact choose a mutability:\n"
+    "- static: irrefutable, never-changing statements (birth date or place, native language, "
+    "immutable identity);\n"
+    "- semi_static: stable but changeable (home address);\n"
+    "- mutable: current values (current location, preferences);\n"
+    "- ephemeral: short-lived activity (walking right now).\n"
+    'Attitudes and behaviors are distinct facts: "likes coffee" and "drinks coffee" must '
+    "have distinct symbolic_repr values.\n"
     'Respond with JSON of the shape {"facts": [...]} where each item has the fields: '
-    "type, symbolic_repr, natural_lang_repr, confidence, payload.\n"
+    "type, symbolic_repr, natural_lang_repr, confidence, mutability, payload.\n"
     'Return {"facts": []} if no facts; no markdown.'
 )
 
@@ -73,11 +81,20 @@ def _parse_llm_facts(content: str) -> list[Fact]:
         except (TypeError, ValueError):
             confidence = 0.5
         confidence = max(0.0, min(1.0, confidence))
+        try:
+            mutability = FactMutability(item.get("mutability", FactMutability.MUTABLE))
+        except (TypeError, ValueError):
+            # Unknown or missing mutability from the LLM falls back to MUTABLE
+            mutability = FactMutability.MUTABLE
+        if mutability is FactMutability.STATIC:
+            # Irrefutable statements are axioms: confidence is pinned at 1.0.
+            confidence = 1.0
         raw_payload = item.get("payload")
         payload = raw_payload if isinstance(raw_payload, dict) else {}
         facts.append(
             Fact(
                 type=fact_type,
+                mutability=mutability,
                 symbolic_repr=item.get("symbolic_repr") or "",
                 natural_lang_repr=item.get("natural_lang_repr") or "",
                 confidence=confidence,

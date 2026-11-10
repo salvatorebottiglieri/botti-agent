@@ -23,6 +23,7 @@ from cortex.goals.interfaces import GoalRepository
 if TYPE_CHECKING:
     from cortex.agentic.events import LoopEvent
     from cortex.events import EventBus
+    from cortex.memory.conversation_extractor import ConversationFactExtractor
     from cortex.trace.recorder import TraceRecorder
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ class ExecutionModule:
         event_bus: EventBus | None = None,
         goal_repository: GoalRepository | None = None,
         trace_recorder: TraceRecorder | None = None,
+        conversation_extractor: ConversationFactExtractor | None = None,
     ):
         # Imported lazily so importers of execution.module do not pull in
         # the in-memory implementation (and its asyncpg dependency chain)
@@ -74,6 +76,9 @@ class ExecutionModule:
         # trace machinery itself. None means capture is disabled even when a
         # session's trace flag is on.
         self._trace_recorder = trace_recorder
+        # Conversation fact extraction (issue #82) is injected here by the
+        # composition root; None disables extraction (e.g. in unit tests).
+        self._conversation_extractor = conversation_extractor
         # Strong references to background goal tasks so they are never
         # garbage-collected before running (the dropped-task anti-pattern);
         # each task removes itself once it finishes.
@@ -97,6 +102,7 @@ class ExecutionModule:
         Returns:
             ChatResponse
         """
+        await self._extract_user_facts(user_message, session_id)
         try:
             return await self._agent_loop.run_chat(
                 session_id=session_id,
@@ -151,6 +157,7 @@ class ExecutionModule:
             LoopEvent progress signals (thinking, tool_start, tool_done,
             text, done, error).
         """
+        await self._extract_user_facts(user_message, session_id)
         loop_stream: AsyncIterable[LoopEvent] = self._agent_loop.stream_chat(
             session_id=session_id,
             user_message=user_message,
@@ -165,6 +172,23 @@ class ExecutionModule:
         )
         async for event in events:
             yield event
+
+    async def _extract_user_facts(self, user_message: str, session_id: UUID) -> None:
+        """Extract and store facts from the user's message, best-effort.
+
+        Conversation extraction is a side channel: no extractor configured
+        means a no-op, and any failure is logged without breaking the chat.
+        """
+        if self._conversation_extractor is None:
+            return
+        try:
+            await self._conversation_extractor.extract_and_store(
+                user_message, session_id=session_id
+            )
+        except Exception:
+            logger.warning(
+                "Conversation fact extraction failed; continuing chat", exc_info=True
+            )
 
     async def create_goal(
         self,
