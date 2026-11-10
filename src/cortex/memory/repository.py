@@ -7,6 +7,9 @@ from cortex.db.session import DbSession
 from cortex.memory.interfaces import ConceptRepository, FactRepository
 from cortex.memory.models import Concept, Fact, FactType
 
+# ivfflat's default probes=1 under-returns candidates; probe 10 lists per query.
+_ANN_PROBES = 10
+
 
 def _vector_literal(values: list[float]) -> str:
     """Render a vector as the text literal pgvector accepts over asyncpg.
@@ -180,6 +183,8 @@ class PostgresFactRepository(FactRepository):
         params.append(effective_limit)
 
         async with DbSession() as db:
+            if query_embedding is not None:
+                await db.execute(f"SET ivfflat.probes = {_ANN_PROBES}")
             rows = await db.fetch(
                 f"""
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
@@ -301,7 +306,12 @@ class PostgresFactRepository(FactRepository):
         fact_ids: list[UUID],
         embeddings: list[list[float]],
     ) -> None:
-        """Store embeddings for existing facts, one UPDATE per pair."""
+        """Store embeddings for existing facts, one UPDATE per pair.
+
+        The ivfflat index is built before bulk embedding; run
+        ``REINDEX INDEX idx_facts_embedding;`` after a large backfill so the
+        index reflects the new vectors.
+        """
         if len(fact_ids) != len(embeddings):
             raise ValueError(
                 "fact_ids and embeddings must have the same length: "

@@ -42,11 +42,8 @@ class FactStore:
         symbolic one. A provider failure is logged and yields ``None`` so fact
         storage never fails because embeddings are down.
         """
-        if self._llm_client is None:
-            return fact.embedding
-
         text = fact.natural_lang_repr or fact.symbolic_repr
-        if not text:
+        if self._llm_client is None or not text:
             return fact.embedding
 
         try:

@@ -201,6 +201,17 @@ class TestPostgresFactRepositorySearch:
         assert [fact.id for fact in results] == [row["id"] for row in rows]
 
     @pytest.mark.asyncio
+    async def test_ann_search_sets_ivfflat_probes(self, repo_with_mock):
+        """ANN search raises ivfflat.probes so the index returns the full candidate set."""
+        repo, mock_db_session = repo_with_mock
+        mock_db_session.fetch.return_value = []
+
+        await repo.search(query_embedding=VECTOR)
+
+        mock_db_session.execute.assert_awaited_once_with("SET ivfflat.probes = 10")
+        mock_db_session.fetch.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_ann_search_applies_type_and_confidence_filters(self, repo_with_mock):
         """fact_types and min_confidence bind into the ANN query with correct numbering."""
         repo, mock_db_session = repo_with_mock

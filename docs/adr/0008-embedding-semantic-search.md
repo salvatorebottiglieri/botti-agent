@@ -11,3 +11,6 @@ endpoint (`text-embedding-3-small`). An `embed()` method was added to `LLMClient
 
 If pgvector is unavailable or the embedding API fails, the system falls back to ILIKE
 search via the existing `MemoryContext.degraded_dimensions` mechanism.
+
+Supersedes ADR-0003's 'no LLM' clause for FactStore: embeddings are generated at write
+time; the store still owns no event bus or concept cascade.
