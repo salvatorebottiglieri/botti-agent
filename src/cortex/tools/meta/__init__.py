@@ -1,14 +1,18 @@
 """Meta tools - built-in tools for the agent."""
 
+import logging
 from collections.abc import Sequence
 
 from cortex.config.safety import SafetySettings
+from cortex.safety.journal import SafetyStore
 from cortex.tools.interfaces import Tool, ToolRegistry
 from cortex.tools.meta.ask_user import AskUserTool
 from cortex.tools.meta.file_read import FileReadTool
 from cortex.tools.meta.file_write import FileWriteTool
 from cortex.tools.meta.grep import GrepTool
 from cortex.tools.meta.shell import ShellTool
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "AskUserTool",
@@ -51,6 +55,17 @@ def register_meta_tools(
     selected = [tool for tool in meta_tools if tool.name in allowed_names]
     registrar = ToolRegistrar(registry)
     registrar.register_many(selected)
+
+    # Journal the bypass only when the guarded tool is actually registered:
+    # a disabled guard on a deployment without ``shell`` is not an event, and
+    # an unconditional marker would sit in front of ``undo last``.
+    if safety is not None and not safety.shell_guard and "shell" in registrar.registered:
+        try:
+            SafetyStore(safety).record_guard_disabled()
+        except Exception as exc:  # never abort startup over the journal
+            logger.warning(
+                "could not journal that SAFETY_SHELL_GUARD is disabled: %s", exc
+            )
 
     return registrar.registered
 

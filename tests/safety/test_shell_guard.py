@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from cortex.config.safety import SafetySettings
-from cortex.safety import SafetyStore
+from cortex.safety import SafetyStore, UndoError
 from cortex.safety.shell_guard import SHELL_PATTERNS, ShellPattern, classify
 
 
@@ -73,6 +73,27 @@ class TestVariants:
             "git clean --force",
             "mkfs /dev/sdb1",
             "KILL -9 1234",
+            # Short flags end at a shell separator, substitution or redirect,
+            # not only at whitespace (AC-1 review).
+            "rm -rf /tmp/cortex-check; echo done",
+            "docker compose down -v; echo done",
+            "docker compose down -v | tee log",
+            "docker compose down -v|tee log",
+            "echo $(docker compose down -v)",
+            "(docker compose down -v)",
+            "git clean -fd; echo done",
+            "git clean -fd >/dev/null",
+            "git clean -fd>/dev/null",
+            # Documented secondary variants.
+            "npm uninstall cortex-cli -g",
+            "pacman -R cortex",
+            "pacman -Rns cortex",
+            "kill -s KILL 1234",
+            "killall -9 cortex",
+            "sudo pkill -f cortex",
+            "sudo kill -9 1234",
+            "psql -c 'TRUNCATE sessions'",
+            "mysql -e 'truncate table sessions'",
         ],
     )
     def test_case_spacing_and_flag_variants_still_match(self, command: str) -> None:
@@ -90,6 +111,10 @@ class TestBenignCommands:
             "grep -r rm README.md",
             "rm notes.txt",
             "docker compose down",
+            "grep -r pkill src",
+            "man pkill",
+            "grep -r truncate docs",
+            "truncate -s 0 notes.txt",
         ],
     )
     def test_benign_commands_match_no_pattern(self, command: str) -> None:
@@ -142,3 +167,20 @@ class TestJournalEntries:
         lines = store.journal_path.read_text(encoding="utf-8").splitlines()
         assert len(lines) == 2
         assert [entry["status"] for entry in store.entries()] == ["denied", "bypass"]
+
+    def test_undo_last_skips_a_disabled_marker(self, tmp_path: Path) -> None:
+        target = tmp_path / "notes.txt"
+        target.write_text("v1", encoding="utf-8")
+        store = _store(tmp_path)
+        entry_id = store.snapshot(target)
+        assert entry_id is not None
+        target.write_text("v2", encoding="utf-8")
+        store.record_guard_disabled()
+        marker_id = store.entries()[-1]["id"]
+
+        result = store.undo("last")
+
+        assert result.entry_id == entry_id
+        assert target.read_text(encoding="utf-8") == "v1"
+        with pytest.raises(UndoError, match=f"journal entry not found: {marker_id}"):
+            store.undo(marker_id)

@@ -30,12 +30,6 @@ class ShellTool(BaseMetaTool):
                 "SAFETY_SHELL_GUARD=false: the shell deny-list is disabled; "
                 "matched commands are journaled and executed"
             )
-            try:
-                self._store.record_guard_disabled()
-            except Exception as exc:  # never abort startup over the journal
-                logger.warning(
-                    "could not journal that SAFETY_SHELL_GUARD is disabled: %s", exc
-                )
 
     @property
     def name(self) -> str:

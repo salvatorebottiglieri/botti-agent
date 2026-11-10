@@ -184,12 +184,13 @@ falls back to the compose container for the CLI commands).
   it is meant to stop. Examples: `rm -rf`, `docker (compose )?(down|rm)` with
   `-v`/`--volumes`, `docker volume rm`, `docker system prune`,
   `git reset --hard`, `git clean -fdx`, `DROP (TABLE|DATABASE|SCHEMA)`,
-  `TRUNCATE`, `mkfs`, `dd of=`, package-manager global uninstalls,
-  `pkill`/`kill -9`.
+  `TRUNCATE TABLE` (or a SQL-client command containing `truncate`), `mkfs`,
+  `dd of=`, package-manager global uninstalls,
+  `pkill`/`kill -9`/`killall -9` as command words.
 - A match returns an error `ToolResult` with the matched pattern name and
   reason; the command is not executed. Benign commands write nothing and pay
-  one regex pass. The deny-list fails open on an unknown command: it is a
-  mitigation, not a sandbox.
+  one `classify` call (one pass over the pattern table). The deny-list fails
+  open on an unknown command: it is a mitigation, not a sandbox.
 - Every classified command appends a journal entry
   `{id, ts, action: "shell", targets: [command], snapshot: null,
   undo_recipe, status: "denied"|"bypass", pattern, reason}`. A denied command
@@ -197,10 +198,11 @@ falls back to the compose container for the CLI commands).
   before execution. If the journal write fails, the command is refused — denied
   or bypassed alike — so no matched command runs silently.
 - Bypass: `SAFETY_SHELL_GUARD=false` disables the guard for the process. The
-  startup logs a warning and the store records a
-  `{action: "shell_guard", targets: [], status: "disabled",
+  startup logs a warning and, when the `shell` tool is registered, the store
+  records a `{action: "shell_guard", targets: [], status: "disabled",
   reason: "SAFETY_SHELL_GUARD=false"}` entry; every matched command that then
-  executes is journaled with `status: "bypass"`. It is never silent.
+  executes is journaled with `status: "bypass"`. It is never silent. A
+  `shell_guard` marker is history: `undo last` skips it.
 - `ShellTool(safety=None)` has no guard (eval sandbox and existing tests);
   production injects `settings.safety` through `register_meta_tools`.
 - Tests are table-driven from the same list: each `ShellPattern.example` must

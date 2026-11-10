@@ -18,7 +18,8 @@ import pytest
 from cortex.config.safety import SafetySettings
 from cortex.safety import SafetyStore
 from cortex.safety.shell_guard import SHELL_PATTERNS, ShellPattern, classify
-from cortex.tools.meta import ShellTool, get_meta_tools
+from cortex.tools.meta import ShellTool, get_meta_tools, register_meta_tools
+from cortex.tools.registry import InMemoryToolRegistry
 
 
 class _FakeProcess:
@@ -120,6 +121,40 @@ class TestGuardEnabled:
         assert store.entries() == []
         assert not store.journal_path.exists()
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "docker compose down -v; echo done",
+            "git clean -fd; echo done",
+            "echo $(docker compose down -v)",
+            "(docker compose down -v)",
+            "git clean -fd >/dev/null",
+            "git clean -fd>/dev/null",
+            "docker compose down -v | tee log",
+            "docker compose down -v|tee log",
+        ],
+    )
+    async def test_separator_variants_are_denied_without_spawning(
+        self,
+        command: str,
+        tmp_path: Path,
+        spawned: list[tuple[str, dict[str, object]]],
+    ) -> None:
+        tool = ShellTool(_settings(tmp_path))
+
+        result = await tool.execute({"command": command})
+
+        assert result.success is False
+        assert result.error is not None
+        assert "Blocked by the shell safety guard" in result.error
+        assert result.metadata["pattern"]
+        assert spawned == []
+        store = tool._store
+        assert store is not None
+        (entry,) = store.entries()
+        assert entry["status"] == "denied"
+        assert entry["targets"] == [command]
+
     async def test_unknown_destructive_looking_rm_without_recursion_runs(
         self, tmp_path: Path, spawned: list[tuple[str, dict[str, object]]]
     ) -> None:
@@ -155,7 +190,7 @@ class TestGuardEnabled:
 
 
 class TestGuardDisabled:
-    async def test_construction_journals_the_bypass_and_warns(
+    def test_construction_warns_without_journaling(
         self,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
@@ -164,10 +199,8 @@ class TestGuardDisabled:
 
         store = tool._store
         assert store is not None
-        (entry,) = store.entries()
-        assert entry["action"] == "shell_guard"
-        assert entry["status"] == "disabled"
-        assert entry["reason"] == "SAFETY_SHELL_GUARD=false"
+        assert store.entries() == []
+        assert not store.store_dir.exists()
         assert "SAFETY_SHELL_GUARD" in caplog.text
 
     async def test_matched_command_spawns_and_is_journaled_as_bypass(
@@ -183,11 +216,8 @@ class TestGuardDisabled:
         assert [command for command, _ in spawned] == ["rm -rf /tmp/cortex-check"]
         store = tool._store
         assert store is not None
-        assert [entry["action"] for entry in store.entries()] == [
-            "shell_guard",
-            "shell",
-        ]
-        bypass = store.entries()[1]
+        assert [entry["action"] for entry in store.entries()] == ["shell"]
+        bypass = store.entries()[0]
         assert bypass["status"] == "bypass"
         assert bypass["pattern"] == "rm_recursive_force"
         assert bypass["targets"] == ["rm -rf /tmp/cortex-check"]
@@ -234,3 +264,31 @@ class TestWiring:
 
         assert isinstance(shell, ShellTool)
         assert shell._store is not None
+
+    def test_register_without_shell_does_not_write_the_guard_marker(
+        self, tmp_path: Path
+    ) -> None:
+        settings = _settings(tmp_path, shell_guard=False)
+        registry = InMemoryToolRegistry()
+
+        registered = register_meta_tools(
+            registry, allowed=["file_read"], safety=settings
+        )
+
+        assert registered == ["file_read"]
+        store = SafetyStore(settings)
+        assert store.entries() == []
+        assert not store.store_dir.exists()
+
+    def test_register_with_shell_writes_the_guard_marker(self, tmp_path: Path) -> None:
+        settings = _settings(tmp_path, shell_guard=False)
+        registry = InMemoryToolRegistry()
+
+        registered = register_meta_tools(registry, allowed=["shell"], safety=settings)
+
+        assert registered == ["shell"]
+        store = SafetyStore(settings)
+        (entry,) = store.entries()
+        assert entry["action"] == "shell_guard"
+        assert entry["status"] == "disabled"
+        assert entry["reason"] == "SAFETY_SHELL_GUARD=false"

@@ -38,15 +38,15 @@ SHELL_PATTERNS: tuple[ShellPattern, ...] = (
         "rm_recursive_force",
         # Both flags in one token (-rf) or in separate tokens (-r -f); the
         # lookaheads scan one command segment, never across ; | &.
-        r"\brm\b(?=[^\n;|&]*(?:\s-[a-zA-Z]*r[a-zA-Z]*(?=\s|$)|--recursive\b))"
-        r"(?=[^\n;|&]*(?:\s-[a-zA-Z]*f[a-zA-Z]*(?=\s|$)|--force\b))",
+        r"\brm\b(?=[^\n;|&]*(?:\s-[a-zA-Z]*r[a-zA-Z]*(?=[\s;&|)<>]|$)|--recursive\b))"
+        r"(?=[^\n;|&]*(?:\s-[a-zA-Z]*f[a-zA-Z]*(?=[\s;&|)<>]|$)|--force\b))",
         "recursive forced delete permanently removes files; there is no undo",
         "rm -rf /tmp/cortex-safety-check",
     ),
     _pattern(
         "docker_compose_down_volumes",
         r"\bdocker(?:-compose|\s+compose)\b[^\n;|&]*?\b(?:down|rm)\b"
-        r"[^\n;|&]*(?:\s-v(?=\s|$)|--volumes\b)",
+        r"[^\n;|&]*(?:\s-v(?=[\s;&|)<>]|$)|--volumes\b)",
         "removes containers and their named volumes; the database data lives in a volume",
         "docker compose down -v",
     ),
@@ -70,7 +70,7 @@ SHELL_PATTERNS: tuple[ShellPattern, ...] = (
     ),
     _pattern(
         "git_clean_force",
-        r"\bgit\b[^\n;|&]*\bclean\b[^\n;|&]*(?:\s-[a-zA-Z]*f[a-zA-Z]*(?=\s|$)|--force\b)",
+        r"\bgit\b[^\n;|&]*\bclean\b[^\n;|&]*(?:\s-[a-zA-Z]*f[a-zA-Z]*(?=[\s;&|)<>]|$)|--force\b)",
         "deletes untracked files and directories; they are not recoverable",
         "git clean -fdx",
     ),
@@ -82,7 +82,7 @@ SHELL_PATTERNS: tuple[ShellPattern, ...] = (
     ),
     _pattern(
         "sql_truncate",
-        r"\btruncate\b",
+        r"(?:\btruncate\s+table\b|\b(?:psql|mysql|sqlite3)\b[^\n;|&]*\btruncate\b)",
         "truncates a table, deleting every row",
         "TRUNCATE TABLE sessions",
     ),
@@ -100,25 +100,27 @@ SHELL_PATTERNS: tuple[ShellPattern, ...] = (
     ),
     _pattern(
         "package_manager_remove",
-        r"\b(?:apt|apt-get|dnf|yum|pacman)\s+(?:remove|purge|erase)\b",
+        r"\b(?:apt|apt-get|dnf|yum)\s+(?:remove|purge|erase)\b"
+        r"|\bpacman\s+-[a-zA-Z]*(?-i:R)[a-zA-Z]*(?=[\s;&|)<>]|$)",
         "removes installed system packages and their dependencies",
         "apt-get purge postgresql",
     ),
     _pattern(
         "npm_global_uninstall",
-        r"\bnpm\s+uninstall\s+(?:-g|--global)\b",
+        r"\bnpm\s+uninstall\b[^\n;|&]*(?:\s-g(?=[\s;&|)<>]|$)|--global\b)",
         "removes globally installed packages",
         "npm uninstall -g cortex-cli",
     ),
     _pattern(
         "pkill",
-        r"\bpkill\b",
+        r"(?:^|[;&|])\s*(?:sudo\s+)?pkill\b",
         "kills processes by name and may kill the agent's own session",
         "pkill -f cortex",
     ),
     _pattern(
         "kill_9",
-        r"\bkill\s+(?:-\w+\s+)*-(?:9|kill|sigkill)\b",
+        r"(?:^|[;&|])\s*(?:sudo\s+)?(?:kill|killall)\s+"
+        r"(?:(?:-\w+\s+)*-(?:9|kill|sigkill)|-s\s+(?:9|kill|sigkill))\b",
         "SIGKILL cannot be caught, so the process cannot clean up",
         "kill -9 1234",
     ),
@@ -127,7 +129,7 @@ SHELL_PATTERNS: tuple[ShellPattern, ...] = (
 
 def classify(command: str) -> ShellPattern | None:
     """Return the first matching pattern, or ``None`` for an unknown command."""
-    for pattern in SHELL_PATTERNS:
-        if pattern.pattern.search(command):
-            return pattern
-    return None
+    return next(
+        (pattern for pattern in SHELL_PATTERNS if pattern.pattern.search(command)),
+        None,
+    )

@@ -307,14 +307,17 @@ class SafetyStore:
         undone: set[Any],
         aborted: set[Any],
     ) -> dict[str, Any]:
-        """Pick an applied entry; undo/abort markers are history, never targets.
+        """Pick an applied entry; history markers are never undo targets.
 
-        ``last`` skips aborted and already-undone entries so repeated calls walk
-        backwards through two consecutive overwrites.
+        ``undo``/``abort`` markers and ``shell_guard`` startup markers are
+        history. ``last`` skips them (and aborted/already-undone entries) so
+        repeated calls walk backwards through consecutive overwrites; a
+        ``shell`` entry stays selectable and prints its manual recipe.
         """
+        excluded = {"undo", "abort", "shell_guard"}
         if target == "last":
             for entry in reversed(entries):
-                if entry.get("action") in {"undo", "abort"}:
+                if entry.get("action") in excluded:
                     continue
                 if entry.get("id") in undone or entry.get("id") in aborted:
                     continue
@@ -322,10 +325,7 @@ class SafetyStore:
             raise UndoError("nothing to undo")
 
         for entry in entries:
-            if entry.get("id") == target and entry.get("action") not in {
-                "undo",
-                "abort",
-            }:
+            if entry.get("id") == target and entry.get("action") not in excluded:
                 return entry
         raise UndoError(f"journal entry not found: {target}")
 
