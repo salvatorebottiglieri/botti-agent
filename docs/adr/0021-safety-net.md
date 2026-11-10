@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-11-10). Slices 1 (#146) and 2 (#147) implemented; #148 designed.
+Accepted (2026-11-10). Slices 1 (#146), 2 (#147) and 3 (#148) implemented.
 
 ## Context
 

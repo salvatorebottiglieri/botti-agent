@@ -1,11 +1,17 @@
 """Shell command execution tool."""
 
 import asyncio
+import logging
 import os
 from typing import Any
 
+from cortex.config.safety import SafetySettings
+from cortex.safety.journal import SafetyStore
+from cortex.safety.shell_guard import classify
 from cortex.tools.interfaces import ToolErrorSeverity, ToolResult
 from cortex.tools.meta.base import BaseMetaTool
+
+logger = logging.getLogger(__name__)
 
 
 class ShellTool(BaseMetaTool):
@@ -15,6 +21,15 @@ class ShellTool(BaseMetaTool):
     Supports running system commands with optional working directory.
     Captures stdout and stderr.
     """
+
+    def __init__(self, safety: SafetySettings | None = None) -> None:
+        self._store = SafetyStore(safety) if safety is not None else None
+        self._guard_enabled = safety.shell_guard if safety is not None else False
+        if self._store is not None and not self._guard_enabled:
+            logger.warning(
+                "SAFETY_SHELL_GUARD=false: the shell deny-list is disabled; "
+                "matched commands are journaled and executed"
+            )
 
     @property
     def name(self) -> str:
@@ -79,6 +94,77 @@ class ShellTool(BaseMetaTool):
                 error="Command cannot contain newlines",
                 error_severity=ToolErrorSeverity.ERROR,
             )
+
+        store = self._store
+        if store is not None:
+            pattern = classify(command)
+            if pattern is not None:
+                if self._guard_enabled:
+                    try:
+                        store.record_shell(
+                            command,
+                            pattern=pattern.name,
+                            status="denied",
+                            reason=pattern.reason,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "could not journal the denied shell command %r: %s",
+                            command,
+                            exc,
+                        )
+                        return ToolResult(
+                            tool_call_id="",
+                            tool_name=self.name,
+                            success=False,
+                            error=(
+                                "Shell guard could not journal the denial; "
+                                "refusing to run the command"
+                            ),
+                            error_severity=ToolErrorSeverity.ERROR,
+                        )
+                    return ToolResult(
+                        tool_call_id="",
+                        tool_name=self.name,
+                        success=False,
+                        error=(
+                            f"Blocked by the shell safety guard: {pattern.reason} "
+                            f"(pattern: {pattern.name}). Run it manually, or set "
+                            "SAFETY_SHELL_GUARD=false (journaled)."
+                        ),
+                        error_severity=ToolErrorSeverity.ERROR,
+                        metadata={
+                            "pattern": pattern.name,
+                            "reason": pattern.reason,
+                            "command": command,
+                        },
+                    )
+
+                # The bypass is explicit in the config but must never be
+                # silent: a failed journal write refuses the command.
+                try:
+                    store.record_shell(
+                        command,
+                        pattern=pattern.name,
+                        status="bypass",
+                        reason=pattern.reason,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "could not journal the shell-guard bypass for %r: %s",
+                        command,
+                        exc,
+                    )
+                    return ToolResult(
+                        tool_call_id="",
+                        tool_name=self.name,
+                        success=False,
+                        error=(
+                            "SAFETY_SHELL_GUARD is disabled but the bypass "
+                            "could not be journaled; refusing to run the command"
+                        ),
+                        error_severity=ToolErrorSeverity.ERROR,
+                    )
 
         # Determine working directory
         if working_dir:

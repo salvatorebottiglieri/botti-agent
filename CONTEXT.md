@@ -224,9 +224,13 @@ A byte-for-byte private copy of a file taken before `file_write` overwrites it, 
 _Avoid_: backup copy, version
 
 **Journal**:
-The append-only JSONL file `journal.jsonl` in the safety store: one line per destructive action (`file_write`, later shell/DB), plus `undo` and `abort` markers. Status is derived by scanning markers; lines are never rewritten or deleted.
+The append-only JSONL file `journal.jsonl` in the safety store: one line per destructive action (`file_write`, `shell`, later DB), plus `shell_guard` disabled markers and `undo`/`abort` markers. Status is derived by scanning markers; lines are never rewritten or deleted.
 _Avoid_: log, audit trail
 
 **Undo**:
 The explicit user command `cortex undo last` (or `cortex undo <journal-id>`) that restores a file snapshot and appends an `undo` marker. It acts on the same filesystem namespace as the write; it prints the manual recipe for actions it cannot restore.
 _Avoid_: rollback, revert
+
+**Shell guard**:
+A table-driven deny-list in `src/cortex/safety/shell_guard.py` checked by the opt-in `shell` tool: a matching command is refused with its pattern name and reason, journaled, and never executed. `SAFETY_SHELL_GUARD=false` is an explicit, journaled bypass. It is a mitigation, not a sandbox; #120's host sidecar is the real trust boundary.
+_Avoid_: sandbox, approval prompt, command filter

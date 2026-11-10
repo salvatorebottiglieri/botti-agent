@@ -74,3 +74,7 @@ safety:
   # Snapshot an existing file before file_write overwrites it (default on).
   # `cortex undo last` restores it. Disabling is explicit.
   snapshot_enabled: true
+  # Deny-list guard for the opt-in `shell` tool (ADR-0021, #148). A matched
+  # destructive command is refused with its pattern and reason and journaled.
+  # `false` executes matched commands but journals each one (never silent).
+  shell_guard: true

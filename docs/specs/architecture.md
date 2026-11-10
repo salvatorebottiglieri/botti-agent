@@ -378,7 +378,9 @@ write needs it; non-root is #120's companion change. `backup:*`
 prefers a host `pg_dump`/`pg_restore` and falls back to
 `docker compose exec` for the local Postgres; the pre-migration dump runs
 inside the Cortex image, which ships PostgreSQL 16 client tools
-([safety-net.md](safety-net.md), ADR-0021).
+([safety-net.md](safety-net.md), ADR-0021). The opt-in `shell` tool checks the
+#148 deny-list and journals every denial or bypass; a pattern match is refused,
+an unknown command still runs — it is a mitigation, not a sandbox.
 
 ## Configuration
 
@@ -387,8 +389,8 @@ injection (ADR-0010): `database`, `llm` (provider, model, base_url, timeout,
 judge model, pricing, circuit breaker), `mqtt` (broker_url, keepalive, reconnect),
 `app` (host, port), `trace` (sidecar URL, timeout, retention), `logging`,
 `learning`, `tools` (allow-list), `safety` (store dir, backup retention,
-snapshot toggle, pre-migration policy). `config.yaml` carries one optional
-section per slice. Sources rank `env > constructor arguments (config.yaml) > .env >
+snapshot toggle, shell-guard bypass, pre-migration policy). `config.yaml` carries
+one optional section per slice. Sources rank `env > constructor arguments (config.yaml) > .env >
 secrets dir` (ADR-0019), implemented by
 `CortexSettings.settings_customise_sources` in `src/cortex/config/base.py`:
 an exported variable beats the YAML section, the YAML section the loader passes
