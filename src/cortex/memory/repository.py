@@ -259,16 +259,22 @@ class PostgresConceptRepository(ConceptRepository):
     """PostgreSQL implementation of concept storage."""
 
     async def store(self, concept: Concept) -> Concept:
-        """Store a new concept."""
+        """Store a new concept.
+
+        The model's id is written explicitly: ``concept.validated`` is emitted
+        before storage, so a DB-generated id would make the event point at a
+        row that does not exist (#153).
+        """
         async with DbSession() as db:
             row = await db.fetchrow(
                 """
-                INSERT INTO concepts (symbolic_repr, natural_lang_repr, derivation_method,
+                INSERT INTO concepts (id, symbolic_repr, natural_lang_repr, derivation_method,
                                      proof_chain, source_facts, confidence, validated)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 RETURNING id, symbolic_repr, natural_lang_repr, derivation_method,
                           proof_chain, source_facts, confidence, validated, created_at
                 """,
+                concept.id,
                 concept.symbolic_repr,
                 concept.natural_lang_repr,
                 concept.derivation_method,
