@@ -8,6 +8,7 @@ journal entry; a snapshot failure refuses the overwrite (fail closed).
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -161,6 +162,79 @@ class TestOverwrite:
             store.undo("last")
         with pytest.raises(UndoError, match=f"action was aborted: {entries[0]['id']}"):
             store.undo(entries[0]["id"])
+
+    async def test_encoding_failure_rolls_back_the_original_file(
+        self, tool: FileWriteTool, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "notes.txt"
+        target.write_text("v1-original", encoding="utf-8")
+        target.chmod(0o644)
+
+        result = await tool.execute(
+            {"path": str(target), "content": "é", "encoding": "ascii"}
+        )
+
+        assert result.success is False
+        assert "Failed to write file" in result.error
+        assert target.read_bytes() == b"v1-original"
+        assert stat.S_IMODE(target.stat().st_mode) == 0o644
+        store = tool._store
+        assert store is not None
+        entries = store.entries()
+        assert [entry["action"] for entry in entries] == ["file_write", "abort"]
+        with pytest.raises(UndoError, match="nothing to undo"):
+            store.undo("last")
+
+    async def test_failed_second_overwrite_rolls_back_to_the_last_good_version(
+        self, tool: FileWriteTool, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "notes.txt"
+        target.write_text("v1", encoding="utf-8")
+        await tool.execute({"path": str(target), "content": "v2"})
+
+        result = await tool.execute(
+            {"path": str(target), "content": "é", "encoding": "ascii"}
+        )
+
+        assert result.success is False
+        assert target.read_bytes() == b"v2"
+        store = tool._store
+        assert store is not None
+        assert [entry["action"] for entry in store.entries()] == [
+            "file_write",
+            "file_write",
+            "abort",
+        ]
+        store.undo("last")
+        assert target.read_text(encoding="utf-8") == "v1"
+
+    async def test_abort_rollback_failure_still_returns_the_write_error(
+        self, tmp_path: Path
+    ) -> None:
+        class RaisingAbortStore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, bool]] = []
+
+            def snapshot(self, path: Path) -> str:
+                return "entry-1"
+
+            def abort(self, entry_id: str, *, restore: bool = False) -> None:
+                self.calls.append((entry_id, restore))
+                raise UndoError("journal unavailable")
+
+        target = tmp_path / "notes.txt"
+        target.write_text("v1", encoding="utf-8")
+        tool = FileWriteTool()
+        fake = RaisingAbortStore()
+        tool._store = fake  # type: ignore[assignment]
+
+        result = await tool.execute(
+            {"path": str(target), "content": "é", "encoding": "ascii"}
+        )
+
+        assert result.success is False
+        assert "Failed to write file" in result.error
+        assert fake.calls == [("entry-1", True)]
 
 
 class TestNonDestructiveWrites:

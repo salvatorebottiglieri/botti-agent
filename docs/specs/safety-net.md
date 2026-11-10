@@ -142,13 +142,17 @@ falls back to the compose container for the CLI commands).
   overwrite: `action: "file_write"`, `targets: [resolved path]`, `snapshot`
   **relative** to `snapshots/` (`<id>/original`), `mode` the original permission
   bits, `status: "applied"`.
-- If the write then fails, the tool appends an abort marker
-  `{id, ts, action: "abort", target_id, status: "aborted"}` and `undo` skips the
-  entry (it is not a destructive action that happened).
-- `cortex undo last` / `cortex undo <id>` restores the snapshot, appends an
-  undo marker `{id, ts, action: "undo", target_id, status: "undone"}`, and
-  prints the restored target. The journal stays append-only: status is derived
-  by scanning markers, never by rewriting a line.
+- If the write then fails (including a post-open encoding or ENOSPC error
+  that already truncated the target), the tool restores the snapshot over the
+  target **before** appending an abort marker
+  `{id, ts, action: "abort", target_id, targets, status: "aborted"}`; `undo`
+  skips the entry. If that rollback itself fails, no abort marker is written:
+  the entry stays applied so `undo` can still recover from the snapshot.
+- `cortex undo last` / `cortex undo <id>` restores the snapshot (and its
+  recorded mode), appends an undo marker
+  `{id, ts, action: "undo", target_id, status: "undone"}`, and prints the
+  restored target. The journal stays append-only: status is derived by scanning
+  markers, never by rewriting a line.
 - `undo last` targets the newest entry that is neither undone nor aborted. If
   that entry has no snapshot (a future shell/db action), the command prints its
   `undo_recipe` and exits non-zero instead of pretending to undo it.

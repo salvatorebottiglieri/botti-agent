@@ -24,11 +24,11 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
         self._store = SafetyStore(safety) if safety is not None else None
 
     def _abort_snapshot(self, snapshot_id: str | None) -> None:
-        """Mark a snapshot whose write failed so undo does not consume it."""
+        """Roll a failed write back before marking its snapshot aborted."""
         if snapshot_id is None or self._store is None:
             return
         try:
-            self._store.abort(snapshot_id)
+            self._store.abort(snapshot_id, restore=True)
         except Exception as exc:  # the write error is the one the caller sees
             logger.warning("could not abort snapshot %s: %s", snapshot_id, exc)
 

@@ -158,8 +158,15 @@ class SafetyStore:
                 entries.append(entry)
         return entries
 
-    def abort(self, entry_id: str) -> None:
-        """Mark an applied entry as aborted because its write never happened."""
+    def abort(self, entry_id: str, *, restore: bool = False) -> None:
+        """Mark an applied entry as aborted; optionally roll the target back first.
+
+        A failed write may have truncated the target before raising. With
+        ``restore=True`` the snapshot is put back before the abort marker is
+        appended, so the last good content survives. If that restore fails, the
+        marker is not written and the entry stays applied: ``undo`` can still
+        recover from the snapshot.
+        """
         entry = next(
             (
                 candidate
@@ -171,6 +178,9 @@ class SafetyStore:
         )
         if entry is None:
             raise UndoError(f"journal entry not found: {entry_id}")
+
+        if restore:
+            self._restore_entry(entry)
 
         marker: dict[str, Any] = {
             "id": uuid.uuid4().hex,
@@ -200,13 +210,34 @@ class SafetyStore:
         }
         entry = self._select(entries, target, undone, aborted)
         entry_id = str(entry.get("id", ""))
-        action = str(entry.get("action", "unknown"))
-        recipe = entry.get("undo_recipe")
         if entry_id in aborted:
             raise UndoError(f"action was aborted: {entry_id}")
         if entry_id in undone:
             raise UndoError(f"already undone: {entry_id}")
 
+        result = self._restore_entry(entry)
+
+        marker: dict[str, Any] = {
+            "id": uuid.uuid4().hex,
+            "ts": datetime.now(UTC).isoformat(),
+            "action": "undo",
+            "target_id": entry_id,
+            "targets": entry.get("targets", []),
+            "status": "undone",
+        }
+        try:
+            self._append(marker)
+        except Exception as exc:
+            raise UndoError(
+                f"restored {result.target} but could not append the undo marker: {exc}"
+            ) from exc
+        return result
+
+    def _restore_entry(self, entry: dict[str, Any]) -> UndoResult:
+        """Validate an entry's snapshot and restore it over its target."""
+        entry_id = str(entry.get("id", ""))
+        action = str(entry.get("action", "unknown"))
+        recipe = entry.get("undo_recipe")
         targets = entry.get("targets")
         raw_snapshot = entry.get("snapshot")
         if not isinstance(targets, list) or not targets or not isinstance(raw_snapshot, str):
@@ -226,21 +257,6 @@ class SafetyStore:
         target_path = Path(str(targets[0]))
         mode = entry.get("mode")
         self._restore(snapshot_path, target_path, mode if isinstance(mode, int) else None)
-
-        marker: dict[str, Any] = {
-            "id": uuid.uuid4().hex,
-            "ts": datetime.now(UTC).isoformat(),
-            "action": "undo",
-            "target_id": entry_id,
-            "targets": targets,
-            "status": "undone",
-        }
-        try:
-            self._append(marker)
-        except Exception as exc:
-            raise UndoError(
-                f"restored {target_path} but could not append the undo marker: {exc}"
-            ) from exc
         return UndoResult(
             target=target_path,
             snapshot=snapshot_path,

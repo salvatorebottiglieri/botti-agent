@@ -349,6 +349,51 @@ class TestUndo:
         assert result.entry_id == newer
         assert target.read_text(encoding="utf-8") == "v2"
 
+    def test_abort_with_restore_rolls_back_before_the_marker(
+        self, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "notes.txt"
+        target.write_text("v1", encoding="utf-8")
+        store = _store(tmp_path)
+        entry_id = store.snapshot(target)
+        assert entry_id is not None
+        target.write_text("v2", encoding="utf-8")
+
+        store.abort(entry_id, restore=True)
+
+        assert target.read_text(encoding="utf-8") == "v1"
+        assert [entry["action"] for entry in store.entries()] == [
+            "file_write",
+            "abort",
+        ]
+        with pytest.raises(UndoError, match="nothing to undo"):
+            store.undo("last")
+
+    def test_abort_restore_failure_writes_no_marker_and_undo_recovers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "notes.txt"
+        target.write_text("v1", encoding="utf-8")
+        store = _store(tmp_path)
+        entry_id = store.snapshot(target)
+        assert entry_id is not None
+        target.write_text("v2", encoding="utf-8")
+
+        def fail_restore(
+            self: SafetyStore, snapshot: Path, target: Path, mode: int | None
+        ) -> None:
+            raise UndoError("restore failed")
+
+        monkeypatch.setattr(SafetyStore, "_restore", fail_restore)
+
+        with pytest.raises(UndoError, match="restore failed"):
+            store.abort(entry_id, restore=True)
+
+        assert [entry["action"] for entry in store.entries()] == ["file_write"]
+        monkeypatch.undo()
+        store.undo("last")
+        assert target.read_text(encoding="utf-8") == "v1"
+
     def test_unknown_id_raises(self, tmp_path: Path) -> None:
         target = tmp_path / "notes.txt"
         target.write_text("v1", encoding="utf-8")
