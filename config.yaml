@@ -60,3 +60,14 @@ tools:
   #    - file_read
   #    - grep
   #    - ask_user
+
+safety:
+  # Backups (and, in #147/#148, snapshots and the journal) live outside the
+  # repo and every Docker volume (ADR-0021). `~` expands to the user's home.
+  store_dir: "~/.local/share/cortex"
+  # Newest N backups kept; 0 disables pruning.
+  backup_retention: 14
+  # Take a dump before applying pending migrations. If the dump fails, startup
+  # aborts unless require_backup_before_migration is false.
+  backup_on_migration: true
+  require_backup_before_migration: true

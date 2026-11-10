@@ -5,7 +5,7 @@
 > Subsystems with their own spec: [agentic-loop.md](agentic-loop.md),
 > [evidence-system.md](evidence-system.md), [minion-protocol.md](minion-protocol.md),
 > [eval-system.md](eval-system.md), [trace-system.md](trace-system.md),
-> [rule-system.md](rule-system.md).
+> [rule-system.md](rule-system.md), [safety-net.md](safety-net.md).
 
 ## Sources of truth
 
@@ -361,11 +361,24 @@ SSE wire contract for `/chat/stream` is in [agentic-loop.md](agentic-loop.md).
 |---|---|---|
 | `postgres` | `pgvector/pgvector:pg16` | Port 5432 (host: `${POSTGRES_HOST_PORT:-5433}`) |
 | `mosquitto` | `eclipse-mosquitto:2` | Port 1883; broker config in `docker/mosquitto.conf` |
-| `cortex` | built from `Dockerfile` | Port 8000; depends on healthy postgres + mosquitto |
+| `cortex` | built from `Dockerfile` | Port 8000; runs as root for now (non-root is #120); host safety store mounted at `/var/lib/cortex/safety`; depends on healthy postgres + mosquitto and the one-shot `safety-store` |
 | `rizzo-pii` | pinned upstream `Rizzo-AI-Academy/rizzo-pii@v2.0.0` | Opt-in `--profile trace`; pseudonymization sidecar for trace capture |
 
 CLI (`cortex <command>`, `src/cortex/cli.py`): `token:create`, `traces:cleanup`,
-`rules:list`, `rules:show`, `rules:archive`, `memory:backfill-embeddings`, `version`.
+`rules:list`, `rules:show`, `rules:archive`, `memory:backfill-embeddings`,
+`backup:create`, `backup:restore`, `version`.
+
+Backups and the safety store live at `SAFETY_STORE_DIR`
+(`~/.local/share/cortex`), outside the repo and outside every Compose volume:
+a backup inside the volume dies with `docker compose down -v`. The one-shot
+`safety-store` service creates `backups/` and `snapshots/` and chowns the store
+to the host user; each new dump is chowned to the store owner, mode `0600`.
+The `cortex` container still runs as root for now — the mosquitto passwd volume
+write needs it; non-root is #120's companion change. `backup:*`
+prefers a host `pg_dump`/`pg_restore` and falls back to
+`docker compose exec` for the local Postgres; the pre-migration dump runs
+inside the Cortex image, which ships PostgreSQL 16 client tools
+([safety-net.md](safety-net.md), ADR-0021).
 
 ## Configuration
 
@@ -373,7 +386,8 @@ CLI (`cortex <command>`, `src/cortex/cli.py`): `token:create`, `traces:cleanup`,
 injection (ADR-0010): `database`, `llm` (provider, model, base_url, timeout,
 judge model, pricing, circuit breaker), `mqtt` (broker_url, keepalive, reconnect),
 `app` (host, port), `trace` (sidecar URL, timeout, retention), `logging`,
-`learning`, `tools` (allow-list). `config.yaml` carries one optional section
+`learning`, `tools` (allow-list), `safety` (store dir, backup retention,
+pre-migration policy). `config.yaml` carries one optional section
 per slice. Sources rank `env > constructor arguments (config.yaml) > .env >
 secrets dir` (ADR-0019), implemented by
 `CortexSettings.settings_customise_sources` in `src/cortex/config/base.py`:
@@ -382,7 +396,7 @@ as a constructor argument beats `.env`, and `.env` beats the field default.
 
 Each slice reads its own environment namespace: `DATABASE_URL`/`DB_POOL_*`,
 `LLM_*` (plus the legacy `CIRCUIT_BREAKER_*` spellings), `MQTT_*`, `APP_*`,
-`TRACE_*`, `LOG_*`, `LEARNING_*`, `TOOLS_*`. The slices are nested fields of
+`TRACE_*`, `LOG_*`, `LEARNING_*`, `TOOLS_*`, `SAFETY_*`. The slices are nested fields of
 the root, so a bare variable named after one (`APP`, `LLM`, `TRACE`, …) is read
 as that slice and surfaces as a validation error rather than being ignored.
 

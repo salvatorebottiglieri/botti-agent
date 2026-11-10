@@ -7,6 +7,7 @@ import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -317,6 +318,96 @@ def memory_backfill_embeddings(
             )
 
     asyncio.run(run())
+
+
+@cli.command("backup:create", help="Create a database backup in the safety store")
+def backup_create(
+    db_url: str | None = typer.Option(None, "--db-url", help="Database URL"),
+    out: Path | None = typer.Option(
+        None, "--out", help="Store directory override (defaults to SAFETY_STORE_DIR)"
+    ),
+) -> None:
+    """Take a custom-format dump, prune by retention, print path and size.
+
+    The password travels in PGPASSWORD; the command line and output carry only
+    the sanitized URL. A host ``pg_dump`` is preferred; the local compose
+    Postgres is the fallback (ADR-0021).
+    """
+    import asyncio
+
+    from cortex.config.loader import get_settings
+    from cortex.safety.backup import BackupError, BackupService, PgClient
+
+    settings = get_settings()
+    service = BackupService(
+        settings.safety,
+        db_url or settings.database.database_url,
+        store_dir=out,
+        pg_client=PgClient(allow_docker_fallback=True),
+    )
+
+    try:
+        backup = asyncio.run(service.create())
+    except BackupError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"backup: {backup.path}")
+    typer.echo(f"size: {backup.size_bytes} bytes")
+
+
+@cli.command("backup:restore", help="Restore a database backup")
+def backup_restore(
+    backup_id: str = typer.Argument(..., help="Backup id or explicit path"),
+    db_url: str | None = typer.Option(None, "--db-url", help="Database URL"),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt"),
+    force: bool = typer.Option(
+        False, "--force", help="Restore even while the database is in use"
+    ),
+) -> None:
+    """Restore a dump with ``--clean --if-exists`` after confirmation.
+
+    Refuses while the target database has other connections unless ``--force``.
+    The confirmation prints the sanitized URL, never the password.
+    """
+    import asyncio
+
+    from cortex.config.loader import get_settings
+    from cortex.safety.backup import (
+        BackupError,
+        BackupService,
+        PgClient,
+        sanitize_database_url,
+    )
+
+    settings = get_settings()
+    database_url = db_url or settings.database.database_url
+    service = BackupService(
+        settings.safety,
+        database_url,
+        pg_client=PgClient(allow_docker_fallback=True),
+    )
+
+    try:
+        backup_path = service.resolve(backup_id)
+    except BackupError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    if not yes:
+        typer.confirm(
+            f"Restore {backup_path} into {sanitize_database_url(database_url)}? "
+            "This overwrites the database.",
+            abort=True,
+        )
+
+    try:
+        restored = asyncio.run(service.restore(str(backup_path), force=force))
+    except BackupError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"restored: {restored.path}")
 
 
 @cli.command("version", help="Show Cortex version")

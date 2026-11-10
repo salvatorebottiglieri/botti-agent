@@ -40,6 +40,20 @@ services:
       timeout: 10s
       retries: 3
 
+  # One-shot: the host safety store (ADR-0021) must exist and belong to the
+  # host user. Docker creates a missing bind source as root; this creates the
+  # subdirectories and chowns the whole store before the app starts. The path
+  # is the same one the host CLI uses by default. The app container still runs
+  # as root (the mosquitto passwd volume write needs it); non-root is #120.
+  safety-store:
+    image: busybox:1.36
+    container_name: cortex-safety-store
+    user: "0:0"
+    volumes:
+      - ${HOME}/.local/share/cortex:/store
+    command: ["sh", "-c", "mkdir -p /store/backups /store/snapshots && chmod 0700 /store /store/backups /store/snapshots && chown -R ${UID:-1000}:${GID:-1000} /store"]
+    restart: "no"
+
   cortex:
     build:
       context: .
@@ -63,12 +77,17 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
       LOG_LEVEL: INFO
       LOG_FORMAT: console
+      # Pre-migration dumps write here; mounted from the host store below.
+      SAFETY_STORE_DIR: /var/lib/cortex/safety
     volumes:
       - mosquitto_config:/mosquitto/config:rw
       - ./src/cortex/api/static:/app/src/cortex/api/static:ro
+      - ${HOME}/.local/share/cortex:/var/lib/cortex/safety
     ports:
       - "8000:8000"
     depends_on:
+      safety-store:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       mosquitto:
