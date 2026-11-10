@@ -58,13 +58,14 @@ def register_meta_tools(
 def get_meta_tools(safety: SafetySettings | None = None) -> list[Tool]:
     """Get a list of all meta tool instances.
 
-    ``safety`` enables pre-overwrite snapshots in ``file_write``; without it
-    (the eval sandbox and existing tests) the tool behaves as before.
+    ``safety`` enables pre-overwrite snapshots in ``file_write`` and the
+    deny-list in ``shell``; without it (the eval sandbox and existing tests)
+    both tools behave as before.
     """
     return [
         FileReadTool(),
         FileWriteTool(safety),
         GrepTool(),
-        ShellTool(),
+        ShellTool(safety),
         AskUserTool(),
     ]

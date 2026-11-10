@@ -3,10 +3,9 @@
 > Single source of truth for the mechanisms that make an agent's destructive
 > action recoverable. Rationale: ADR-0021. Work items: #145 (umbrella), #146
 > (DB backup, implemented), #147 (file snapshots, implemented), #148 (shell
-> guard, designed).
+> guard, implemented).
 >
-> **Status: slices 1 (#146) and 2 (#147) implemented.** Slice #148 is designed
-> here but not built yet.
+> **Status: slices 1 (#146), 2 (#147) and 3 (#148) implemented.**
 
 ## Why
 
@@ -21,7 +20,7 @@ The agent acts through three seams; each needs a net.
 
 | Seam | What it can destroy | Net today |
 |---|---|---|
-| `shell` (opt-in since #134) | anything: `rm -rf`, `docker compose down -v`, `git reset --hard`, `DROP TABLE` | none |
+| `shell` (opt-in since #134) | anything: `rm -rf`, `docker compose down -v`, `git reset --hard`, `DROP TABLE` | deny-list + journal (#148) |
 | `file_write` | overwrites an existing file, no copy | none |
 | migrations / DDL at boot | schema and data | pre-migration dump (#146) |
 
@@ -82,8 +81,10 @@ non-root/#120 work lands.
 | `SAFETY_BACKUP_ON_MIGRATION` | `true` | Dump before applying pending migrations |
 | `SAFETY_REQUIRE_BACKUP_BEFORE_MIGRATION` | `true` | Abort when the pre-migration dump fails |
 | `SAFETY_SNAPSHOT_ENABLED` | `true` | Snapshot an existing file before `file_write` overwrites it |
+| `SAFETY_SHELL_GUARD` | `true` | Deny-list guard for the opt-in `shell` tool; `false` is journaled |
 
-Slice #148 adds its own field when implemented.
+Slice #148 adds no other field: the guard is table-driven in
+`src/cortex/safety/shell_guard.py`, so adding a pattern needs no configuration.
 
 ## Slice 1 — DB backup/restore (#146)
 
@@ -176,22 +177,37 @@ falls back to the compose container for the CLI commands).
 - Retention of old snapshots/journal entries is deferred: the journal is the
   undo history and pruning it silently would break `undo`.
 
-## Slice 3 — shell guard (#148, designed)
+## Slice 3 — shell guard (#148, implemented)
 
-- A table-driven deny-list in one module; every entry carries the command it is
-  meant to stop. Examples: `rm -rf`, `docker (compose )?(down|rm).*(-v|--volumes)`,
-  `docker volume rm`, `docker system prune`, `git reset --hard`,
-  `git clean -fdx`, `DROP (TABLE|DATABASE|SCHEMA)`, `TRUNCATE`, `mkfs`,
-  `dd of=`, package-manager global uninstalls, `pkill`/`kill -9` on the app.
-- A match returns an error `ToolResult` with the matched pattern and reason;
-  the command is not executed.
-- Every classified command (denied or approved) appends a journal entry with
-  the pattern. Benign commands write nothing and pay one regex pass.
-- Bypass: `SAFETY_SHELL_GUARD=false` disables the guard for the process; the
-  startup/journal records the bypass. It is a mitigation, not a sandbox: an
-  unknown command still executes until #120 moves execution to the host
-  sidecar with policy + consent.
-- Tests are table-driven from the same list, so a pattern without a test fails.
+- A table-driven deny-list in `src/cortex/safety/shell_guard.py`; every entry
+  carries `name`, a compiled `pattern`, the `reason`, and an `example` command
+  it is meant to stop. Examples: `rm -rf`, `docker (compose )?(down|rm)` with
+  `-v`/`--volumes`, `docker volume rm`, `docker system prune`,
+  `git reset --hard`, `git clean -fdx`, `DROP (TABLE|DATABASE|SCHEMA)`,
+  `TRUNCATE`, `mkfs`, `dd of=`, package-manager global uninstalls,
+  `pkill`/`kill -9`.
+- A match returns an error `ToolResult` with the matched pattern name and
+  reason; the command is not executed. Benign commands write nothing and pay
+  one regex pass. The deny-list fails open on an unknown command: it is a
+  mitigation, not a sandbox.
+- Every classified command appends a journal entry
+  `{id, ts, action: "shell", targets: [command], snapshot: null,
+  undo_recipe, status: "denied"|"bypass", pattern, reason}`. A denied command
+  is journaled before the error is returned; a bypassed command is journaled
+  before execution. If the journal write fails, the command is refused — denied
+  or bypassed alike — so no matched command runs silently.
+- Bypass: `SAFETY_SHELL_GUARD=false` disables the guard for the process. The
+  startup logs a warning and the store records a
+  `{action: "shell_guard", targets: [], status: "disabled",
+  reason: "SAFETY_SHELL_GUARD=false"}` entry; every matched command that then
+  executes is journaled with `status: "bypass"`. It is never silent.
+- `ShellTool(safety=None)` has no guard (eval sandbox and existing tests);
+  production injects `settings.safety` through `register_meta_tools`.
+- Tests are table-driven from the same list: each `ShellPattern.example` must
+  match its pattern, and a benign table must match none. A pattern without a
+  test fails.
+- #120's host sidecar with policy + consent remains the real trust boundary;
+  this slice is the in-container mitigation for the opt-in `shell` tool.
 
 ## Invariants
 

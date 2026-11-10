@@ -36,6 +36,7 @@ class TestDefaults:
         assert safety.backup_on_migration is True
         assert safety.require_backup_before_migration is True
         assert safety.snapshot_enabled is True
+        assert safety.shell_guard is True
 
     def test_default_store_is_outside_the_repository(self) -> None:
         """A store inside the repo would die with a fresh clone (ADR-0021)."""
@@ -63,6 +64,7 @@ class TestEnvOverrides:
         monkeypatch.setenv("SAFETY_BACKUP_ON_MIGRATION", "false")
         monkeypatch.setenv("SAFETY_REQUIRE_BACKUP_BEFORE_MIGRATION", "false")
         monkeypatch.setenv("SAFETY_SNAPSHOT_ENABLED", "false")
+        monkeypatch.setenv("SAFETY_SHELL_GUARD", "false")
 
         safety = SafetySettings(_env_file=None)
 
@@ -71,6 +73,7 @@ class TestEnvOverrides:
         assert safety.backup_on_migration is False
         assert safety.require_backup_before_migration is False
         assert safety.snapshot_enabled is False
+        assert safety.shell_guard is False
 
     def test_tilde_expands_in_a_constructor_value(self) -> None:
         safety = SafetySettings(store_dir="~/safety", _env_file=None)

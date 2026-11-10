@@ -133,6 +133,43 @@ class SafetyStore:
             raise UndoError(f"could not journal the snapshot of {path}: {exc}") from exc
         return entry_id
 
+    def record_shell(
+        self, command: str, *, pattern: str, status: str, reason: str
+    ) -> None:
+        """Journal one classified shell command (denied or bypassed).
+
+        The journal is written before the denial is returned or the bypassed
+        command executes, so a failed write lets the caller refuse to run it.
+        """
+        self._append(
+            {
+                "id": uuid.uuid4().hex,
+                "ts": datetime.now(UTC).isoformat(),
+                "action": "shell",
+                "targets": [command],
+                "snapshot": None,
+                "undo_recipe": f"manual: {command}",
+                "status": status,
+                "pattern": pattern,
+                "reason": reason,
+            }
+        )
+
+    def record_guard_disabled(self) -> None:
+        """Journal that the shell guard was disabled by configuration."""
+        self._append(
+            {
+                "id": uuid.uuid4().hex,
+                "ts": datetime.now(UTC).isoformat(),
+                "action": "shell_guard",
+                "targets": [],
+                "snapshot": None,
+                "undo_recipe": "n/a",
+                "status": "disabled",
+                "reason": "SAFETY_SHELL_GUARD=false",
+            }
+        )
+
     def entries(self) -> list[dict[str, Any]]:
         """The journal in file order; blank or malformed lines are skipped."""
         if not self.journal_path.exists():

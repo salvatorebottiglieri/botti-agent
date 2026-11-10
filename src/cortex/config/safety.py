@@ -42,6 +42,10 @@ class SafetySettings(CortexSettings):
         default=True,
         description="Snapshot existing files before file_write overwrites them",
     )
+    shell_guard: bool = Field(
+        default=True,
+        description="Deny-list guard for the opt-in shell tool; false is journaled",
+    )
 
     @field_validator("store_dir", mode="before")
     @classmethod
