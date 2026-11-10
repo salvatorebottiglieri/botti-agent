@@ -1,6 +1,8 @@
 """Async database session context manager."""
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, cast
 
 import asyncpg
@@ -39,6 +41,19 @@ class DbSession:
             pool = await get_pool()
             await pool.release(self._conn)
             self._conn = None
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator["DbSession"]:
+        """Run the enclosed statements as one transaction on this connection.
+
+        Commits on a clean exit and rolls back when the block raises. The CLI's
+        adapter over its own asyncpg connection also exposes ``transaction()``,
+        so callers use the same surface with either session.
+        """
+        if self._conn is None:
+            raise RuntimeError("Session not active. Use 'async with DbSession()'")
+        async with self._conn.transaction():
+            yield self
 
     async def fetch(self, query: str, *args: Any) -> list[asyncpg.Record]:
         """

@@ -238,6 +238,10 @@ class TestPostgresFactRepositoryBackfill:
         mock.fetchrow = AsyncMock()
         mock.fetch = AsyncMock()
         mock.execute = AsyncMock()
+        transaction = MagicMock()
+        transaction.__aenter__ = AsyncMock(return_value=None)
+        transaction.__aexit__ = AsyncMock(return_value=None)
+        mock.transaction = MagicMock(return_value=transaction)
         return mock
 
     @pytest.fixture
@@ -263,6 +267,25 @@ class TestPostgresFactRepositoryBackfill:
         assert "UPDATE facts SET embedding = $2::vector WHERE id = $1" in second_sql
         assert (first_id, first_literal) == (ids[0], "[0.1,0.2,0.3]")
         assert (second_id, second_literal) == (ids[1], "[-0.4,0.5,-0.6]")
+
+    @pytest.mark.asyncio
+    async def test_backfill_wraps_every_update_in_one_transaction(self, repo_with_mock):
+        """Witness: one autocommitted UPDATE per pair leaves partial writes
+        when a later pair fails; the batch must open a transaction before the
+        first UPDATE and close it after the last."""
+        repo, mock_db_session = repo_with_mock
+        events: list[str] = []
+        mock_db_session.execute = AsyncMock(side_effect=lambda *args: events.append("update"))
+        transaction = mock_db_session.transaction.return_value
+        transaction.__aenter__ = AsyncMock(side_effect=lambda: events.append("begin"))
+        transaction.__aexit__ = AsyncMock(side_effect=lambda *args: events.append("commit"))
+
+        await repo.backfill_embeddings(
+            [uuid4(), uuid4()], [[0.1, 0.2], [0.3, 0.4]]
+        )
+
+        assert events == ["begin", "update", "update", "commit"]
+        mock_db_session.transaction.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_backfill_length_mismatch_raises_before_any_write(self, repo_with_mock):

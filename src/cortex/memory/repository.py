@@ -402,9 +402,11 @@ class PostgresFactRepository(FactRepository):
     ) -> None:
         """Store embeddings for existing facts, one UPDATE per pair.
 
-        The ivfflat index is built before bulk embedding; run
-        ``REINDEX INDEX idx_facts_embedding;`` after a large backfill so the
-        index reflects the new vectors.
+        The pairs are written in a single transaction: a failure on one leaves
+        the whole batch unembedded, so a retry re-selects all of them. The
+        ivfflat index is built before bulk embedding; run
+        ``REINDEX INDEX CONCURRENTLY idx_facts_embedding`` after a large
+        backfill so the index reflects the new vectors.
         """
         if len(fact_ids) != len(embeddings):
             raise ValueError(
@@ -413,12 +415,13 @@ class PostgresFactRepository(FactRepository):
             )
 
         async with self._session() as db:
-            for fact_id, embedding in zip(fact_ids, embeddings, strict=True):
-                await db.execute(
-                    "UPDATE facts SET embedding = $2::vector WHERE id = $1",
-                    fact_id,
-                    _vector_literal(embedding),
-                )
+            async with db.transaction():
+                for fact_id, embedding in zip(fact_ids, embeddings, strict=True):
+                    await db.execute(
+                        "UPDATE facts SET embedding = $2::vector WHERE id = $1",
+                        fact_id,
+                        _vector_literal(embedding),
+                    )
 
     def _row_to_fact(self, row: Any) -> Fact:
         """Convert a database row to a Fact model."""

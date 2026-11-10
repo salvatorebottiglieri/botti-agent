@@ -100,6 +100,16 @@ class FakeLLMClient:
         return list(self._vectors[text])
 
 
+class FailingBackfillRepository(FakeFactRepository):
+    """Records the attempted batch write, then fails."""
+
+    async def backfill_embeddings(
+        self, fact_ids: list[UUID], embeddings: list[list[float]]
+    ) -> None:
+        self.backfill_calls.append((list(fact_ids), list(embeddings)))
+        raise RuntimeError("write failed")
+
+
 class TestBackfillBatch:
     async def test_fills_one_batch_with_natural_text_and_aligned_vectors(self):
         """Witness: embedding the symbolic repr instead of the natural one (or
@@ -166,6 +176,19 @@ class TestBackfillBatch:
 
         assert repo.backfill_calls == [([healthy.id], [[0.5, 0.6]])]
         assert stats == BackfillStats(scanned=2, updated=1, failed=1)
+
+    async def test_backfill_write_failure_propagates(self):
+        """Witness: a failed batch write is not a success; the runner must not
+        return counts that hide it. The transaction leaves the batch null, so
+        a later run retries it."""
+        fact = _fact(natural="alpha")
+        repo = FailingBackfillRepository([[fact]])
+        client = FakeLLMClient(vectors={"alpha": [0.1]})
+
+        with pytest.raises(RuntimeError, match="write failed"):
+            await EmbeddingBackfillRunner(repo, client, batch_size=10).run()
+
+        assert repo.backfill_calls == [([fact.id], [[0.1]])]
 
     async def test_all_failed_batch_advances_the_cursor_and_terminates(self):
         """Witness: not advancing after_id when every embed failed loops on the

@@ -109,7 +109,11 @@ class TestBackfillEmbeddingsCommand:
         assert result.exit_code == 0, result.output
         connect.assert_awaited_once_with("postgresql://settings:5432/cortex")
         assert "scanned 5, updated 4, failed 1" in result.output
-        assert "run REINDEX INDEX idx_facts_embedding; after a large backfill" in result.output
+        assert (
+            "run REINDEX INDEX CONCURRENTLY idx_facts_embedding after a large backfill"
+            in result.output
+        )
+        assert "reindexed idx_facts_embedding" not in result.output
         conn.execute.assert_not_awaited()
         conn.close.assert_awaited_once()
 
@@ -147,21 +151,25 @@ class TestBackfillEmbeddingsCommand:
         result = runner.invoke(cli, ["memory:backfill-embeddings", "--reindex"])
 
         assert result.exit_code == 0, result.output
-        conn.execute.assert_awaited_once_with("REINDEX INDEX idx_facts_embedding")
+        conn.execute.assert_awaited_once_with(
+            "REINDEX INDEX CONCURRENTLY idx_facts_embedding"
+        )
         assert "reindexed idx_facts_embedding" in result.output
-        assert "run REINDEX INDEX idx_facts_embedding; after a large backfill" not in result.output
+        assert "run REINDEX" not in result.output
 
-    def test_reindex_is_skipped_when_nothing_was_updated(self, fake_settings, fake_db, fake_runner):
-        """Witness: rebuilding an unchanged index on every empty/idempotent run
-        is wasted work; the flag is conditional on updated > 0."""
+    def test_reindex_runs_even_when_nothing_was_updated(self, fake_settings, fake_db, fake_runner):
+        """Witness: an earlier aborted run may have left the index stale, so
+        the explicit flag is unconditional once the backfill completes."""
         _, conn = fake_db
         fake_runner.stats = BackfillStats(scanned=3, updated=0, failed=3)
 
         result = runner.invoke(cli, ["memory:backfill-embeddings", "--reindex"])
 
         assert result.exit_code == 0, result.output
-        conn.execute.assert_not_awaited()
-        assert "reindexed idx_facts_embedding" not in result.output
+        conn.execute.assert_awaited_once_with(
+            "REINDEX INDEX CONCURRENTLY idx_facts_embedding"
+        )
+        assert "reindexed idx_facts_embedding" in result.output
         assert "scanned 3, updated 0, failed 3" in result.output
 
     def test_no_updated_rows_prints_no_reindex_reminder(self, fake_settings, fake_db, fake_runner):

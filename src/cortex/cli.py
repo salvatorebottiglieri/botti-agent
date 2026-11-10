@@ -275,14 +275,15 @@ def memory_backfill_embeddings(
     db_url: str | None = typer.Option(None, "--db-url", help="Database URL"),
     batch_size: int = typer.Option(100, "--batch-size", min=1, help="Facts per batch"),
     reindex: bool = typer.Option(
-        False, "--reindex", help="Rebuild idx_facts_embedding after the backfill"
+        False, "--reindex", help="Rebuild idx_facts_embedding concurrently after the run"
     ),
 ) -> None:
     """Embed facts whose embedding is still NULL, then report the counts.
 
     Bounded keyset batches; a provider failure leaves that row null and counts
     it failed without aborting the run. The ivfflat index is built before bulk
-    embedding, so a large backfill needs ``REINDEX`` (``--reindex`` does it).
+    embedding, so a large backfill needs a concurrent ``REINDEX``
+    (``--reindex`` does it, even after a run that updated nothing).
     """
     import asyncio
 
@@ -302,17 +303,18 @@ def memory_backfill_embeddings(
             stats = await EmbeddingBackfillRunner(
                 repository, client, batch_size=batch_size
             ).run()
-            if reindex and stats.updated > 0:
-                await conn.execute("REINDEX INDEX idx_facts_embedding")
+            if reindex:
+                await conn.execute("REINDEX INDEX CONCURRENTLY idx_facts_embedding")
         finally:
             await conn.close()
 
         typer.echo(f"scanned {stats.scanned}, updated {stats.updated}, failed {stats.failed}")
-        if stats.updated > 0:
-            if reindex:
-                typer.echo("reindexed idx_facts_embedding")
-            else:
-                typer.echo("run REINDEX INDEX idx_facts_embedding; after a large backfill")
+        if reindex:
+            typer.echo("reindexed idx_facts_embedding")
+        elif stats.updated > 0:
+            typer.echo(
+                "run REINDEX INDEX CONCURRENTLY idx_facts_embedding after a large backfill"
+            )
 
     asyncio.run(run())
 

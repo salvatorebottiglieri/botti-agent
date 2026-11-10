@@ -221,8 +221,10 @@ class FactRepository(ABC):
         """
         List active facts whose embedding is still NULL, ordered by id.
 
-        The keyset cursor (``id > after_id``) lets a caller page without
-        skipping rows that were written between two queries.
+        The keyset cursor (``id > after_id``) avoids the offset drift of
+        ``LIMIT/OFFSET`` while rows are being written. A fact inserted with an
+        id below the cursor is not seen by the current run; a later run's null
+        predicate picks it up.
 
         Args:
             limit: Maximum number of facts to return.
