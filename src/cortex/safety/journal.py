@@ -5,13 +5,17 @@
 * ``snapshots/<journal-id>/original`` is a byte-for-byte private copy of a
   file before a destructive overwrite;
 * ``journal.jsonl`` is append-only: one JSON line per destructive action and
-  one per undo marker, never rewritten or deleted;
+  one per undo/abort marker, never rewritten or deleted;
 * :meth:`SafetyStore.undo` restores a snapshot and records the marker, or
   raises :class:`UndoError` with the recorded recipe when it cannot.
 
 The store lives under ``SAFETY_STORE_DIR`` (``~/.local/share/cortex``),
 outside the repo and every Docker volume, for the same reason as the backups
-(ADR-0021).
+(ADR-0021). New artifacts are chowned best-effort to the store owner so a root
+container's files stay readable by the host CLI; the snapshot path is stored
+relative to ``snapshots/`` so the journal is portable across the host/container
+bind mount. The target path still assumes one filesystem namespace: ``undo``
+must run where the original path exists (host-local Cortex for file undo).
 """
 
 from __future__ import annotations
@@ -49,18 +53,42 @@ class SafetyStore:
     """Snapshots, the append-only journal, and undo."""
 
     def __init__(self, settings: SafetySettings) -> None:
+        # No filesystem access here: an unwritable store must not abort startup,
+        # and disabling snapshots must create nothing. Directories are created
+        # lazily by snapshot()/_append().
         self._settings = settings
         self.store_dir = Path(settings.store_dir)
         self.snapshots_dir = self.store_dir / "snapshots"
         self.journal_path = self.store_dir / "journal.jsonl"
-        self._ensure_snapshots_dir()
+
+    def _ensure_store_dir(self) -> None:
+        self.store_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            self.store_dir.chmod(0o700)
+        except OSError as exc:  # a mounted store may refuse the chmod
+            logger.warning("could not set mode 0700 on %s: %s", self.store_dir, exc)
 
     def _ensure_snapshots_dir(self) -> None:
-        self.snapshots_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._ensure_store_dir()
+        self.snapshots_dir.mkdir(exist_ok=True, mode=0o700)
         try:
             self.snapshots_dir.chmod(0o700)
         except OSError as exc:  # a mounted store may refuse the chmod
             logger.warning("could not set mode 0700 on %s: %s", self.snapshots_dir, exc)
+        self._chown_to_store_owner(self.snapshots_dir)
+
+    def _chown_to_store_owner(self, path: Path) -> None:
+        """Best-effort: a root container writes files owned by root, while the
+        host CLI needs them owned by the mounted store's user.
+
+        On a host run the file is already the user's; a failed chown (to self,
+        or on a filesystem that refuses it) must not fail the snapshot.
+        """
+        try:
+            store = self.store_dir.stat()
+            os.chown(path, store.st_uid, store.st_gid)
+        except OSError as exc:
+            logger.warning("could not chown %s: %s", path, exc)
 
     def snapshot(self, path: Path) -> str | None:
         """Copy ``path`` as it is now and journal the destructive action.
@@ -75,11 +103,15 @@ class SafetyStore:
         entry_id = uuid.uuid4().hex
         snapshot_dir = self.snapshots_dir / entry_id
         snapshot_path = snapshot_dir / "original"
+        relative_snapshot = f"{entry_id}/original"
         try:
-            self.snapshots_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self._ensure_snapshots_dir()
             snapshot_dir.mkdir(mode=0o700)
+            mode = path.stat().st_mode & 0o777
             shutil.copy2(path, snapshot_path)
             snapshot_path.chmod(0o600)
+            self._chown_to_store_owner(snapshot_dir)
+            self._chown_to_store_owner(snapshot_path)
         except Exception as exc:
             shutil.rmtree(snapshot_dir, ignore_errors=True)
             raise UndoError(f"could not snapshot {path}: {exc}") from exc
@@ -89,7 +121,8 @@ class SafetyStore:
             "ts": datetime.now(UTC).isoformat(),
             "action": "file_write",
             "targets": [str(path)],
-            "snapshot": str(snapshot_path),
+            "snapshot": relative_snapshot,
+            "mode": mode,
             "undo_recipe": f"restore {snapshot_path} to {path}",
             "status": "applied",
         }
@@ -114,12 +147,7 @@ class SafetyStore:
                 try:
                     entry = json.loads(stripped)
                 except json.JSONDecodeError:
-                    logger.warning(
-                        "skipping malformed journal line %d in %s",
-                        lineno,
-                        self.journal_path,
-                    )
-                    continue
+                    entry = None
                 if not isinstance(entry, dict):
                     logger.warning(
                         "skipping malformed journal line %d in %s",
@@ -130,43 +158,74 @@ class SafetyStore:
                 entries.append(entry)
         return entries
 
+    def abort(self, entry_id: str) -> None:
+        """Mark an applied entry as aborted because its write never happened."""
+        entry = next(
+            (
+                candidate
+                for candidate in self.entries()
+                if candidate.get("id") == entry_id
+                and candidate.get("action") not in {"undo", "abort"}
+            ),
+            None,
+        )
+        if entry is None:
+            raise UndoError(f"journal entry not found: {entry_id}")
+
+        marker: dict[str, Any] = {
+            "id": uuid.uuid4().hex,
+            "ts": datetime.now(UTC).isoformat(),
+            "action": "abort",
+            "target_id": entry_id,
+            "targets": entry.get("targets", []),
+            "status": "aborted",
+        }
+        self._append(marker)
+
     def undo(self, target: str) -> UndoResult:
         """Restore the newest entry (``last``) or the entry with ``target`` id."""
         entries = self.entries()
         if not entries:
-            raise UndoError("journal is empty")
+            raise UndoError("nothing to undo")
 
         undone = {
             marker.get("target_id")
             for marker in entries
             if marker.get("action") == "undo"
         }
-        entry = self._select(entries, target, undone)
+        aborted = {
+            marker.get("target_id")
+            for marker in entries
+            if marker.get("action") == "abort"
+        }
+        entry = self._select(entries, target, undone, aborted)
         entry_id = str(entry.get("id", ""))
         action = str(entry.get("action", "unknown"))
         recipe = entry.get("undo_recipe")
+        if entry_id in aborted:
+            raise UndoError(f"action was aborted: {entry_id}")
         if entry_id in undone:
             raise UndoError(f"already undone: {entry_id}")
 
         targets = entry.get("targets")
         raw_snapshot = entry.get("snapshot")
-        if (
-            not isinstance(targets, list)
-            or not targets
-            or not isinstance(raw_snapshot, str)
-            or not raw_snapshot
-            or not Path(raw_snapshot).is_file()
-        ):
+        if not isinstance(targets, list) or not targets or not isinstance(raw_snapshot, str):
             raise UndoError(f"cannot undo {action}; manual: {recipe}")
 
-        target_path = Path(str(targets[0]))
-        snapshot_path = Path(raw_snapshot).resolve()
+        candidate = Path(raw_snapshot)
+        if not candidate.is_absolute():
+            candidate = self.snapshots_dir / candidate
+        if not candidate.is_file():
+            raise UndoError(f"cannot undo {action}; manual: {recipe}")
+        snapshot_path = candidate.resolve()
         if not snapshot_path.is_relative_to(self.snapshots_dir.resolve()):
             raise UndoError(
                 f"refusing to restore snapshot outside the store: {raw_snapshot}"
             )
 
-        self._restore(snapshot_path, target_path)
+        target_path = Path(str(targets[0]))
+        mode = entry.get("mode")
+        self._restore(snapshot_path, target_path, mode if isinstance(mode, int) else None)
 
         marker: dict[str, Any] = {
             "id": uuid.uuid4().hex,
@@ -193,28 +252,32 @@ class SafetyStore:
         entries: list[dict[str, Any]],
         target: str,
         undone: set[Any],
+        aborted: set[Any],
     ) -> dict[str, Any]:
-        """Pick an applied entry; undo markers are history, never targets.
+        """Pick an applied entry; undo/abort markers are history, never targets.
 
-        ``last`` skips entries that already have an undo marker so repeated
-        calls walk backwards through two consecutive overwrites.
+        ``last`` skips aborted and already-undone entries so repeated calls walk
+        backwards through two consecutive overwrites.
         """
         if target == "last":
             for entry in reversed(entries):
-                if entry.get("action") == "undo":
+                if entry.get("action") in {"undo", "abort"}:
                     continue
-                if entry.get("id") in undone:
+                if entry.get("id") in undone or entry.get("id") in aborted:
                     continue
                 return entry
-            raise UndoError("journal is empty")
+            raise UndoError("nothing to undo")
 
         for entry in entries:
-            if entry.get("id") == target and entry.get("action") != "undo":
+            if entry.get("id") == target and entry.get("action") not in {
+                "undo",
+                "abort",
+            }:
                 return entry
         raise UndoError(f"journal entry not found: {target}")
 
-    def _restore(self, snapshot: Path, target: Path) -> None:
-        """Put ``snapshot`` over ``target`` atomically, preserving its stats."""
+    def _restore(self, snapshot: Path, target: Path, mode: int | None) -> None:
+        """Put ``snapshot`` over ``target`` atomically, then restore ``mode``."""
         temp: Path | None = None
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -223,10 +286,11 @@ class SafetyStore:
             )
             os.close(fd)
             temp = Path(temp_name)
-            shutil.copyfile(snapshot, temp)
+            shutil.copy2(snapshot, temp)
             os.replace(temp, target)
             temp = None
-            shutil.copystat(snapshot, target)
+            if mode is not None:
+                os.chmod(target, mode)
         except Exception as exc:
             if temp is not None:
                 temp.unlink(missing_ok=True)
@@ -236,13 +300,17 @@ class SafetyStore:
 
     def _append(self, entry: dict[str, Any]) -> None:
         """Append exactly one JSON line, creating the journal mode ``0600``."""
-        line = (json.dumps(entry) + "\n").encode("utf-8")
-        fd = os.open(
-            self.journal_path,
-            os.O_APPEND | os.O_CREAT | os.O_WRONLY,
-            0o600,
-        )
-        try:
-            os.write(fd, line)
-        finally:
-            os.close(fd)
+        self._ensure_store_dir()
+        created = not self.journal_path.exists()
+        with os.fdopen(
+            os.open(
+                self.journal_path,
+                os.O_APPEND | os.O_CREAT | os.O_WRONLY,
+                0o600,
+            ),
+            "a",
+            encoding="utf-8",
+        ) as journal:
+            journal.write(json.dumps(entry) + "\n")
+        if created:
+            self._chown_to_store_owner(self.journal_path)

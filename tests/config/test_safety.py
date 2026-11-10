@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cortex.config.loader import load_settings
+from cortex.config.loader import load_safety_settings, load_settings
 from cortex.config.models import Settings
 from cortex.config.safety import SafetySettings
 
@@ -93,6 +93,38 @@ class TestEnvOverrides:
         assert settings.safety.store_dir == Path("/tmp/yaml-safety")
         assert settings.safety.backup_retention == 2
         assert settings.safety.snapshot_enabled is False
+
+
+class TestSafetyOnlyLoader:
+    def test_loads_the_yaml_section_without_an_llm_api_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "safety:\n"
+            "  store_dir: /tmp/safety-only\n"
+            "  snapshot_enabled: false\n",
+            encoding="utf-8",
+        )
+
+        safety = load_safety_settings(config)
+
+        assert safety.store_dir == Path("/tmp/safety-only")
+        assert safety.snapshot_enabled is False
+
+    def test_env_outranks_the_yaml_section(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SAFETY_BACKUP_RETENTION", "2")
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "safety:\n  backup_retention: 9\n", encoding="utf-8"
+        )
+
+        safety = load_safety_settings(config)
+
+        assert safety.backup_retention == 2
 
 
 class TestValidation:

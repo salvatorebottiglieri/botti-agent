@@ -1,5 +1,6 @@
 """File writing tool."""
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +8,8 @@ from cortex.config.safety import SafetySettings
 from cortex.safety.journal import SafetyStore, UndoError
 from cortex.tools.interfaces import ToolErrorSeverity, ToolResult
 from cortex.tools.meta.base import BaseMetaTool, FileToolMixin
+
+logger = logging.getLogger(__name__)
 
 
 class FileWriteTool(BaseMetaTool, FileToolMixin):
@@ -19,6 +22,15 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
 
     def __init__(self, safety: SafetySettings | None = None) -> None:
         self._store = SafetyStore(safety) if safety is not None else None
+
+    def _abort_snapshot(self, snapshot_id: str | None) -> None:
+        """Mark a snapshot whose write failed so undo does not consume it."""
+        if snapshot_id is None or self._store is None:
+            return
+        try:
+            self._store.abort(snapshot_id)
+        except Exception as exc:  # the write error is the one the caller sees
+            logger.warning("could not abort snapshot %s: %s", snapshot_id, exc)
 
     @property
     def name(self) -> str:
@@ -157,6 +169,7 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
             )
 
         except PermissionError:
+            self._abort_snapshot(snapshot_id)
             return ToolResult(
                 tool_call_id="",
                 tool_name=self.name,
@@ -166,6 +179,7 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
             )
 
         except Exception as e:
+            self._abort_snapshot(snapshot_id)
             return ToolResult(
                 tool_call_id="",
                 tool_name=self.name,

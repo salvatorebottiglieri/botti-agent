@@ -8,12 +8,12 @@ undone.
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
 from cortex.cli import cli
+from cortex.config.loader import get_settings
 from cortex.config.safety import SafetySettings
 from cortex.safety import SafetyStore
 
@@ -25,8 +25,9 @@ def safety_settings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> SafetySettings:
     settings = SafetySettings(store_dir=tmp_path / "store", _env_file=None)
-    stub = SimpleNamespace(safety=settings)
-    monkeypatch.setattr("cortex.config.loader.get_settings", lambda: stub)
+    monkeypatch.setattr(
+        "cortex.config.loader.load_safety_settings", lambda: settings
+    )
     return settings
 
 
@@ -100,7 +101,7 @@ class TestUndo:
         result = runner.invoke(cli, ["undo"])
 
         assert result.exit_code == 1
-        assert "error: journal is empty" in result.stderr
+        assert "error: nothing to undo" in result.stderr
         assert "Traceback" not in result.output
 
     def test_already_undone_is_reported(
@@ -130,3 +131,27 @@ class TestUndo:
 
         assert result.exit_code == 1
         assert "error: journal entry not found: nope" in result.stderr
+
+    def test_undo_does_not_require_an_llm_api_key(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The recovery command must not compose the full Settings root."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        get_settings.cache_clear()
+        store_dir = tmp_path / "store"
+        (tmp_path / "config.yaml").write_text(
+            f"safety:\n  store_dir: {store_dir}\n",
+            encoding="utf-8",
+        )
+        target = tmp_path / "notes.txt"
+        target.write_text("v1", encoding="utf-8")
+        store = SafetyStore(SafetySettings(store_dir=store_dir, _env_file=None))
+        store.snapshot(target)
+        target.write_text("v2", encoding="utf-8")
+
+        result = runner.invoke(cli, ["undo"])
+
+        assert result.exit_code == 0, result.output
+        assert f"restored: {target}" in result.output
+        assert target.read_text(encoding="utf-8") == "v1"

@@ -209,3 +209,24 @@ _Avoid_: keyring, mapping table, vault
 **Pre/post hook**:
 A seam that wraps LLM calls — a pre-hook (transform outbound context) and a post-hook (transform inbound response, resolve aliases in tool arguments). Required by the PII Gateway; not present in Cortex today.
 _Avoid_: middleware, interceptor, plugin
+
+## Safety Net
+
+Term definitions for the backup/snapshot/journal net. Specified in
+[`docs/specs/safety-net.md`](docs/specs/safety-net.md); decision in ADR-0021.
+
+**Safety store**:
+The user-owned directory `~/.local/share/cortex` (or `SAFETY_STORE_DIR`) holding database backups, file snapshots and the journal. It lives outside the repo and outside every Docker volume, so a volume wipe or a repo reset cannot destroy both the data and its net.
+_Avoid_: backup folder, .cortex
+
+**Snapshot**:
+A byte-for-byte private copy of a file taken before `file_write` overwrites it, stored under `snapshots/<journal-id>/original` with the original permission bits recorded in the journal.
+_Avoid_: backup copy, version
+
+**Journal**:
+The append-only JSONL file `journal.jsonl` in the safety store: one line per destructive action (`file_write`, later shell/DB), plus `undo` and `abort` markers. Status is derived by scanning markers; lines are never rewritten or deleted.
+_Avoid_: log, audit trail
+
+**Undo**:
+The explicit user command `cortex undo last` (or `cortex undo <journal-id>`) that restores a file snapshot and appends an `undo` marker. It acts on the same filesystem namespace as the write; it prints the manual recipe for actions it cannot restore.
+_Avoid_: rollback, revert

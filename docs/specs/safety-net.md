@@ -138,25 +138,36 @@ falls back to the compose container for the CLI commands).
   (mode `0600`; the snapshots directory is `0700`).
 - Append one JSON line per destructive action to `journal.jsonl`
   (mode `0600`):
-  `{id, ts, action, targets, snapshot, undo_recipe, status}`. For a file
+  `{id, ts, action, targets, snapshot, mode, undo_recipe, status}`. For a file
   overwrite: `action: "file_write"`, `targets: [resolved path]`, `snapshot`
-  the stored copy, `status: "applied"`.
+  **relative** to `snapshots/` (`<id>/original`), `mode` the original permission
+  bits, `status: "applied"`.
+- If the write then fails, the tool appends an abort marker
+  `{id, ts, action: "abort", target_id, status: "aborted"}` and `undo` skips the
+  entry (it is not a destructive action that happened).
 - `cortex undo last` / `cortex undo <id>` restores the snapshot, appends an
   undo marker `{id, ts, action: "undo", target_id, status: "undone"}`, and
   prints the restored target. The journal stays append-only: status is derived
   by scanning markers, never by rewriting a line.
-- `undo last` targets the newest journal entry. If that entry has no snapshot
-  (a future shell/db action), the command prints its `undo_recipe` and exits
-  non-zero instead of pretending to undo it.
+- `undo last` targets the newest entry that is neither undone nor aborted. If
+  that entry has no snapshot (a future shell/db action), the command prints its
+  `undo_recipe` and exits non-zero instead of pretending to undo it.
+- The snapshot path is resolved relative to the store and must stay inside it;
+  a journal entry pointing outside `snapshots/` is rejected. The **target**
+  path is the writer-side absolute path: `undo` must run in the same filesystem
+  namespace as the `file_write` (host-local Cortex is the supported deployment;
+  host undo of a container-written entry waits for #120's host sidecar).
 - Snapshot failure policy: **fail closed** for an overwrite — the write is
   refused rather than performed without a copy. A new file needs no snapshot
   and writes no journal entry; `append` is not an overwrite and is not
   snapshotted.
 - Two consecutive overwrites produce two entries; `undo last` reverts them in
   reverse order (one call per overwrite).
-- `SAFETY_SNAPSHOT_ENABLED=false` disables the feature (default on). Disabling
-  is explicit and documented; it is the same escape hatch style as the shell
-  guard bypass.
+- `SAFETY_SNAPSHOT_ENABLED=false` disables the feature (default on) and creates
+  no store directories. Disabling is explicit and documented; it is the same
+  escape hatch style as the shell guard bypass.
+- New artifacts are best-effort chowned to the store owner, so a root container
+  writing through the compose bind mount leaves files readable by the host CLI.
 - The store never lives inside the repo, so `git status` stays clean.
 - Retention of old snapshots/journal entries is deferred: the journal is the
   undo history and pruning it silently would break `undo`.

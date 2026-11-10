@@ -419,11 +419,11 @@ def undo(
     No confirmation: undo is itself the explicit user action. A failed undo
     prints the recorded ``undo_recipe`` and exits non-zero.
     """
-    from cortex.config.loader import get_settings
+    from cortex.config.loader import load_safety_settings
     from cortex.safety.journal import SafetyStore, UndoError
 
-    settings = get_settings()
-    store = SafetyStore(settings.safety)
+    settings = load_safety_settings()
+    store = SafetyStore(settings)
 
     try:
         result = store.undo(target)
