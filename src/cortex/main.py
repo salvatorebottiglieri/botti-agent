@@ -248,6 +248,7 @@ async def initialize_app() -> CortexApp:
         concept_repository=concept_repo,
         rule_service=cortex.rule_service,
         concept_derivation_service=cortex.concept_derivation_service,
+        llm_client=cortex.llm_client,
     )
 
     context_builder = ContextBuilder(

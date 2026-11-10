@@ -112,6 +112,33 @@ class FactRepository(ABC):
         ...
 
     @abstractmethod
+    async def search_semantic(
+        self,
+        query_embedding: list[float],
+        *,
+        limit: int = 10,
+        fact_types: list[FactType] | None = None,
+        min_confidence: float | None = None,
+    ) -> list[Fact]:
+        """
+        Search facts semantically, then re-rank with symbolic filters.
+
+        A vector ANN search produces a candidate pool; FactType, confidence
+        and recency are applied as a second stage. The candidate pool size is
+        an implementation detail (the top 50 by cosine similarity).
+
+        Args:
+            query_embedding: Embedding of the query text.
+            limit: Maximum number of ranked results.
+            fact_types: Filter by fact types after the ANN stage.
+            min_confidence: Minimum confidence after the ANN stage.
+
+        Returns:
+            The top facts by combined similarity, recency and confidence.
+        """
+        ...
+
+    @abstractmethod
     async def get_by_type(
         self,
         fact_type: FactType,
