@@ -5,7 +5,7 @@ name: botti-agent
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: cortex-postgres
     environment:
       POSTGRES_USER: cortex

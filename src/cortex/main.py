@@ -239,7 +239,7 @@ async def initialize_app() -> CortexApp:
     from cortex.memory.context_provider import ContextProvider
     from cortex.memory.fact_store import FactStore
 
-    fact_store = FactStore(fact_repo)
+    fact_store = FactStore(fact_repo, llm_client=cortex.llm_client)
     cortex.fact_store = fact_store
     cortex.fact_extractor = memory_extractor
     cortex.context_provider = ContextProvider(

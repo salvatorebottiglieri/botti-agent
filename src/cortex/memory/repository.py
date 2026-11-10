@@ -7,6 +7,36 @@ from cortex.db.session import DbSession
 from cortex.memory.interfaces import ConceptRepository, FactRepository
 from cortex.memory.models import Concept, Fact, FactType
 
+# ivfflat's default probes=1 under-returns candidates; probe 10 lists per query.
+_ANN_PROBES = 10
+
+
+def _vector_literal(values: list[float]) -> str:
+    """Render a vector as the text literal pgvector accepts over asyncpg.
+
+    asyncpg has no pgvector codec; the call sites cast the parameter
+    (``$n::vector``) and let Postgres parse this representation.
+    """
+    return "[" + ",".join(str(float(value)) for value in values) + "]"
+
+
+def _parse_vector(value: Any) -> list[float] | None:
+    """Parse a pgvector value into ``list[float]``.
+
+    Accepts SQL NULL, pgvector's text representation (``"[1,2.5]"``) and an
+    already-parsed sequence from a driver that registers a codec.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("["):
+            stripped = stripped[1:]
+        if stripped.endswith("]"):
+            stripped = stripped[:-1]
+        return [float(part) for part in stripped.split(",") if part.strip()]
+    return [float(component) for component in value]
+
 
 class PostgresFactRepository(FactRepository):
     """PostgreSQL implementation of fact storage."""
@@ -17,10 +47,10 @@ class PostgresFactRepository(FactRepository):
             row = await db.fetchrow(
                 """
                 INSERT INTO facts (type, mutability, symbolic_repr, natural_lang_repr,
-                                   payload, confidence, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                                   payload, confidence, embedding, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::vector, NOW())
                 RETURNING id, type, mutability, symbolic_repr, natural_lang_repr,
-                          payload, confidence, created_at, retracted_at,
+                          payload, confidence, embedding, created_at, retracted_at,
                           last_accessed_at, access_count
                 """,
                 fact.type.value if hasattr(fact.type, 'value') else fact.type,
@@ -29,6 +59,7 @@ class PostgresFactRepository(FactRepository):
                 fact.natural_lang_repr,
                 fact.payload,
                 fact.confidence,
+                _vector_literal(fact.embedding) if fact.embedding is not None else None,
             )
             return self._row_to_fact(row)
 
@@ -45,7 +76,7 @@ class PostgresFactRepository(FactRepository):
             row = await db.fetchrow(
                 """
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
-                       payload, confidence, created_at, retracted_at,
+                       payload, confidence, embedding, created_at, retracted_at,
                        last_accessed_at, access_count
                 FROM facts WHERE id = $1
                 """,
@@ -70,11 +101,15 @@ class PostgresFactRepository(FactRepository):
         """Update a fact's fields."""
         # Build dynamic update query
         set_clauses = []
-        values = []
+        values: list[Any] = []
         i = 1
 
         for key, value in updates.items():
-            if key in ("payload", "confidence", "natural_lang_repr"):
+            if key == "embedding":
+                set_clauses.append(f"embedding = ${i}::vector")
+                values.append(_vector_literal(value) if value is not None else None)
+                i += 1
+            elif key in ("payload", "confidence", "natural_lang_repr"):
                 set_clauses.append(f"{key} = ${i}")
                 values.append(value)
                 i += 1
@@ -87,7 +122,7 @@ class PostgresFactRepository(FactRepository):
             UPDATE facts SET {', '.join(set_clauses)}
             WHERE id = ${i}
             RETURNING id, type, mutability, symbolic_repr, natural_lang_repr,
-                      payload, confidence, created_at, retracted_at,
+                      payload, confidence, embedding, created_at, retracted_at,
                       last_accessed_at, access_count
         """
 
@@ -99,39 +134,67 @@ class PostgresFactRepository(FactRepository):
 
     async def search(
         self,
-        query: str,
+        query: str = "",
         *,
-        limit: int = 10,
+        limit: int | None = None,
         fact_types: list[FactType] | None = None,
         min_confidence: float | None = None,
+        query_embedding: list[float] | None = None,
     ) -> list[Fact]:
-        """Search for facts by text query."""
-        type_filter = ""
-        params: list[Any] = [f"%{query}%", limit]
+        """Search for facts by text query or embedding.
 
+        ``query`` is ignored when ``query_embedding`` is given: the search is
+        an ANN lookup over stored embeddings ordered by cosine distance. With
+        no embedding it falls back to the lexical ILIKE path. Default limit is
+        50 for ANN and 10 for ILIKE.
+        """
+        effective_limit = (
+            limit if limit is not None else (50 if query_embedding is not None else 10)
+        )
+
+        if query_embedding is not None:
+            match_clause = "embedding IS NOT NULL AND retracted_at IS NULL"
+            order_clause = "embedding <=> $1::vector"
+            params: list[Any] = [_vector_literal(query_embedding)]
+        else:
+            match_clause = (
+                "(symbolic_repr ILIKE $1 OR natural_lang_repr ILIKE $1)"
+                " AND retracted_at IS NULL"
+            )
+            order_clause = "confidence DESC, created_at DESC"
+            params = [f"%{query}%"]
+
+        filters = ""
+        next_param = 2
         if fact_types:
             type_values = [t.value if hasattr(t, 'value') else t for t in fact_types]
-            placeholders = ", ".join(f"${i+2}" for i in range(len(type_values)))
-            type_filter = f"AND type IN ({placeholders})"
+            placeholders = ", ".join(
+                f"${index}" for index in range(next_param, next_param + len(type_values))
+            )
+            filters += f" AND type IN ({placeholders})"
             params.extend(type_values)
+            next_param += len(type_values)
 
         if min_confidence is not None:
-            type_count = len(fact_types) if fact_types else 0
+            filters += f" AND confidence >= ${next_param}"
             params.append(min_confidence)
-            type_filter += f" AND confidence >= ${type_count + 3}"
+            next_param += 1
+
+        params.append(effective_limit)
 
         async with DbSession() as db:
+            if query_embedding is not None:
+                await db.execute(f"SET ivfflat.probes = {_ANN_PROBES}")
             rows = await db.fetch(
                 f"""
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
-                       payload, confidence, created_at, retracted_at,
+                       payload, confidence, embedding, created_at, retracted_at,
                        last_accessed_at, access_count
                 FROM facts
-                WHERE (symbolic_repr ILIKE $1 OR natural_lang_repr ILIKE $1)
-                      AND retracted_at IS NULL
-                      {type_filter}
-                ORDER BY confidence DESC, created_at DESC
-                LIMIT $2
+                WHERE {match_clause}
+                      {filters}
+                ORDER BY {order_clause}
+                LIMIT ${next_param}
                 """,
                 *params,
             )
@@ -152,7 +215,7 @@ class PostgresFactRepository(FactRepository):
             rows = await db.fetch(
                 f"""
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
-                       payload, confidence, created_at, retracted_at,
+                       payload, confidence, embedding, created_at, retracted_at,
                        last_accessed_at, access_count
                 FROM facts
                 WHERE type = $1 {retracted_filter}
@@ -170,7 +233,7 @@ class PostgresFactRepository(FactRepository):
             rows = await db.fetch(
                 """
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
-                       payload, confidence, created_at, retracted_at,
+                       payload, confidence, embedding, created_at, retracted_at,
                        last_accessed_at, access_count
                 FROM facts
                 WHERE retracted_at IS NULL
@@ -198,7 +261,7 @@ class PostgresFactRepository(FactRepository):
             rows = await db.fetch(
                 f"""
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
-                       payload, confidence, created_at, retracted_at,
+                       payload, confidence, embedding, created_at, retracted_at,
                        last_accessed_at, access_count
                 FROM facts
                 WHERE payload->>'session_id' = $1 AND retracted_at IS NULL {type_filter}
@@ -227,7 +290,7 @@ class PostgresFactRepository(FactRepository):
             row = await db.fetchrow(
                 """
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
-                       payload, confidence, created_at, retracted_at,
+                       payload, confidence, embedding, created_at, retracted_at,
                        last_accessed_at, access_count
                 FROM facts
                 WHERE symbolic_repr = $1 AND retracted_at IS NULL
@@ -238,6 +301,31 @@ class PostgresFactRepository(FactRepository):
                 return None
             return self._row_to_fact(row)
 
+    async def backfill_embeddings(
+        self,
+        fact_ids: list[UUID],
+        embeddings: list[list[float]],
+    ) -> None:
+        """Store embeddings for existing facts, one UPDATE per pair.
+
+        The ivfflat index is built before bulk embedding; run
+        ``REINDEX INDEX idx_facts_embedding;`` after a large backfill so the
+        index reflects the new vectors.
+        """
+        if len(fact_ids) != len(embeddings):
+            raise ValueError(
+                "fact_ids and embeddings must have the same length: "
+                f"{len(fact_ids)} ids, {len(embeddings)} embeddings"
+            )
+
+        async with DbSession() as db:
+            for fact_id, embedding in zip(fact_ids, embeddings, strict=True):
+                await db.execute(
+                    "UPDATE facts SET embedding = $2::vector WHERE id = $1",
+                    fact_id,
+                    _vector_literal(embedding),
+                )
+
     def _row_to_fact(self, row: Any) -> Fact:
         """Convert a database row to a Fact model."""
         return Fact(
@@ -247,6 +335,7 @@ class PostgresFactRepository(FactRepository):
             symbolic_repr=row["symbolic_repr"],
             natural_lang_repr=row["natural_lang_repr"],
             payload=row["payload"] or {},
+            embedding=_parse_vector(row["embedding"]),
             confidence=row["confidence"],
             created_at=row["created_at"],
             retracted_at=row["retracted_at"],
