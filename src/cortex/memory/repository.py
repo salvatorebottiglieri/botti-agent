@@ -1,5 +1,6 @@
 """PostgreSQL implementation of memory repositories."""
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -9,6 +10,11 @@ from cortex.memory.models import Concept, Fact, FactType
 
 # ivfflat's default probes=1 under-returns candidates; probe 10 lists per query.
 _ANN_PROBES = 10
+# The ANN stage is a candidate generator; symbolic re-ranking narrows it down.
+_ANN_CANDIDATE_LIMIT = 50
+_RECENCY_WINDOW_HOURS = 24.0
+_RECENCY_BOOST = 0.1
+_CONFIDENCE_BOOST = 0.1
 
 
 def _vector_literal(values: list[float]) -> str:
@@ -134,37 +140,20 @@ class PostgresFactRepository(FactRepository):
 
     async def search(
         self,
-        query: str = "",
+        query: str,
         *,
-        limit: int | None = None,
+        limit: int = 10,
         fact_types: list[FactType] | None = None,
         min_confidence: float | None = None,
-        query_embedding: list[float] | None = None,
     ) -> list[Fact]:
-        """Search for facts by text query or embedding.
-
-        ``query`` is ignored when ``query_embedding`` is given: the search is
-        an ANN lookup over stored embeddings ordered by cosine distance. With
-        no embedding it falls back to the lexical ILIKE path. Default limit is
-        50 for ANN and 10 for ILIKE.
-        """
-        effective_limit = (
-            limit if limit is not None else (50 if query_embedding is not None else 10)
+        """Search for facts by lexical ILIKE match."""
+        match_clause = (
+            "(symbolic_repr ILIKE $1 OR natural_lang_repr ILIKE $1)"
+            " AND retracted_at IS NULL"
         )
 
-        if query_embedding is not None:
-            match_clause = "embedding IS NOT NULL AND retracted_at IS NULL"
-            order_clause = "embedding <=> $1::vector"
-            params: list[Any] = [_vector_literal(query_embedding)]
-        else:
-            match_clause = (
-                "(symbolic_repr ILIKE $1 OR natural_lang_repr ILIKE $1)"
-                " AND retracted_at IS NULL"
-            )
-            order_clause = "confidence DESC, created_at DESC"
-            params = [f"%{query}%"]
-
         filters = ""
+        params: list[Any] = [f"%{query}%"]
         next_param = 2
         if fact_types:
             type_values = [t.value if hasattr(t, 'value') else t for t in fact_types]
@@ -180,11 +169,9 @@ class PostgresFactRepository(FactRepository):
             params.append(min_confidence)
             next_param += 1
 
-        params.append(effective_limit)
+        params.append(limit)
 
         async with DbSession() as db:
-            if query_embedding is not None:
-                await db.execute(f"SET ivfflat.probes = {_ANN_PROBES}")
             rows = await db.fetch(
                 f"""
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
@@ -193,12 +180,83 @@ class PostgresFactRepository(FactRepository):
                 FROM facts
                 WHERE {match_clause}
                       {filters}
-                ORDER BY {order_clause}
+                ORDER BY confidence DESC, created_at DESC
                 LIMIT ${next_param}
                 """,
                 *params,
             )
             return [self._row_to_fact(row) for row in rows]
+
+    async def search_semantic(
+        self,
+        query_embedding: list[float],
+        *,
+        limit: int = 10,
+        fact_types: list[FactType] | None = None,
+        min_confidence: float | None = None,
+    ) -> list[Fact]:
+        """Search semantically: ANN candidates, then symbolic re-ranking.
+
+        The candidate pool is fetched once; FactType and confidence filters
+        and the recency/confidence boosts are applied in memory, so the DB is
+        never re-queried for the final ranking.
+        """
+        candidates = await self._ann_search(query_embedding)
+        ranked = self._re_rank(candidates, fact_types, min_confidence)
+        return ranked[:limit]
+
+    async def _ann_search(self, query_embedding: list[float]) -> list[tuple[Fact, float]]:
+        """Return the top ANN candidates with their cosine similarity."""
+        async with DbSession() as db:
+            await db.execute(f"SET ivfflat.probes = {_ANN_PROBES}")
+            rows = await db.fetch(
+                f"""
+                SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
+                       payload, confidence, embedding, created_at, retracted_at,
+                       last_accessed_at, access_count,
+                       1 - (embedding <=> $1::vector) AS similarity
+                FROM facts
+                WHERE embedding IS NOT NULL AND retracted_at IS NULL
+                ORDER BY embedding <=> $1::vector
+                LIMIT {_ANN_CANDIDATE_LIMIT}
+                """,
+                _vector_literal(query_embedding),
+            )
+            return [(self._row_to_fact(row), float(row["similarity"])) for row in rows]
+
+    def _re_rank(
+        self,
+        candidates: list[tuple[Fact, float]],
+        fact_types: list[FactType] | None,
+        min_confidence: float | None,
+    ) -> list[Fact]:
+        """Apply symbolic filters and boosts to ANN candidates, best first.
+
+        ``score = cosine_similarity + recency_boost + confidence_boost``;
+        equal scores fall back to the newer ``created_at``.
+        """
+        now = datetime.now(UTC)
+        ranked: list[tuple[float, datetime, Fact]] = []
+
+        for fact, similarity in candidates:
+            if fact_types is not None and fact.type not in fact_types:
+                continue
+            if min_confidence is not None and fact.confidence < min_confidence:
+                continue
+
+            created_at = fact.created_at
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=UTC)
+            recency_boost = (
+                _RECENCY_BOOST
+                if now - created_at <= timedelta(hours=_RECENCY_WINDOW_HOURS)
+                else 0.0
+            )
+            score = similarity + recency_boost + _CONFIDENCE_BOOST * fact.confidence
+            ranked.append((score, created_at, fact))
+
+        ranked.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
+        return [fact for _, _, fact in ranked]
 
     async def get_by_type(
         self,

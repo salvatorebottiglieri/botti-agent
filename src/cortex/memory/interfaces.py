@@ -84,30 +84,50 @@ class FactRepository(ABC):
     @abstractmethod
     async def search(
         self,
-        query: str = "",
+        query: str,
         *,
-        limit: int | None = None,
+        limit: int = 10,
         fact_types: list[FactType] | None = None,
         min_confidence: float | None = None,
-        query_embedding: list[float] | None = None,
     ) -> list[Fact]:
         """
-        Search for facts by text query or embedding.
-
-        When ``query_embedding`` is provided, ``query`` is ignored and the
-        search is an ANN search over stored embeddings; otherwise it is a
-        lexical ILIKE search. The default limit is 50 for the ANN branch and
-        10 for the lexical branch.
+        Search for facts by lexical text query (ILIKE).
 
         Args:
-            query: Text to search for (ignored when ``query_embedding`` is set).
+            query: Text to search for.
             limit: Maximum number of results.
             fact_types: Filter by fact types.
             min_confidence: Minimum confidence threshold.
-            query_embedding: Optional embedding for semantic search.
 
         Returns:
             Matching facts.
+        """
+        ...
+
+    @abstractmethod
+    async def search_semantic(
+        self,
+        query_embedding: list[float],
+        *,
+        limit: int = 10,
+        fact_types: list[FactType] | None = None,
+        min_confidence: float | None = None,
+    ) -> list[Fact]:
+        """
+        Search facts semantically, then re-rank with symbolic filters.
+
+        A vector ANN search produces a candidate pool; FactType, confidence
+        and recency are applied as a second stage. The candidate pool size is
+        an implementation detail (the top 50 by cosine similarity).
+
+        Args:
+            query_embedding: Embedding of the query text.
+            limit: Maximum number of ranked results.
+            fact_types: Filter by fact types after the ANN stage.
+            min_confidence: Minimum confidence after the ANN stage.
+
+        Returns:
+            The top facts by combined similarity, recency and confidence.
         """
         ...
 

@@ -12,6 +12,7 @@ from cortex.memory.interfaces import ConceptRepository, FactRepository
 from cortex.memory.models import Concept, ConceptDerivation, Fact, FactType
 
 if TYPE_CHECKING:
+    from cortex.llm.base import LLMClient
     from cortex.rules.models import Rule
     from cortex.rules.service import RuleService
     from cortex.validation.derivation_service import ConceptDerivationService
@@ -23,7 +24,8 @@ class ContextProvider:
     """Bundle seam + cross-repository operations.
 
     No CRUD (delegates to FactStore), no extraction (delegates to
-    FactExtractor), no LLM calls.
+    FactExtractor). The only LLM call is the query embedding used by
+    semantic fact retrieval.
     """
 
     def __init__(
@@ -33,12 +35,14 @@ class ContextProvider:
         concept_repository: ConceptRepository | None = None,
         rule_service: RuleService | None = None,
         concept_derivation_service: ConceptDerivationService | None = None,
+        llm_client: LLMClient | None = None,
     ):
         self._fact_repo = fact_repository
         self._fact_store = fact_store
         self._concept_repo = concept_repository
         self._rule_service = rule_service
         self._concept_derivation_service = concept_derivation_service
+        self._llm_client = llm_client
 
         self._min_relevant_confidence = 0.4
 
@@ -61,12 +65,15 @@ class ContextProvider:
         bundle = MemoryContext()
 
         try:
-            bundle.facts = await self.get_relevant_facts(
+            facts, degraded = await self._get_relevant_facts_with_status(
                 session_id=session_id,
                 query=query,
                 limit=max_facts,
                 fact_types=fact_types,
             )
+            bundle.facts = facts
+            if degraded:
+                bundle.degraded_dimensions.append("facts")
         except Exception as e:
             logger.warning(f"MemoryContext: facts dimension failed: {e}")
             bundle.degraded_dimensions.append("facts")
@@ -115,6 +122,30 @@ class ContextProvider:
         """
         Get facts relevant to a query.
 
+        Uses semantic retrieval when an LLM client is configured and falls
+        back to lexical search internally when that path degrades.
+        """
+        facts, _ = await self._get_relevant_facts_with_status(
+            session_id=session_id,
+            query=query,
+            limit=limit,
+            fact_types=fact_types,
+            min_confidence=min_confidence,
+        )
+        return facts
+
+    async def _get_relevant_facts_lexical(
+        self,
+        session_id: UUID | None,
+        query: str,
+        *,
+        limit: int = 10,
+        fact_types: list[FactType] | None = None,
+        min_confidence: float | None = None,
+    ) -> list[Fact]:
+        """
+        Get facts relevant to a query by lexical search.
+
         Strategy:
         1. Search repository by text
         2. Boost facts from current session
@@ -140,6 +171,50 @@ class ContextProvider:
 
         # Return top N
         return [fact for _, fact in scored_facts[:limit]]
+
+    async def _get_relevant_facts_with_status(
+        self,
+        session_id: UUID | None,
+        query: str,
+        *,
+        limit: int = 10,
+        fact_types: list[FactType] | None = None,
+        min_confidence: float | None = None,
+    ) -> tuple[list[Fact], bool]:
+        """Semantic retrieval with an ILIKE fallback.
+
+        Returns the facts and whether the "facts" dimension degraded. With no
+        LLM client the lexical path runs unchanged and is not degraded. With
+        one, the query is embedded and the ANN + re-ranking path runs; an
+        embedding/pgvector failure or an empty ANN pool (facts stored before
+        embeddings existed) falls back to lexical search as degraded.
+        """
+        if self._llm_client is not None:
+            try:
+                embedding = await self._llm_client.embed(query)
+                facts = await self._fact_repo.search_semantic(
+                    embedding,
+                    limit=limit,
+                    fact_types=fact_types,
+                    min_confidence=min_confidence or self._min_relevant_confidence,
+                )
+                if facts:
+                    return facts, False
+                logger.warning(
+                    "Semantic fact search returned no candidates; "
+                    "falling back to lexical search"
+                )
+            except Exception as e:
+                logger.warning(f"Semantic fact search failed, falling back to lexical: {e}")
+
+        facts = await self._get_relevant_facts_lexical(
+            session_id=session_id,
+            query=query,
+            limit=limit,
+            fact_types=fact_types,
+            min_confidence=min_confidence,
+        )
+        return facts, self._llm_client is not None
 
     def _calculate_relevance_score(self, fact: Fact, query: str, session_id: UUID | None) -> float:
         """Calculate relevance score for a fact."""
