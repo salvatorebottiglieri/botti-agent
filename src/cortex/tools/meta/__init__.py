@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 
+from cortex.config.safety import SafetySettings
 from cortex.tools.interfaces import Tool, ToolRegistry
 from cortex.tools.meta.ask_user import AskUserTool
 from cortex.tools.meta.file_read import FileReadTool
@@ -19,7 +20,9 @@ __all__ = [
 
 
 def register_meta_tools(
-    registry: ToolRegistry, allowed: Sequence[str] | None = None
+    registry: ToolRegistry,
+    allowed: Sequence[str] | None = None,
+    safety: SafetySettings | None = None,
 ) -> list[str]:
     """Register meta tools with a registry, limited to ``allowed`` names.
 
@@ -34,7 +37,7 @@ def register_meta_tools(
     """
     from cortex.tools.registry import ToolRegistrar
 
-    meta_tools = get_meta_tools()
+    meta_tools = get_meta_tools(safety)
     known_names = {tool.name for tool in meta_tools}
     allowed_names = known_names if allowed is None else set(allowed)
 
@@ -52,11 +55,15 @@ def register_meta_tools(
     return registrar.registered
 
 
-def get_meta_tools() -> list[Tool]:
-    """Get a list of all meta tool instances."""
+def get_meta_tools(safety: SafetySettings | None = None) -> list[Tool]:
+    """Get a list of all meta tool instances.
+
+    ``safety`` enables pre-overwrite snapshots in ``file_write``; without it
+    (the eval sandbox and existing tests) the tool behaves as before.
+    """
     return [
         FileReadTool(),
-        FileWriteTool(),
+        FileWriteTool(safety),
         GrepTool(),
         ShellTool(),
         AskUserTool(),

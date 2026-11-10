@@ -218,7 +218,9 @@ async def initialize_app() -> CortexApp:
     from cortex.tools.registry import InMemoryToolRegistry
 
     tool_registry: ToolRegistry = InMemoryToolRegistry()
-    registered_tools = register_meta_tools(tool_registry, allowed=settings.tools.allow)
+    registered_tools = register_meta_tools(
+        tool_registry, allowed=settings.tools.allow, safety=settings.safety
+    )
     logger.info(f"Registered meta tools: {registered_tools}")
     base_executor: ToolExecutor = DefaultToolExecutor(registry=tool_registry)
     tool_executor_service = ToolExecutorService(

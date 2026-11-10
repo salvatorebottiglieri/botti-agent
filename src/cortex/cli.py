@@ -410,6 +410,31 @@ def backup_restore(
     typer.echo(f"restored: {restored.path}")
 
 
+@cli.command("undo", help="Undo the last file overwrite or a journal entry")
+def undo(
+    target: str = typer.Argument("last", help="'last' or a journal id"),
+) -> None:
+    """Restore a snapshot and append an undo marker to the journal.
+
+    No confirmation: undo is itself the explicit user action. A failed undo
+    prints the recorded ``undo_recipe`` and exits non-zero.
+    """
+    from cortex.config.loader import load_safety_settings
+    from cortex.safety.journal import SafetyStore, UndoError
+
+    settings = load_safety_settings()
+    store = SafetyStore(settings)
+
+    try:
+        result = store.undo(target)
+    except UndoError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"restored: {result.target}")
+    typer.echo(f"snapshot: {result.snapshot}")
+
+
 @cli.command("version", help="Show Cortex version")
 def version() -> None:
     """Show the installed Cortex version."""

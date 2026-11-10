@@ -1,0 +1,17 @@
+{
+  "repo": "salvatorebottiglieri/botti-agent",
+  "feature": "file-undo",
+  "items": [
+    "AC-1",
+    "AC-2",
+    "AC-3",
+    "AC-4",
+    "AC-5",
+    "AC-6",
+    "STD-1",
+    "STD-2",
+    "STD-3",
+    "STD-4",
+    "STD-5"
+  ]
+}

@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 
 from cortex.config.models import Settings
+from cortex.config.safety import SafetySettings
 
 _UNRESOLVED_ENV_REF = re.compile(r"\$\{?\w+\}?")
 
@@ -110,6 +111,19 @@ def _section_input(section: str, values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resolved_yaml_config(config_path: Path | None = None) -> dict[str, Any]:
+    """Load the YAML file and expand ``${VAR}`` references in every scalar."""
+    raw_yaml_config = load_yaml_config(config_path)
+    return {
+        k: (
+            {sk: _resolve_env_refs(sv) for sk, sv in v.items()}
+            if isinstance(v, dict)
+            else _resolve_env_refs(v)
+        )
+        for k, v in raw_yaml_config.items()
+    }
+
+
 def load_settings(config_path: Path | None = None) -> Settings:
     """
     Load settings from YAML file and environment variables.
@@ -134,15 +148,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
     Raises:
         ValidationError: If settings are invalid.
     """
-    raw_yaml_config = load_yaml_config(config_path)
-    yaml_config = {
-        k: (
-            {sk: _resolve_env_refs(sv) for sk, sv in v.items()}
-            if isinstance(v, dict)
-            else _resolve_env_refs(v)
-        )
-        for k, v in raw_yaml_config.items()
-    }
+    yaml_config = _resolved_yaml_config(config_path)
 
     settings_data: dict[str, Any] = {
         section: _section_input(section, yaml_config[section])
@@ -151,6 +157,19 @@ def load_settings(config_path: Path | None = None) -> Settings:
     }
 
     return Settings(**settings_data)
+
+
+def load_safety_settings(config_path: Path | None = None) -> SafetySettings:
+    """Load only the ``safety`` slice, without composing the full ``Settings``.
+
+    ``cortex undo`` is a recovery command: it must not inherit unrelated
+    prerequisites such as ``LLM_API_KEY``. Environment still outranks the YAML
+    section, exactly as in :func:`load_settings`.
+    """
+    yaml_config = _resolved_yaml_config(config_path)
+    section = yaml_config.get("safety")
+    values = _section_input("safety", section) if isinstance(section, dict) else {}
+    return SafetySettings(**values)
 
 
 @lru_cache(maxsize=1)
