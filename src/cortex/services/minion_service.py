@@ -153,7 +153,9 @@ class MinionService(MinionEventHandler):
             for fact in self._fact_extractor.extract_from_event_type(
                 sensory_type, event.payload
             ):
-                await self._fact_store.add_fact(fact)
+                await self._fact_store.add_fact(
+                    fact, source_type="sensor", source_id=event.event_id
+                )
 
         await self._emitter.emit(
             "minion.event",

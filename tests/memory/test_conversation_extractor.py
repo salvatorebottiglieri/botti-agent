@@ -28,7 +28,7 @@ def _store(*, fail_for: set[str] | None = None) -> MagicMock:
     store = MagicMock(spec=FactStore)
     fail_for = fail_for or set()
 
-    async def add_fact(fact: Fact) -> Fact:
+    async def add_fact(fact: Fact, **_: object) -> Fact:
         if fact.symbolic_repr in fail_for:
             raise RuntimeError("storage unavailable")
         return fact
@@ -91,6 +91,10 @@ class TestExtractAndStore:
             "session_id": str(session_id),
         }
         store.add_fact.assert_awaited_once()
+        assert store.add_fact.await_args.kwargs == {
+            "source_type": "llm",
+            "source_id": f"conversation:{session_id}",
+        }
 
     @pytest.mark.asyncio
     async def test_attitude_and_behavior_are_distinct_facts(self):
@@ -238,6 +242,10 @@ class TestExtractAndStore:
         )
 
         assert stored[0].payload == {"source": "conversation"}
+        assert store.add_fact.await_args.kwargs == {
+            "source_type": "llm",
+            "source_id": "conversation",
+        }
 
     @pytest.mark.asyncio
     async def test_llm_payload_cannot_spoof_provenance(self):

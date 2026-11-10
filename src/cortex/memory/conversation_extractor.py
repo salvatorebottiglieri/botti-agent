@@ -55,7 +55,15 @@ class ConversationFactExtractor:
             if session_id is not None:
                 fact.payload["session_id"] = str(session_id)
             try:
-                stored.append(await self._fact_store.add_fact(fact))
+                stored.append(
+                    await self._fact_store.add_fact(
+                        fact,
+                        source_type="llm",
+                        source_id=(
+                            f"conversation:{session_id}" if session_id else "conversation"
+                        ),
+                    )
+                )
             except Exception:
                 logger.warning(
                     "Storing conversation fact %s failed; continuing",

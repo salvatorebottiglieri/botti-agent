@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import suppress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from cortex.config.loader import get_settings
@@ -23,6 +25,8 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
+
+EVIDENCE_SWEEP_INTERVAL_SECONDS = 3600
 
 
 @dataclass
@@ -44,6 +48,8 @@ class CortexApp:
     fact_store: Any = field(default=None)
     fact_extractor: Any = field(default=None)
     conversation_extractor: Any = field(default=None)
+    evidence_store: Any = field(default=None)
+    evidence_sweep_task: Any = field(default=None)
     rule_service: Any = field(default=None)
     minion_service: Any = field(default=None)
     llm_client: Any = field(default=None)
@@ -54,6 +60,11 @@ class CortexApp:
         from cortex.db.pool import close_pool
 
         # Shutdown in reverse order of initialization
+        if self.evidence_sweep_task:
+            self.evidence_sweep_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.evidence_sweep_task
+
         if self.minion_service:
             try:
                 await self.minion_service.disconnect()
@@ -181,6 +192,12 @@ async def initialize_app() -> CortexApp:
     fact_repo: FactRepository = PostgresFactRepository()
     concept_repo: ConceptRepository = PostgresConceptRepository()
 
+    # 5c''. Create the evidence store before FactStore: every fact write
+    # records its observation and the engine owns facts.confidence (ADR-0013).
+    from cortex.memory.evidence_store import PostgresEvidenceStore
+
+    cortex.evidence_store = PostgresEvidenceStore()
+
     # 5c'. Create the rule service (issue #130). Learning is wired here, not in
     # the agentic core: the reasoner only reads the rendered rules off the
     # context bundle.
@@ -242,7 +259,11 @@ async def initialize_app() -> CortexApp:
     from cortex.memory.context_provider import ContextProvider
     from cortex.memory.fact_store import FactStore
 
-    fact_store = FactStore(fact_repo, llm_client=cortex.llm_client)
+    fact_store = FactStore(
+        fact_repo,
+        llm_client=cortex.llm_client,
+        evidence_store=cortex.evidence_store,
+    )
     cortex.fact_store = fact_store
     cortex.fact_extractor = memory_extractor
 
@@ -338,6 +359,12 @@ async def initialize_app() -> CortexApp:
         # Update state with None for minion_service
         state["minion_service"] = None
 
+    # The sweep keeps stored confidence equal to the posterior when evidence
+    # expires between writes (docs/specs/evidence-system.md, ADR-0013).
+    cortex.evidence_sweep_task = asyncio.create_task(
+        _evidence_sweep_loop(cortex.evidence_store)
+    )
+
     logger.info("Cortex initialization complete")
     return cortex
 
@@ -369,14 +396,29 @@ async def _subscribe_services(cortex: CortexApp) -> None:
     # Extract facts from sensory events and store them via the fact store
     if cortex.fact_store and cortex.fact_extractor:
         async def handle_sensory_event(event: BaseEvent) -> None:
+            source_id = event.metadata.correlation_id or (
+                f"{event.type}:{event.metadata.timestamp.isoformat()}"
+            )
             for fact in cortex.fact_extractor.extract_from_event_type(event.type, event.payload):
-                await cortex.fact_store.add_fact(fact)
+                await cortex.fact_store.add_fact(
+                    fact, source_type="sensor", source_id=source_id
+                )
 
         await cortex.event_bus.subscribe("location", handle_sensory_event)
         await cortex.event_bus.subscribe("activity", handle_sensory_event)
         await cortex.event_bus.subscribe("calendar", handle_sensory_event)
 
     logger.debug("Services subscribed to event bus")
+
+
+async def _evidence_sweep_loop(evidence_store: Any) -> None:
+    """Recompute stored confidence hourly, surviving transient DB failures."""
+    while True:
+        try:
+            await evidence_store.sweep(datetime.now(UTC))
+        except Exception:
+            logger.warning("Evidence sweep failed; retrying next interval", exc_info=True)
+        await asyncio.sleep(EVIDENCE_SWEEP_INTERVAL_SECONDS)
 
 
 async def _initialize_minion_service(cortex: CortexApp) -> None:
