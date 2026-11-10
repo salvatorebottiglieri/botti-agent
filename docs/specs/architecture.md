@@ -365,7 +365,7 @@ SSE wire contract for `/chat/stream` is in [agentic-loop.md](agentic-loop.md).
 | `rizzo-pii` | pinned upstream `Rizzo-AI-Academy/rizzo-pii@v2.0.0` | Opt-in `--profile trace`; pseudonymization sidecar for trace capture |
 
 CLI (`cortex <command>`, `src/cortex/cli.py`): `token:create`, `traces:cleanup`,
-`rules:list`, `rules:show`, `rules:archive`, `version`.
+`rules:list`, `rules:show`, `rules:archive`, `memory:backfill-embeddings`, `version`.
 
 ## Configuration
 

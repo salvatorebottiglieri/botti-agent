@@ -9,7 +9,8 @@ ALTER TABLE facts ADD COLUMN IF NOT EXISTS embedding vector(1536);
 -- ANN index for cosine-distance search over fact embeddings. lists = 100 is
 -- the ADR-0008 starting point for the expected fact volume. The index is built
 -- before bulk embedding: after a large backfill, run
--- REINDEX INDEX idx_facts_embedding; to rebuild it over the new vectors.
+-- REINDEX INDEX CONCURRENTLY idx_facts_embedding to rebuild it over the new
+-- vectors without taking ACCESS EXCLUSIVE.
 CREATE INDEX IF NOT EXISTS idx_facts_embedding
     ON facts USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 

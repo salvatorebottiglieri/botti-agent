@@ -238,6 +238,10 @@ class TestPostgresFactRepositoryBackfill:
         mock.fetchrow = AsyncMock()
         mock.fetch = AsyncMock()
         mock.execute = AsyncMock()
+        transaction = MagicMock()
+        transaction.__aenter__ = AsyncMock(return_value=None)
+        transaction.__aexit__ = AsyncMock(return_value=None)
+        mock.transaction = MagicMock(return_value=transaction)
         return mock
 
     @pytest.fixture
@@ -265,6 +269,25 @@ class TestPostgresFactRepositoryBackfill:
         assert (second_id, second_literal) == (ids[1], "[-0.4,0.5,-0.6]")
 
     @pytest.mark.asyncio
+    async def test_backfill_wraps_every_update_in_one_transaction(self, repo_with_mock):
+        """Witness: one autocommitted UPDATE per pair leaves partial writes
+        when a later pair fails; the batch must open a transaction before the
+        first UPDATE and close it after the last."""
+        repo, mock_db_session = repo_with_mock
+        events: list[str] = []
+        mock_db_session.execute = AsyncMock(side_effect=lambda *args: events.append("update"))
+        transaction = mock_db_session.transaction.return_value
+        transaction.__aenter__ = AsyncMock(side_effect=lambda: events.append("begin"))
+        transaction.__aexit__ = AsyncMock(side_effect=lambda *args: events.append("commit"))
+
+        await repo.backfill_embeddings(
+            [uuid4(), uuid4()], [[0.1, 0.2], [0.3, 0.4]]
+        )
+
+        assert events == ["begin", "update", "update", "commit"]
+        mock_db_session.transaction.assert_called_once_with()
+
+    @pytest.mark.asyncio
     async def test_backfill_length_mismatch_raises_before_any_write(self, repo_with_mock):
         """Two ids and one embedding is rejected, and no UPDATE runs."""
         repo, mock_db_session = repo_with_mock
@@ -273,3 +296,78 @@ class TestPostgresFactRepositoryBackfill:
             await repo.backfill_embeddings([uuid4(), uuid4()], [[0.1, 0.2]])
 
         mock_db_session.execute.assert_not_awaited()
+
+
+class TestPostgresFactRepositoryMissingEmbeddings:
+    """Keyset selection of null-embedding facts and the CLI session seam."""
+
+    @pytest.fixture
+    def mock_db_session(self):
+        mock = MagicMock()
+        mock.__aenter__ = AsyncMock(return_value=mock)
+        mock.__aexit__ = AsyncMock(return_value=None)
+        mock.fetchrow = AsyncMock()
+        mock.fetch = AsyncMock()
+        mock.execute = AsyncMock()
+        return mock
+
+    @pytest.fixture
+    def repo_with_mock(self, mock_db_session):
+        with patch("cortex.memory.repository.DbSession") as mock_db_session_class:
+            mock_db_session_class.return_value = mock_db_session
+            yield PostgresFactRepository(), mock_db_session
+
+    @pytest.mark.asyncio
+    async def test_list_missing_embeddings_uses_null_predicate_and_keyset(
+        self, repo_with_mock
+    ):
+        """Witness: dropping the null predicate re-embeds rows; dropping the
+        keyset re-reads page one; retracted rows must never be filled."""
+        repo, mock_db_session = repo_with_mock
+        first, second = uuid4(), uuid4()
+        mock_db_session.fetch.return_value = [
+            _row(id=first, embedding=None),
+            _row(id=second, embedding=None),
+        ]
+
+        facts = await repo.list_missing_embeddings(limit=2)
+
+        sql, *params = mock_db_session.fetch.call_args.args
+        assert "embedding IS NULL" in sql
+        assert "retracted_at IS NULL" in sql
+        assert "id > $2::uuid" in sql
+        assert "ORDER BY id" in sql
+        assert "LIMIT $1" in sql
+        assert params == [2, None]
+        assert [fact.id for fact in facts] == [first, second]
+        assert all(fact.embedding is None for fact in facts)
+
+    @pytest.mark.asyncio
+    async def test_list_missing_embeddings_passes_explicit_after_id(self, repo_with_mock):
+        """A non-None cursor is bound to $2 as a UUID, not interpolated."""
+        repo, mock_db_session = repo_with_mock
+        after_id = uuid4()
+        mock_db_session.fetch.return_value = []
+
+        await repo.list_missing_embeddings(limit=5, after_id=after_id)
+
+        _, *params = mock_db_session.fetch.call_args.args
+        assert params == [5, after_id]
+
+    @pytest.mark.asyncio
+    async def test_session_factory_is_used_instead_of_the_pool(self, repo_with_mock):
+        """Witness: the CLI passes its own connection; a repository that still
+        opens DbSession ignores --db-url and hits the shared pool."""
+        _, pool_session = repo_with_mock
+        factory_session = MagicMock()
+        factory_session.__aenter__ = AsyncMock(return_value=factory_session)
+        factory_session.__aexit__ = AsyncMock(return_value=None)
+        factory_session.fetch = AsyncMock(return_value=[])
+
+        with patch("cortex.memory.repository.DbSession") as db_session_class:
+            repo = PostgresFactRepository(session_factory=lambda: factory_session)
+            await repo.list_missing_embeddings(limit=1)
+
+        db_session_class.assert_not_called()
+        pool_session.fetch.assert_not_awaited()
+        factory_session.fetch.assert_awaited_once()

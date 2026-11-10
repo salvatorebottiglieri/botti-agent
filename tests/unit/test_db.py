@@ -34,6 +34,15 @@ class TestDbSession:
         with pytest.raises(RuntimeError, match="not active"):
             await session.fetchrow("SELECT * FROM test")
 
+    @pytest.mark.asyncio
+    async def test_transaction_not_active(self):
+        """A transaction cannot open without an acquired connection."""
+        session = DbSession()
+
+        with pytest.raises(RuntimeError, match="not active"):
+            async with session.transaction():
+                pass
+
 
 class TestPoolManagement:
     """Test cases for pool management functions."""
