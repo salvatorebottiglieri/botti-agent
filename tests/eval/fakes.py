@@ -20,14 +20,8 @@ from cortex.tools.interfaces import ToolCall, ToolDefinition
 class ScriptedLLMClient(LLMClient):
     """Returns scripted responses in order, one per ``chat()`` call."""
 
-    def __init__(
-        self,
-        responses: list[ChatResult] | None = None,
-        *,
-        embedding_dimensions: int = 1536,
-    ) -> None:
+    def __init__(self, responses: list[ChatResult] | None = None) -> None:
         self._responses: list[ChatResult] = list(responses or [])
-        self._embedding_dimensions = embedding_dimensions
         self.calls: list[list[ChatMessage]] = []
 
     def queue_tool_call(
@@ -94,8 +88,8 @@ class ScriptedLLMClient(LLMClient):
         return [{"name": tool.name} for tool in tools]
 
     async def embed(self, text: str) -> list[float]:
-        """Deterministic zero vector sized by ``embedding_dimensions``."""
-        return [0.0] * self._embedding_dimensions
+        """Deterministic zero vector (embeddings are not scripted)."""
+        return [0.0] * 1536
 
     def translate_tool_call(self, raw: dict[str, Any]) -> ToolCall:
         return ToolCall(**raw)
