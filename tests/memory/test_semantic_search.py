@@ -9,6 +9,7 @@ Invariants under test:
       ``LLMClient`` is configured; an embedding failure, a pgvector failure or
       an empty ANN pool falls back to ILIKE and marks "facts" degraded.
     * Without an LLM client the lexical path is unchanged and not degraded.
+    * ``get_relevant_facts`` is semantic-aware with the same internal fallback.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -93,8 +94,8 @@ class TestSemanticSearchPipeline:
         assert "1 - (embedding <=> $1::vector) AS similarity" in sql
         assert "embedding IS NOT NULL" in sql
         assert "retracted_at IS NULL" in sql
-        assert "LIMIT $2" in sql
-        assert params == [VECTOR_LITERAL, 50]
+        assert "LIMIT 50" in sql
+        assert params == [VECTOR_LITERAL]
         mock_db_session.execute.assert_awaited_once_with("SET ivfflat.probes = 10")
         mock_db_session.fetch.assert_awaited_once()
         assert [fact.id for fact in results] == [row["id"] for row in rows[:10]]
@@ -213,9 +214,18 @@ class TestContextProviderSemanticPath:
             llm_client=llm_client,
         )
 
+    @pytest.mark.parametrize(
+        ("max_facts", "fact_types", "expected_limit"),
+        [
+            pytest.param(5, None, 5, id="no-filters"),
+            pytest.param(3, [FactType.LOCATION], 3, id="fact-types"),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_semantic_path_embeds_query_and_skips_lexical(self, fact_repo):
-        """The query is embedded, search_semantic gets the vector and 0.4 default."""
+    async def test_semantic_path_embeds_query_and_forwards_filters(
+        self, fact_repo, max_facts, fact_types, expected_limit
+    ):
+        """The query is embedded, filters are forwarded and the 0.4 default applies."""
         semantic_fact = Fact(
             type=FactType.LOCATION,
             symbolic_repr="location.office",
@@ -226,33 +236,22 @@ class TestContextProviderSemanticPath:
         client = _llm_client(VECTOR)
 
         bundle = await self._provider(fact_repo, client).get_memory_context(
-            None, QUERY, max_facts=5
+            None,
+            QUERY,
+            max_facts=max_facts,
+            fact_types=fact_types,
         )
 
         client.embed.assert_awaited_once_with(QUERY)
         fact_repo.search_semantic.assert_awaited_once_with(
-            VECTOR, limit=5, fact_types=None, min_confidence=0.4
+            VECTOR,
+            limit=expected_limit,
+            fact_types=fact_types,
+            min_confidence=0.4,
         )
         fact_repo.search.assert_not_awaited()
         assert bundle.facts == [semantic_fact]
         assert "facts" not in bundle.degraded_dimensions
-
-    @pytest.mark.asyncio
-    async def test_semantic_path_forwards_filters(self, fact_repo):
-        """fact_types reaches search_semantic and the 0.4 default applies."""
-        fact_repo.search_semantic.return_value = [Fact(symbolic_repr="location.office")]
-        client = _llm_client(VECTOR)
-
-        await self._provider(fact_repo, client).get_memory_context(
-            None,
-            QUERY,
-            fact_types=[FactType.LOCATION],
-            max_facts=3,
-        )
-
-        fact_repo.search_semantic.assert_awaited_once_with(
-            VECTOR, limit=3, fact_types=[FactType.LOCATION], min_confidence=0.4
-        )
 
     @pytest.mark.asyncio
     async def test_embedding_failure_falls_back_to_lexical_and_degrades_facts(self, fact_repo):
@@ -330,17 +329,37 @@ class TestContextProviderSemanticPath:
         assert bundle.degraded_dimensions == []
 
     @pytest.mark.asyncio
-    async def test_get_relevant_facts_stays_lexical_even_with_llm_client(self, fact_repo):
-        """The public query method keeps its existing contract for callers."""
-        lexical_fact = Fact(symbolic_repr="location.work", natural_lang_repr="At work")
-        fact_repo.search.return_value = [lexical_fact]
+    async def test_get_relevant_facts_uses_semantic_path_with_llm_client(self, fact_repo):
+        """A direct caller gets ANN retrieval too, not the silent lexical path."""
+        semantic_fact = Fact(symbolic_repr="location.work", natural_lang_repr="At work")
+        fact_repo.search_semantic.return_value = [semantic_fact]
         client = _llm_client(VECTOR)
 
         result = await self._provider(fact_repo, client).get_relevant_facts(
             session_id=None, query="work", limit=5
         )
 
-        client.embed.assert_not_awaited()
+        client.embed.assert_awaited_once_with("work")
+        fact_repo.search_semantic.assert_awaited_once_with(
+            VECTOR, limit=5, fact_types=None, min_confidence=0.4
+        )
+        fact_repo.search.assert_not_awaited()
+        assert result == [semantic_fact]
+
+    @pytest.mark.asyncio
+    async def test_get_relevant_facts_falls_back_to_lexical_when_embedding_fails(
+        self, fact_repo
+    ):
+        """A direct caller still gets ILIKE facts when the embedding provider is down."""
+        lexical_fact = Fact(symbolic_repr="location.work", natural_lang_repr="At work")
+        fact_repo.search.return_value = [lexical_fact]
+        client = _llm_client(error=RuntimeError("embedding endpoint down"))
+
+        result = await self._provider(fact_repo, client).get_relevant_facts(
+            session_id=None, query="work", limit=5
+        )
+
+        client.embed.assert_awaited_once_with("work")
         fact_repo.search_semantic.assert_not_awaited()
         fact_repo.search.assert_awaited_once_with(
             "work", limit=10, fact_types=None, min_confidence=0.4

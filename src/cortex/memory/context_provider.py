@@ -122,6 +122,30 @@ class ContextProvider:
         """
         Get facts relevant to a query.
 
+        Uses semantic retrieval when an LLM client is configured and falls
+        back to lexical search internally when that path degrades.
+        """
+        facts, _ = await self._get_relevant_facts_with_status(
+            session_id=session_id,
+            query=query,
+            limit=limit,
+            fact_types=fact_types,
+            min_confidence=min_confidence,
+        )
+        return facts
+
+    async def _get_relevant_facts_lexical(
+        self,
+        session_id: UUID | None,
+        query: str,
+        *,
+        limit: int = 10,
+        fact_types: list[FactType] | None = None,
+        min_confidence: float | None = None,
+    ) -> list[Fact]:
+        """
+        Get facts relevant to a query by lexical search.
+
         Strategy:
         1. Search repository by text
         2. Boost facts from current session
@@ -183,7 +207,7 @@ class ContextProvider:
             except Exception as e:
                 logger.warning(f"Semantic fact search failed, falling back to lexical: {e}")
 
-        facts = await self.get_relevant_facts(
+        facts = await self._get_relevant_facts_lexical(
             session_id=session_id,
             query=query,
             limit=limit,

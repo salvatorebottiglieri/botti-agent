@@ -84,27 +84,20 @@ class FactRepository(ABC):
     @abstractmethod
     async def search(
         self,
-        query: str = "",
+        query: str,
         *,
-        limit: int | None = None,
+        limit: int = 10,
         fact_types: list[FactType] | None = None,
         min_confidence: float | None = None,
-        query_embedding: list[float] | None = None,
     ) -> list[Fact]:
         """
-        Search for facts by text query or embedding.
-
-        When ``query_embedding`` is provided, ``query`` is ignored and the
-        search is an ANN search over stored embeddings; otherwise it is a
-        lexical ILIKE search. The default limit is 50 for the ANN branch and
-        10 for the lexical branch.
+        Search for facts by lexical text query (ILIKE).
 
         Args:
-            query: Text to search for (ignored when ``query_embedding`` is set).
+            query: Text to search for.
             limit: Maximum number of results.
             fact_types: Filter by fact types.
             min_confidence: Minimum confidence threshold.
-            query_embedding: Optional embedding for semantic search.
 
         Returns:
             Matching facts.

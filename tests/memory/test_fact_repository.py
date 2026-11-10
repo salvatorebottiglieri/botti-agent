@@ -161,7 +161,7 @@ class TestPostgresFactRepositoryEmbeddings:
 
 
 class TestPostgresFactRepositorySearch:
-    """ANN and lexical search paths."""
+    """Lexical ILIKE search path."""
 
     @pytest.fixture
     def mock_db_session(self):
@@ -180,70 +180,8 @@ class TestPostgresFactRepositorySearch:
             yield PostgresFactRepository(), mock_db_session
 
     @pytest.mark.asyncio
-    async def test_ann_search_orders_by_cosine_distance_and_defaults_to_50(self, repo_with_mock):
-        """ANN search uses <=> over non-null embeddings and returns top 50 by default."""
-        repo, mock_db_session = repo_with_mock
-        rows = [
-            _row(id=uuid4(), embedding=f"[0.{i},0.5]") for i in range(1, 51)
-        ]
-        mock_db_session.fetch.return_value = rows
-
-        results = await repo.search(query_embedding=VECTOR)
-
-        sql, *params = mock_db_session.fetch.call_args.args
-        assert "embedding <=> $1::vector" in sql
-        assert "embedding IS NOT NULL" in sql
-        assert "ILIKE" not in sql
-        assert "ORDER BY embedding <=> $1::vector" in sql
-        assert "LIMIT $2" in sql
-        assert params == [VECTOR_LITERAL, 50]
-        assert len(results) == 50
-        assert [fact.id for fact in results] == [row["id"] for row in rows]
-
-    @pytest.mark.asyncio
-    async def test_ann_search_sets_ivfflat_probes(self, repo_with_mock):
-        """ANN search raises ivfflat.probes so the index returns the full candidate set."""
-        repo, mock_db_session = repo_with_mock
-        mock_db_session.fetch.return_value = []
-
-        await repo.search(query_embedding=VECTOR)
-
-        mock_db_session.execute.assert_awaited_once_with("SET ivfflat.probes = 10")
-        mock_db_session.fetch.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_ann_search_applies_type_and_confidence_filters(self, repo_with_mock):
-        """fact_types and min_confidence bind into the ANN query with correct numbering."""
-        repo, mock_db_session = repo_with_mock
-        mock_db_session.fetch.return_value = []
-
-        await repo.search(
-            query_embedding=VECTOR,
-            fact_types=[FactType.LOCATION],
-            min_confidence=0.4,
-        )
-
-        sql, *params = mock_db_session.fetch.call_args.args
-        assert "type IN ($2)" in sql
-        assert "confidence >= $3" in sql
-        assert "LIMIT $4" in sql
-        assert params == [VECTOR_LITERAL, "location", 0.4, 50]
-
-    @pytest.mark.asyncio
-    async def test_ann_search_honours_explicit_limit(self, repo_with_mock):
-        """An explicit limit replaces the ANN default of 50."""
-        repo, mock_db_session = repo_with_mock
-        mock_db_session.fetch.return_value = []
-
-        await repo.search(query_embedding=VECTOR, limit=7)
-
-        sql, *params = mock_db_session.fetch.call_args.args
-        assert "embedding <=> $1::vector" in sql
-        assert params[-1] == 7
-
-    @pytest.mark.asyncio
     async def test_lexical_search_falls_back_to_ilike_with_default_10(self, repo_with_mock):
-        """Without a query embedding the ILIKE path runs with its 10-row default."""
+        """The ILIKE path runs with its 10-row default."""
         repo, mock_db_session = repo_with_mock
         mock_db_session.fetch.return_value = [_row(embedding=None)]
 

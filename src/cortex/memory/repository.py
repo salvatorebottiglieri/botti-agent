@@ -1,6 +1,6 @@
 """PostgreSQL implementation of memory repositories."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -42,13 +42,6 @@ def _parse_vector(value: Any) -> list[float] | None:
             stripped = stripped[:-1]
         return [float(part) for part in stripped.split(",") if part.strip()]
     return [float(component) for component in value]
-
-
-def _utc_timestamp(value: datetime) -> float:
-    """Seconds since the epoch, treating a naive datetime as UTC."""
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.timestamp()
 
 
 class PostgresFactRepository(FactRepository):
@@ -147,37 +140,20 @@ class PostgresFactRepository(FactRepository):
 
     async def search(
         self,
-        query: str = "",
+        query: str,
         *,
-        limit: int | None = None,
+        limit: int = 10,
         fact_types: list[FactType] | None = None,
         min_confidence: float | None = None,
-        query_embedding: list[float] | None = None,
     ) -> list[Fact]:
-        """Search for facts by text query or embedding.
-
-        ``query`` is ignored when ``query_embedding`` is given: the search is
-        an ANN lookup over stored embeddings ordered by cosine distance. With
-        no embedding it falls back to the lexical ILIKE path. Default limit is
-        50 for ANN and 10 for ILIKE.
-        """
-        effective_limit = (
-            limit if limit is not None else (50 if query_embedding is not None else 10)
+        """Search for facts by lexical ILIKE match."""
+        match_clause = (
+            "(symbolic_repr ILIKE $1 OR natural_lang_repr ILIKE $1)"
+            " AND retracted_at IS NULL"
         )
 
-        if query_embedding is not None:
-            match_clause = "embedding IS NOT NULL AND retracted_at IS NULL"
-            order_clause = "embedding <=> $1::vector"
-            params: list[Any] = [_vector_literal(query_embedding)]
-        else:
-            match_clause = (
-                "(symbolic_repr ILIKE $1 OR natural_lang_repr ILIKE $1)"
-                " AND retracted_at IS NULL"
-            )
-            order_clause = "confidence DESC, created_at DESC"
-            params = [f"%{query}%"]
-
         filters = ""
+        params: list[Any] = [f"%{query}%"]
         next_param = 2
         if fact_types:
             type_values = [t.value if hasattr(t, 'value') else t for t in fact_types]
@@ -193,11 +169,9 @@ class PostgresFactRepository(FactRepository):
             params.append(min_confidence)
             next_param += 1
 
-        params.append(effective_limit)
+        params.append(limit)
 
         async with DbSession() as db:
-            if query_embedding is not None:
-                await db.execute(f"SET ivfflat.probes = {_ANN_PROBES}")
             rows = await db.fetch(
                 f"""
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
@@ -206,7 +180,7 @@ class PostgresFactRepository(FactRepository):
                 FROM facts
                 WHERE {match_clause}
                       {filters}
-                ORDER BY {order_clause}
+                ORDER BY confidence DESC, created_at DESC
                 LIMIT ${next_param}
                 """,
                 *params,
@@ -227,21 +201,16 @@ class PostgresFactRepository(FactRepository):
         and the recency/confidence boosts are applied in memory, so the DB is
         never re-queried for the final ranking.
         """
-        candidates = await self._ann_search(query_embedding, limit=_ANN_CANDIDATE_LIMIT)
+        candidates = await self._ann_search(query_embedding)
         ranked = self._re_rank(candidates, fact_types, min_confidence)
         return ranked[:limit]
 
-    async def _ann_search(
-        self,
-        query_embedding: list[float],
-        *,
-        limit: int = _ANN_CANDIDATE_LIMIT,
-    ) -> list[tuple[Fact, float]]:
-        """Return ANN candidates with their cosine similarity, nearest first."""
+    async def _ann_search(self, query_embedding: list[float]) -> list[tuple[Fact, float]]:
+        """Return the top ANN candidates with their cosine similarity."""
         async with DbSession() as db:
             await db.execute(f"SET ivfflat.probes = {_ANN_PROBES}")
             rows = await db.fetch(
-                """
+                f"""
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
                        payload, confidence, embedding, created_at, retracted_at,
                        last_accessed_at, access_count,
@@ -249,10 +218,9 @@ class PostgresFactRepository(FactRepository):
                 FROM facts
                 WHERE embedding IS NOT NULL AND retracted_at IS NULL
                 ORDER BY embedding <=> $1::vector
-                LIMIT $2
+                LIMIT {_ANN_CANDIDATE_LIMIT}
                 """,
                 _vector_literal(query_embedding),
-                limit,
             )
             return [(self._row_to_fact(row), float(row["similarity"])) for row in rows]
 
@@ -267,8 +235,8 @@ class PostgresFactRepository(FactRepository):
         ``score = cosine_similarity + recency_boost + confidence_boost``;
         equal scores fall back to the newer ``created_at``.
         """
-        now = datetime.now(UTC).timestamp()
-        ranked: list[tuple[float, float, Fact]] = []
+        now = datetime.now(UTC)
+        ranked: list[tuple[float, datetime, Fact]] = []
 
         for fact, similarity in candidates:
             if fact_types is not None and fact.type not in fact_types:
@@ -276,10 +244,12 @@ class PostgresFactRepository(FactRepository):
             if min_confidence is not None and fact.confidence < min_confidence:
                 continue
 
-            created_at = _utc_timestamp(fact.created_at)
+            created_at = fact.created_at
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=UTC)
             recency_boost = (
                 _RECENCY_BOOST
-                if now - created_at <= _RECENCY_WINDOW_HOURS * 3600
+                if now - created_at <= timedelta(hours=_RECENCY_WINDOW_HOURS)
                 else 0.0
             )
             score = similarity + recency_boost + _CONFIDENCE_BOOST * fact.confidence
