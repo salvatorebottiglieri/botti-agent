@@ -1,5 +1,7 @@
 """Tests for CortexApp bootstrap."""
 
+import asyncio
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -134,8 +136,45 @@ class TestStartupShutdown:
         assert hasattr(app, 'fact_store')
         assert hasattr(app, 'minion_service')
         assert hasattr(app, 'llm_client')
+        assert hasattr(app, 'evidence_store')
+        assert hasattr(app, 'evidence_sweep_task')
         assert hasattr(app, 'settings')
         assert hasattr(app, 'app')
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cancels_the_evidence_sweep_task(self):
+        """The hourly sweep task is cancelled and awaited on shutdown."""
+        import asyncio
+
+        from cortex.main import CortexApp
+
+        async def forever() -> None:
+            await asyncio.Event().wait()
+
+        task = asyncio.create_task(forever())
+        app = CortexApp(evidence_sweep_task=task)
+
+        await app.shutdown()
+
+        assert task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_sweep_loop_logs_and_survives_a_failed_sweep(self, caplog):
+        """A transient DB failure is logged; the loop continues to its sleep."""
+        from cortex.main import _evidence_sweep_loop
+
+        store = MagicMock()
+        store.sweep = AsyncMock(side_effect=RuntimeError("database down"))
+
+        with patch("cortex.main.asyncio.sleep", AsyncMock(side_effect=asyncio.CancelledError)):
+            with caplog.at_level("WARNING", logger="cortex.main"):
+                with pytest.raises(asyncio.CancelledError):
+                    await _evidence_sweep_loop(store)
+
+        store.sweep.assert_awaited_once()
+        assert any(
+            "Evidence sweep failed" in record.message for record in caplog.records
+        )
 
 
 class TestModuleEntry:
@@ -182,3 +221,79 @@ class TestMinionServiceIntegration:
         app = CortexApp()
         assert hasattr(app, 'minion_service')
         assert app.minion_service is None
+
+
+class TestSensoryFactSource:
+    """The sensory handler names the event as the evidence source (issue #83)."""
+
+    @staticmethod
+    def _cortex():
+        from cortex.main import CortexApp
+
+        bus = MagicMock()
+        bus.subscribe = AsyncMock()
+        execution = MagicMock()
+        execution.subscribe = AsyncMock()
+        fact_store = MagicMock()
+        fact_store.add_fact = AsyncMock()
+        extractor = MagicMock()
+        extractor.extract_from_event_type = MagicMock(return_value=[MagicMock()])
+        return (
+            CortexApp(
+                event_bus=bus,
+                execution_module=execution,
+                fact_store=fact_store,
+                fact_extractor=extractor,
+            ),
+            bus,
+        )
+
+    @pytest.mark.asyncio
+    async def test_handler_uses_the_correlation_id_as_the_source(self):
+        from cortex.events.base import BaseEvent, EventMetadata
+        from cortex.main import _subscribe_services
+
+        cortex, bus = self._cortex()
+        await _subscribe_services(cortex)
+        handler = bus.subscribe.await_args_list[0].args[1]
+        timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        event = BaseEvent(
+            type="location",
+            payload={},
+            metadata=EventMetadata(
+                source_module="test",
+                timestamp=timestamp,
+                correlation_id="corr-1",
+            ),
+        )
+
+        await handler(event)
+
+        fact = cortex.fact_extractor.extract_from_event_type.return_value[0]
+        cortex.fact_store.add_fact.assert_awaited_once_with(
+            fact, source_type="sensor", source_id="corr-1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_handler_falls_back_to_event_type_and_timestamp(self):
+        from cortex.events.base import BaseEvent, EventMetadata
+        from cortex.main import _subscribe_services
+
+        cortex, bus = self._cortex()
+        await _subscribe_services(cortex)
+        handler = bus.subscribe.await_args_list[0].args[1]
+        timestamp = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+        event = BaseEvent(
+            type="location",
+            payload={},
+            metadata=EventMetadata(source_module="test", timestamp=timestamp),
+        )
+
+        await handler(event)
+
+        fact = cortex.fact_extractor.extract_from_event_type.return_value[0]
+        cortex.fact_store.add_fact.assert_awaited_once_with(
+            fact,
+            source_type="sensor",
+            source_id=f"location:{timestamp.isoformat()}",
+        )

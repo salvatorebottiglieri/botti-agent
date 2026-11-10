@@ -5,11 +5,15 @@
 > Rationale: `docs/adr/0013-evidence-based-fact-confidence.md`. Vocabulary: `CONTEXT.md` (`## Memory`).
 > Work items: issues #82 (conversation extraction + STATIC producer) and #83 (evidence engine).
 >
-> **Status: conversation extraction + STATIC producer (#82) implemented; evidence
-> engine (#83) still designed.** There is no `evidence` table in `migrations/` and
-> no `EvidenceStore` in `src/cortex/`; `facts.confidence` is not yet recomputed by
-> the rule below. E1 (evidence invariants) is `importorskip`-gated on issue #83.
-> This document is the implementation contract for that issue.
+> **Status: implemented.** Conversation extraction with the STATIC producer (#82)
+> and the evidence engine (#83) are live. Migration `010_evidence.sql` creates the
+> `evidence` table. `cortex.memory.evidence_store` exposes two implementations of
+> the same contract:
+> - the synchronous, no-argument in-memory `EvidenceStore` — the executable E1
+>   contract (`tests/eval/test_evidence_invariants.py`), and
+> - the asynchronous `PostgresEvidenceStore` — the production store used by
+>   `FactStore` and the hourly sweep.
+> `facts.confidence` is now recomputed by the rule below.
 
 ## Purpose
 
@@ -28,7 +32,7 @@ to synonyms the glossary avoids.
 
 - `facts` (existing): `confidence` is now the posterior over *active* evidence, kept fresh
   by ingestion and the sweep.
-- `evidence` (new): one row per accepted observation —
+- `evidence` (migration `010_evidence.sql`): one row per accepted observation —
   `fact_id` (FK), `source_type` (`sensor` | `user_confirm` | `llm`), `source_id`,
   `value_hash` (the value the observation supported), `strength` (the ingested fact's
   confidence), `observed_at`. Indexed on `(fact_id, observed_at)` and `(observed_at)`.

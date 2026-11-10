@@ -214,6 +214,8 @@ class TestMinionService:
             "location", event.payload
         )
         assert fact_store.add_fact.await_count == 2
+        for call in fact_store.add_fact.await_args_list:
+            assert call.kwargs == {"source_type": "sensor", "source_id": "e3"}
 
     @pytest.mark.asyncio
     async def test_handle_event_passes_plain_string_sensory_type(
