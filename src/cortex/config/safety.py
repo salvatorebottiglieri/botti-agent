@@ -1,8 +1,8 @@
-"""Safety-net settings slice (ADR-0021, issue #146).
+"""Safety-net settings slice (ADR-0021, issues #146/#147).
 
-The safety store holds backups now, and snapshots plus the journal in #147/#148.
-It lives at ``~/.local/share/cortex`` — outside the repo and outside every
-Docker volume — because the incident this net exists for was a volume wipe.
+The safety store holds backups, file snapshots and the journal. It lives at
+``~/.local/share/cortex`` — outside the repo and outside every Docker volume —
+because the incident this net exists for was a volume wipe.
 """
 
 from __future__ import annotations
@@ -37,6 +37,10 @@ class SafetySettings(CortexSettings):
     require_backup_before_migration: bool = Field(
         default=True,
         description="Abort when the pre-migration dump fails",
+    )
+    snapshot_enabled: bool = Field(
+        default=True,
+        description="Snapshot existing files before file_write overwrites them",
     )
 
     @field_validator("store_dir", mode="before")

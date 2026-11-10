@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import Any
 
+from cortex.config.safety import SafetySettings
+from cortex.safety.journal import SafetyStore, UndoError
 from cortex.tools.interfaces import ToolErrorSeverity, ToolResult
 from cortex.tools.meta.base import BaseMetaTool, FileToolMixin
 
@@ -14,6 +16,9 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
     Creates parent directories if needed.
     Will overwrite existing files.
     """
+
+    def __init__(self, safety: SafetySettings | None = None) -> None:
+        self._store = SafetyStore(safety) if safety is not None else None
 
     @property
     def name(self) -> str:
@@ -113,22 +118,42 @@ class FileWriteTool(BaseMetaTool, FileToolMixin):
                 error_severity=ToolErrorSeverity.ERROR
             )
 
+        # Snapshot an existing file before an overwrite: a failed snapshot
+        # refuses the write (fail closed, ADR-0021). New files and appends are
+        # not destructive and are not snapshotted.
+        snapshot_id: str | None = None
+        if not append and file_path.exists() and self._store is not None:
+            try:
+                snapshot_id = self._store.snapshot(file_path)
+            except UndoError as exc:
+                return ToolResult(
+                    tool_call_id="",
+                    tool_name=self.name,
+                    success=False,
+                    error=f"Snapshot failed; refusing to overwrite {path}: {exc}",
+                    error_severity=ToolErrorSeverity.ERROR
+                )
+
         # Write file
         mode = 'a' if append else 'w'
         try:
             with open(file_path, mode, encoding=encoding) as f:
                 f.write(content)
 
+            metadata: dict[str, Any] = {
+                "path": str(file_path),
+                "bytes_written": len(content.encode(encoding)),
+                "append": append
+            }
+            if snapshot_id is not None:
+                metadata["snapshot_id"] = snapshot_id
+
             return ToolResult(
                 tool_call_id="",
                 tool_name=self.name,
                 success=True,
                 output=f"Successfully wrote {len(content)} characters to {path}",
-                metadata={
-                    "path": str(file_path),
-                    "bytes_written": len(content.encode(encoding)),
-                    "append": append
-                }
+                metadata=metadata
             )
 
         except PermissionError:

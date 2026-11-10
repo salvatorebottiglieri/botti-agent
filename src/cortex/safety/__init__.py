@@ -1,4 +1,4 @@
-"""Safety net primitives: external backups now, snapshots/journal in #147/#148."""
+"""Safety net primitives: external backups, file snapshots, journal and undo."""
 
 from cortex.safety.backup import (
     Backup,
@@ -7,11 +7,15 @@ from cortex.safety.backup import (
     PgClient,
     sanitize_database_url,
 )
+from cortex.safety.journal import SafetyStore, UndoError, UndoResult
 
 __all__ = [
     "Backup",
     "BackupError",
     "BackupService",
     "PgClient",
+    "SafetyStore",
+    "UndoError",
+    "UndoResult",
     "sanitize_database_url",
 ]

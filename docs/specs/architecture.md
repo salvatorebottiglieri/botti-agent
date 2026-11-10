@@ -366,7 +366,7 @@ SSE wire contract for `/chat/stream` is in [agentic-loop.md](agentic-loop.md).
 
 CLI (`cortex <command>`, `src/cortex/cli.py`): `token:create`, `traces:cleanup`,
 `rules:list`, `rules:show`, `rules:archive`, `memory:backfill-embeddings`,
-`backup:create`, `backup:restore`, `version`.
+`backup:create`, `backup:restore`, `undo`, `version`.
 
 Backups and the safety store live at `SAFETY_STORE_DIR`
 (`~/.local/share/cortex`), outside the repo and outside every Compose volume:
@@ -387,8 +387,8 @@ injection (ADR-0010): `database`, `llm` (provider, model, base_url, timeout,
 judge model, pricing, circuit breaker), `mqtt` (broker_url, keepalive, reconnect),
 `app` (host, port), `trace` (sidecar URL, timeout, retention), `logging`,
 `learning`, `tools` (allow-list), `safety` (store dir, backup retention,
-pre-migration policy). `config.yaml` carries one optional section
-per slice. Sources rank `env > constructor arguments (config.yaml) > .env >
+snapshot toggle, pre-migration policy). `config.yaml` carries one optional
+section per slice. Sources rank `env > constructor arguments (config.yaml) > .env >
 secrets dir` (ADR-0019), implemented by
 `CortexSettings.settings_customise_sources` in `src/cortex/config/base.py`:
 an exported variable beats the YAML section, the YAML section the loader passes

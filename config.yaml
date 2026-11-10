@@ -71,3 +71,6 @@ safety:
   # aborts unless require_backup_before_migration is false.
   backup_on_migration: true
   require_backup_before_migration: true
+  # Snapshot an existing file before file_write overwrites it (default on).
+  # `cortex undo last` restores it. Disabling is explicit.
+  snapshot_enabled: true

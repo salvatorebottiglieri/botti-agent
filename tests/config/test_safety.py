@@ -35,6 +35,14 @@ class TestDefaults:
         assert safety.backup_retention == 14
         assert safety.backup_on_migration is True
         assert safety.require_backup_before_migration is True
+        assert safety.snapshot_enabled is True
+
+    def test_default_store_is_outside_the_repository(self) -> None:
+        """A store inside the repo would die with a fresh clone (ADR-0021)."""
+        safety = SafetySettings(_env_file=None)
+
+        repo_root = Path(__file__).resolve().parents[2]
+        assert not safety.store_dir.resolve().is_relative_to(repo_root)
 
     def test_reachable_from_the_composed_root(self) -> None:
         settings = Settings(
@@ -54,6 +62,7 @@ class TestEnvOverrides:
         monkeypatch.setenv("SAFETY_BACKUP_RETENTION", "3")
         monkeypatch.setenv("SAFETY_BACKUP_ON_MIGRATION", "false")
         monkeypatch.setenv("SAFETY_REQUIRE_BACKUP_BEFORE_MIGRATION", "false")
+        monkeypatch.setenv("SAFETY_SNAPSHOT_ENABLED", "false")
 
         safety = SafetySettings(_env_file=None)
 
@@ -61,6 +70,7 @@ class TestEnvOverrides:
         assert safety.backup_retention == 3
         assert safety.backup_on_migration is False
         assert safety.require_backup_before_migration is False
+        assert safety.snapshot_enabled is False
 
     def test_tilde_expands_in_a_constructor_value(self) -> None:
         safety = SafetySettings(store_dir="~/safety", _env_file=None)
@@ -71,7 +81,10 @@ class TestEnvOverrides:
         """``safety:`` is a loader section, not just a field name."""
         config = tmp_path / "config.yaml"
         config.write_text(
-            "safety:\n  store_dir: /tmp/yaml-safety\n  backup_retention: 2\n",
+            "safety:\n"
+            "  store_dir: /tmp/yaml-safety\n"
+            "  backup_retention: 2\n"
+            "  snapshot_enabled: false\n",
             encoding="utf-8",
         )
 
@@ -79,6 +92,7 @@ class TestEnvOverrides:
 
         assert settings.safety.store_dir == Path("/tmp/yaml-safety")
         assert settings.safety.backup_retention == 2
+        assert settings.safety.snapshot_enabled is False
 
 
 class TestValidation:
