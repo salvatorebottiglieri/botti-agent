@@ -194,6 +194,44 @@ class TestFactStoreDedup:
         assert result == existing
 
     @pytest.mark.asyncio
+    async def test_static_incoming_does_not_pin_existing_mutable_fact(self, store, repo):
+        """An incoming STATIC observation cannot promote an existing non-static fact."""
+        existing = Fact(
+            id=uuid4(),
+            symbolic_repr="user.birthplace",
+            mutability=FactMutability.MUTABLE,
+            confidence=0.5,
+        )
+        repo.get_by_symbolic_repr.return_value = existing
+        updated = Fact(
+            id=existing.id,
+            symbolic_repr="user.birthplace",
+            mutability=FactMutability.MUTABLE,
+            confidence=0.5,
+        )
+        repo.update.return_value = updated
+
+        fact = Fact(
+            symbolic_repr="user.birthplace",
+            mutability=FactMutability.STATIC,
+            confidence=1.0,
+        )
+        result = await store.add_fact(fact)
+
+        repo.store.assert_not_called()
+        repo.update.assert_awaited_once_with(
+            existing.id,
+            {
+                "natural_lang_repr": "",
+                "payload": {},
+                "confidence": 0.5,
+            },
+        )
+        updates = repo.update.await_args.args[1]
+        assert "mutability" not in updates
+        assert result.mutability is FactMutability.MUTABLE
+
+    @pytest.mark.asyncio
     async def test_mutable_duplicate_update_failure_raises(self, store, repo):
         """A failed update of an existing mutable fact raises."""
         existing = Fact(id=uuid4(), symbolic_repr="location.home")

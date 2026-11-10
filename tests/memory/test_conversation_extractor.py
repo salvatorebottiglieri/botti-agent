@@ -240,15 +240,15 @@ class TestExtractAndStore:
         assert stored[0].payload == {"source": "conversation"}
 
     @pytest.mark.asyncio
-    async def test_existing_payload_keys_are_not_overwritten(self):
-        """Existing source/session payload values win (setdefault semantics)."""
+    async def test_llm_payload_cannot_spoof_provenance(self):
+        """LLM-supplied source/session values are overwritten with the real ones."""
         session_id = uuid4()
         extractor = MagicMock(spec=FactExtractor)
         extractor.extract_from_text = AsyncMock(
             return_value=[
                 Fact(
                     symbolic_repr="user_preference.coffee",
-                    payload={"source": "other", "session_id": "existing"},
+                    payload={"source": "sensor", "session_id": "spoofed"},
                 )
             ]
         )
@@ -258,4 +258,7 @@ class TestExtractAndStore:
             "I like coffee", session_id=session_id
         )
 
-        assert stored[0].payload == {"source": "other", "session_id": "existing"}
+        assert stored[0].payload == {
+            "source": "conversation",
+            "session_id": str(session_id),
+        }

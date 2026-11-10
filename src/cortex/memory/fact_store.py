@@ -63,9 +63,10 @@ class FactStore:
         An existing active fact with the same symbolic_repr is updated in
         place. The gate is the EXISTING fact's mutability: when the stored
         fact is STATIC, the existing fact is returned unchanged (no
-        duplicate insert, no overwrite). Embeddings are generated before the
-        write; a failed generation on an update leaves the stored vector
-        untouched.
+        duplicate insert, no overwrite). Existing mutability wins: an
+        incoming STATIC observation cannot promote an existing non-static
+        fact. Embeddings are generated before the write; a failed generation
+        on an update leaves the stored vector untouched.
         """
         existing = await self._fact_repo.get_by_symbolic_repr(fact.symbolic_repr)
         if existing:
@@ -74,7 +75,11 @@ class FactStore:
                 updates: dict[str, Any] = {
                     "natural_lang_repr": fact.natural_lang_repr,
                     "payload": fact.payload,
-                    "confidence": fact.confidence,
+                    "confidence": (
+                        existing.confidence
+                        if fact.mutability is FactMutability.STATIC
+                        else fact.confidence
+                    ),
                 }
                 if embedding is not None:
                     updates["embedding"] = embedding

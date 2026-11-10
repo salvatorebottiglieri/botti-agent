@@ -35,7 +35,7 @@ to synonyms the glossary avoids.
 
 ## Ingestion flow
 
-Every observation (sensory event today; conversation message after #82) reaches the fact
+Every observation (sensory event today; conversation message from #82) reaches the fact
 store through the same seam: `FactStore.add_fact` → `EvidenceStore.record(fact)`:
 
 1. **Dedup**: if an evidence with the same `(source_type, source_id, fact_id, value_hash)`

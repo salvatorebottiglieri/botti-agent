@@ -51,9 +51,9 @@ class ConversationFactExtractor:
         for fact in facts:
             if not fact.symbolic_repr:
                 continue
-            fact.payload.setdefault("source", "conversation")
+            fact.payload["source"] = "conversation"
             if session_id is not None:
-                fact.payload.setdefault("session_id", str(session_id))
+                fact.payload["session_id"] = str(session_id)
             try:
                 stored.append(await self._fact_store.add_fact(fact))
             except Exception:
