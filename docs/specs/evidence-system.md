@@ -95,6 +95,12 @@ The constants are the calibration point for the future Bayesian network proposed
   posterior — otherwise stale evidence would inflate confidence forever (and the SQL
   `ORDER BY confidence` retrieval path would rank on stale numbers).
 
+**Value change vs identity.** `FactStore` deduplicates by `symbolic_repr`: a new
+value with a different `symbolic_repr` is a **new Fact**, not a value change of
+the old one. `value_hash` therefore matters for direct in-place value updates of
+a Fact row (the E1 contract, exercised in
+`tests/eval/test_evidence_invariants.py`); the identity rule is unchanged here.
+
 ## Static Facts
 
 Confidence pinned at 1.0, never record evidence, never overwritten, never retracted.

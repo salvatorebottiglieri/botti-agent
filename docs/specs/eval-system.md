@@ -25,8 +25,9 @@ The capability suite (raw single-message model questions) was **removed** — it
 tested a surface the personal-agent use case doesn't need. Loop + refusal cover
 the surfaces that matter (ADR-0016). A tombstone for the term lives in `CONTEXT.md`.
 
-E1 is `importorskip`-gated on issue #83: it runs cleanly today and goes live the
-moment `cortex.memory.evidence_store` lands, with no workflow changes.
+E1 runs the evidence-system laws against both the in-file reference spec and
+the real `engine-#83` implementation: 56 deterministic tests, 27 of them
+`engine-#83` nodes, with no skips. It is the E1 PR gate.
 
 ## Harness
 

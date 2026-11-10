@@ -52,10 +52,10 @@ mathematics and nothing else.
   This table *is* the evidence store for rules: there is no separate
   `rule_evidence` table.
 
-Both tables live in the same migration as the rest of the schema; the
-`evidence` table of ADR-0013 does not exist in code (issue #83), so whoever
-implements the rule system first writes the pure update function
-(`cortex/rules/scoring.py`) and the evidence engine reuses it.
+Both rule tables live in the same migration as the rest of the schema. The
+fact `evidence` table of ADR-0013 exists in migration `010_evidence.sql` and is
+owned by `cortex.memory.evidence_store`; the rule score reuses its
+mathematics, not the component.
 
 ## Update rule
 

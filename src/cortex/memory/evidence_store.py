@@ -16,6 +16,7 @@ specified in ``docs/specs/evidence-system.md``; the rationale is ADR-0013.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
@@ -27,6 +28,8 @@ from uuid import UUID
 
 from cortex.db.session import DbSession
 from cortex.memory.models import Fact, FactMutability
+
+logger = logging.getLogger(__name__)
 
 # --- Calibration constants (docs/specs/evidence-system.md — the only magic numbers) ---
 
@@ -228,6 +231,11 @@ class PostgresEvidenceStore:
         if observation is None:
             return None
 
+        if observation.source_type not in LR_BASE:
+            raise ValueError(
+                f"unknown evidence source_type: {observation.source_type!r}"
+            )
+
         value_hash = _value_hash(fact.symbolic_repr)
         cutoff = observation.observed_at - DEDUP_WINDOW
         async with self._session() as db:
@@ -336,7 +344,15 @@ class PostgresEvidenceStore:
                 """
             )
         for row in rows:
-            await self.recompute(row["fact_id"], now=now)
+            fact_id = row["fact_id"]
+            try:
+                await self.recompute(fact_id, now=now)
+            except Exception:
+                logger.warning(
+                    "Evidence sweep failed for fact %s; continuing",
+                    fact_id,
+                    exc_info=True,
+                )
 
     async def evidence_for(self, fact_id: UUID) -> list[Evidence]:
         """All evidence rows for the fact, ordered by ``observed_at``."""

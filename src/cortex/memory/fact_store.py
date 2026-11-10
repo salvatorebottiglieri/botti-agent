@@ -142,18 +142,12 @@ class FactStore:
         if self._evidence_store is None:
             return await self._fact_repo.store(fact)
 
-        now = _utcnow()
         if FactMutability(fact.mutability) == FactMutability.STATIC:
-            # Axioms are pinned from birth; record() is a no-op on the
-            # evidence side and never creates a row.
+            # Axioms are pinned from birth and stay outside the evidence engine.
             fact.confidence = 1.0
-            stored = await self._fact_repo.store(fact)
-            await self._evidence_store.record(
-                stored,
-                Observation(source_type=source_type, source_id=source_id, observed_at=now),
-            )
-            return stored
+            return await self._fact_repo.store(fact)
 
+        now = _utcnow()
         # The observation's strength is the ingested confidence; the stored
         # fact starts at the prior and the first observation uses the same
         # rule as every later one.

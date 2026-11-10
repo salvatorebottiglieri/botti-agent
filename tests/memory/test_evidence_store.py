@@ -250,6 +250,23 @@ class TestPostgresEvidenceStore:
         db.execute.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_unknown_source_type_is_rejected_before_the_db_is_touched(
+        self, store: PostgresEvidenceStore, db: MagicMock
+    ) -> None:
+        fact = Fact(
+            id=uuid4(),
+            symbolic_repr="location.home",
+            confidence=0.9,
+        )
+
+        with pytest.raises(ValueError, match="unknown evidence source_type"):
+            await store.record(fact, Observation("telepathy", "s1", T0))
+
+        db.fetchrow.assert_not_awaited()
+        db.fetch.assert_not_awaited()
+        db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_static_fact_is_pinned_without_an_evidence_row(
         self, store: PostgresEvidenceStore, db: MagicMock
     ) -> None:
@@ -422,6 +439,21 @@ class TestPostgresEvidenceStore:
         assert store.recompute.await_count == 2
         store.recompute.assert_any_await(first, now=T0)
         store.recompute.assert_any_await(second, now=T0)
+
+    @pytest.mark.asyncio
+    async def test_sweep_continues_when_one_fact_fails(
+        self, store: PostgresEvidenceStore, db: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        first, second = uuid4(), uuid4()
+        db.fetch.return_value = [{"fact_id": first}, {"fact_id": second}]
+        store.recompute = AsyncMock(side_effect=[RuntimeError("bad fact"), None])
+
+        with caplog.at_level("WARNING", logger="cortex.memory.evidence_store"):
+            await store.sweep(T0)
+
+        assert store.recompute.await_count == 2
+        assert any(str(first) in record.message for record in caplog.records)
+        assert any("Evidence sweep failed for fact" in record.message for record in caplog.records)
 
     @pytest.mark.asyncio
     async def test_recompute_without_a_fact_id_sweeps(

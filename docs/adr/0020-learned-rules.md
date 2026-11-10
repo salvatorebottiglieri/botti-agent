@@ -153,10 +153,10 @@ enter. The budget is also the signal that the set needs consolidation.
 
 ## Implementation notes
 
-- **The EvidenceStore of ADR-0013 does not exist in code** (issue #83): there is
-  no `evidence` table and no `EvidenceStore`. The Rule score reuses ADR-0013's
-  *mathematics*, not a component. Whichever of the two systems is implemented
-  first writes the pure update function; the other reuses it.
+- **The EvidenceStore of ADR-0013 is implemented** (issue #83): migration
+  `010_evidence.sql` creates the fact `evidence` table and
+  `cortex.memory.evidence_store` owns it. The Rule score still reuses ADR-0013's
+  *mathematics*, not the component: rules score their own `rule_uses` ledger.
 - **There is no LLM priority queue, and the per-module breaker is not wired.**
   `LLMClientFactory.create_for_module()` exists and is tested, but nothing in
   `src/cortex/` calls it: `main.py` builds a single client with `create()` and

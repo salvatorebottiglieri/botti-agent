@@ -59,7 +59,7 @@ flowchart TB
 
     subgraph L2["Layer 2 - modules"]
         Sessions[sessions]
-        Memory[memory<br/>FactStore / ContextProvider / FactExtractor]
+        Memory[memory<br/>FactStore / EvidenceStore / ContextProvider / FactExtractor]
         Goals[goals]
         MinionsMod[minions gateway]
         Trace[trace]
@@ -214,7 +214,7 @@ Event types (`EventTypes`):
 | Module | Path | Public seam |
 |---|---|---|
 | Sessions | `src/cortex/sessions/` | `SessionRepository`; lifecycle free functions in `policy.py` (`create_session`, `resume_session`, `add_user_message`, `end_session`, `get_or_create_session`, ADR-0011) |
-| Memory | `src/cortex/memory/` | `FactStore` (CRUD + dedup), `ContextProvider` (bundle seam, personality/ambient), `FactExtractor` (ingestion); split from `MemoryService` per ADR-0003 |
+| Memory | `src/cortex/memory/` | `FactStore` (CRUD + dedup; records each observation through `PostgresEvidenceStore` and owns confidence via evidence, ADR-0013), `EvidenceStore` (synchronous in-memory E1 contract), `ContextProvider` (bundle seam, personality/ambient), `FactExtractor` (ingestion); split from `MemoryService` per ADR-0003 |
 | Validation | `src/cortex/validation/` | LogicEngine (strict Datalog parser + PyDatalog), ConceptValidationService (ADR-0007) and ConceptDerivationService (LLM revision loop, `concept.validated`/`concept.rejected` events, #28/#29); `ContextProvider.store_concept` stores only validated concepts |
 | Goals | `src/cortex/goals/` | `GoalRepository`, persistent/resumable goals (ADR-0004) |
 | Minions | `src/cortex/minions/` | `MinionGateway`, `MinionRegistry`, `MinionEventHandler`; `MinionMQTTClient`. See [minion-protocol.md](minion-protocol.md) |
@@ -341,6 +341,7 @@ Migrations in `migrations/` (raw SQL, applied by `src/cortex/db/migrations/runne
 |---|---|
 | `sessions`, `messages` | Conversation state that feeds context building |
 | `facts`, `concepts` | Memory: typed facts (payload + confidence + layer + `vector(1536)` embedding, ADR-0008) and derived concepts |
+| `evidence` | Facts: one accepted observation per row (`fact_id` FK, `source_type`/`source_id`, `value_hash`, `strength`, `observed_at`); `facts.confidence` is the posterior over active evidence (ADR-0013, [evidence-system.md](evidence-system.md)) |
 | `goals`, `goal_steps` | Persistent, resumable goals |
 | `minions` | Registered minions, state, last heartbeat |
 | `api_keys` | Admin API tokens (hashed) |
