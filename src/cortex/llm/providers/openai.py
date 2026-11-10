@@ -47,9 +47,18 @@ class OpenAIClient(LLMClient):
     Supports GPT-4, GPT-4o, GPT-3.5-turbo and function calling.
     """
 
-    def __init__(self, api_key: str, model: str = "gpt-4o", base_url: str | None = None):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gpt-4o",
+        base_url: str | None = None,
+        embedding_model: str = "text-embedding-3-small",
+        embedding_dimensions: int = 1536,
+    ):
         self._api_key = api_key
         self._model = model
+        self._embedding_model = embedding_model
+        self._embedding_dimensions = embedding_dimensions
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     @classmethod
@@ -59,10 +68,39 @@ class OpenAIClient(LLMClient):
             api_key=llm.api_key.get_secret_value(),
             model=llm.model,
             base_url=llm.base_url,
+            embedding_model=llm.embedding_model,
+            embedding_dimensions=llm.embedding_dimensions,
         )
 
     def get_provider_name(self) -> str:
         return "openai"
+
+    async def embed(self, text: str) -> list[float]:
+        """Generate an embedding vector for ``text``.
+
+        ADR-0008: embeddings are generated eagerly at fact-storage time through
+        the provider's ``/embeddings`` endpoint. Provider failures surface as
+        ``openai.APIError`` unchanged so the caller can fall back to lexical
+        search (issue #31).
+        """
+        try:
+            response = await self._client.embeddings.create(
+                model=self._embedding_model,
+                input=text,
+                dimensions=self._embedding_dimensions,
+            )
+        except openai.APIError as e:
+            logger.error(f"OpenAI embedding API error: {e}")
+            raise
+
+        vector = [float(value) for value in response.data[0].embedding]
+        if len(vector) != self._embedding_dimensions:
+            raise ValueError(
+                "Embedding dimension mismatch: expected "
+                f"{self._embedding_dimensions}, got {len(vector)} "
+                f"for model '{self._embedding_model}'"
+            )
+        return vector
 
     async def chat(
         self,

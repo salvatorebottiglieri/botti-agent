@@ -1,7 +1,10 @@
 """Tests for the LLM Client."""
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
+import httpx
+import openai
 import pytest
 
 from cortex.llm import (
@@ -370,6 +373,95 @@ class TestOpenAIClient:
         assert final.message.content == "<think>inline</think>Answer"
 
 
+class TestOpenAIClientEmbed:
+    """``OpenAIClient.embed()`` — ADR-0008 / issue #30.
+
+    Witness values are deliberately non-default (``custom-embed-v2`` / 8
+    dimensions): an implementation that hardcodes ``text-embedding-3-small``
+    or 1536 fails even though it would pass a default-valued assertion.
+    """
+
+    def _client(self, *, dimensions: int = 8) -> OpenAIClient:
+        return OpenAIClient(
+            api_key="test",
+            embedding_model="custom-embed-v2",
+            embedding_dimensions=dimensions,
+        )
+
+    @staticmethod
+    def _response(vector):
+        return SimpleNamespace(data=[SimpleNamespace(embedding=vector)])
+
+    async def test_embed_calls_configured_model_and_dimensions(self):
+        """The embeddings endpoint receives the configured model, input text
+        and dimensions — not a hardcoded default."""
+        client = self._client()
+        create = AsyncMock(return_value=self._response([0.5] * 8))
+
+        with patch.object(client._client.embeddings, "create", new=create):
+            result = await client.embed("hello world")
+
+        create.assert_awaited_once_with(
+            model="custom-embed-v2",
+            input="hello world",
+            dimensions=8,
+        )
+        assert result == [0.5] * 8
+
+    async def test_embed_returns_list_of_floats(self):
+        """Provider values (which may arrive as ints) become ``list[float]``."""
+        client = self._client(dimensions=2)
+        create = AsyncMock(return_value=self._response([1, 2]))
+
+        with patch.object(client._client.embeddings, "create", new=create):
+            result = await client.embed("text")
+
+        assert isinstance(result, list)
+        assert result == [1.0, 2.0]
+        assert all(isinstance(value, float) for value in result)
+
+    async def test_embed_rejects_vector_with_wrong_dimensions(self):
+        """A vector shorter than the configured dimension raises: silently
+        truncating or padding would store a vector the pgvector column cannot
+        accept (issue #31)."""
+        client = self._client(dimensions=3)
+        create = AsyncMock(return_value=self._response([0.1, 0.2]))
+
+        with patch.object(client._client.embeddings, "create", new=create):
+            with pytest.raises(ValueError, match=r"expected 3, got 2"):
+                await client.embed("text")
+
+    async def test_embed_propagates_api_error(self):
+        """A provider failure surfaces as ``openai.APIError`` unchanged, so the
+        caller can fall back to ILIKE (issue #31)."""
+        client = self._client()
+        error = openai.APIConnectionError(
+            request=httpx.Request("POST", "https://example.test/v1/embeddings")
+        )
+        create = AsyncMock(side_effect=error)
+
+        with patch.object(client._client.embeddings, "create", new=create):
+            with pytest.raises(openai.APIError) as raised:
+                await client.embed("text")
+
+        assert raised.value is error
+
+    def test_from_settings_passes_embedding_config(self):
+        """``from_settings`` forwards the embedding slice of ``LLMSettings``."""
+        settings = LLMSettings(
+            api_key="test-key",
+            model="gpt-4o",
+            embedding_model="custom-embed-v2",
+            embedding_dimensions=8,
+            _env_file=None,
+        )
+
+        client = OpenAIClient.from_settings(settings)
+
+        assert client._embedding_model == "custom-embed-v2"
+        assert client._embedding_dimensions == 8
+
+
 class TestLLMClientFactory:
     """Test cases for LLM client factory."""
 
@@ -397,6 +489,11 @@ class TestLLMClientFactory:
         factory = LLMClientFactory(mock_settings)
         with pytest.raises(ValueError, match="Unsupported LLM provider"):
             factory.create(provider="unknown")
+
+    def test_created_client_exposes_embed(self, mock_settings):
+        """Embedding generation is part of the factory's client contract."""
+        client = LLMClientFactory(mock_settings).create()
+        assert hasattr(client, "embed")
 
     def test_register_provider(self):
         """Test registering a new provider."""

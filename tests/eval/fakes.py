@@ -87,6 +87,10 @@ class ScriptedLLMClient(LLMClient):
     def translate_tools(self, tools: list[ToolDefinition]) -> list[dict[str, Any]]:
         return [{"name": tool.name} for tool in tools]
 
+    async def embed(self, text: str) -> list[float]:
+        """Deterministic zero vector (embeddings are not scripted)."""
+        return [0.0] * 1536
+
     def translate_tool_call(self, raw: dict[str, Any]) -> ToolCall:
         return ToolCall(**raw)
 

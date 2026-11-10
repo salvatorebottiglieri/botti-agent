@@ -111,6 +111,25 @@ class TestFactoryBreaker:
         )
 
     # ------------------------------------------------------------------
+    # CircuitBreakerLLMClient.embed() delegation
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_embed_delegates_directly_without_breaker(self):
+        """embed() bypasses the breaker: an embedding outage must not open the
+        chat breaker (issue #30 decision 6)."""
+        mock_client = AsyncMock(spec=LLMClient)
+        mock_client.embed.return_value = [0.1, -0.2]
+        mock_breaker = AsyncMock(spec=CircuitBreaker)
+
+        wrapper = CircuitBreakerLLMClient(mock_client, mock_breaker, "memory")
+        result = await wrapper.embed("hello")
+
+        assert result == [0.1, -0.2]
+        mock_client.embed.assert_awaited_once_with("hello")
+        mock_breaker.call.assert_not_awaited()
+
+    # ------------------------------------------------------------------
     # Circuit breaker failure interception
     # ------------------------------------------------------------------
 

@@ -94,6 +94,15 @@ class CircuitBreakerLLMClient(LLMClient):
 
     # -- Explicit pass-through for abstract methods ---------------------------
 
+    async def embed(self, text: str) -> list[float]:
+        """Forwards directly to the underlying client.
+
+        Embedding calls are NOT routed through the circuit breaker: an
+        embedding outage must not open the breaker that gates chat traffic;
+        the caller handles the fallback.
+        """
+        return await self._client.embed(text)
+
     def translate_tools(self, tools: list[ToolDefinition]) -> list[dict[str, Any]]:
         return self._client.translate_tools(tools)
 

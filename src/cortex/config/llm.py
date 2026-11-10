@@ -68,6 +68,15 @@ class LLMSettings(CortexSettings):
         default=None,
         description="Base URL for API-compatible providers",
     )
+    embedding_model: str = Field(
+        default="text-embedding-3-small",
+        description="Embedding model used by ``LLMClient.embed()``",
+    )
+    embedding_dimensions: int = Field(
+        default=1536,
+        ge=1,
+        description="Dimension of the vectors returned by ``LLMClient.embed()``",
+    )
     timeout: int = Field(default=60, ge=1)
     circuit_breaker_threshold: int = Field(
         default=5,

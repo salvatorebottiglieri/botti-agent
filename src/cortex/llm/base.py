@@ -66,6 +66,24 @@ class LLMClient(ABC):
         ...
 
     @abstractmethod
+    async def embed(self, text: str) -> list[float]:
+        """
+        Generate an embedding vector for a text.
+
+        Args:
+            text: Text to embed
+
+        Returns:
+            Embedding vector as a list of floats. Its length is the provider
+            model's configured dimension.
+
+        Raises:
+            Exception: The provider's API error when the request fails; callers
+                fall back to lexical search.
+        """
+        ...
+
+    @abstractmethod
     def translate_tools(self, tools: list[ToolDefinition]) -> list[dict[str, Any]]:
         """
         Convert internal tool schema to provider format.
