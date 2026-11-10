@@ -8,8 +8,8 @@ import pytest
 from cortex.events.base import BaseEvent
 from cortex.llm.base import LLMClient
 from cortex.llm.models import ChatMessage, ChatResult, Role
-from cortex.memory.fact_extractor import FactExtractor, _parse_llm_facts
-from cortex.memory.models import FactType
+from cortex.memory.fact_extractor import _SYSTEM_PROMPT, FactExtractor, _parse_llm_facts
+from cortex.memory.models import FactMutability, FactType
 
 
 class TestExtractFromEventType:
@@ -173,6 +173,51 @@ class TestExtractFromText:
         with pytest.raises(ValueError):
             await FactExtractor(llm_client=llm).extract_from_text("hello")
 
+    @pytest.mark.asyncio
+    async def test_extract_from_text_marks_irrefutable_statement_static(self):
+        """An irrefutable statement yields a STATIC fact with confidence 1.0."""
+        llm = MagicMock(spec=LLMClient)
+        llm.chat = AsyncMock(
+            return_value=ChatResult(
+                message=ChatMessage(
+                    role=Role.ASSISTANT,
+                    content=json.dumps(
+                        {
+                            "facts": [
+                                {
+                                    "type": "user_fact",
+                                    "symbolic_repr": "user_fact.birth_place",
+                                    "natural_lang_repr": "Born in Rome",
+                                    "confidence": 0.55,
+                                    "mutability": "static",
+                                    "payload": {"place": "Rome"},
+                                }
+                            ]
+                        }
+                    ),
+                )
+            )
+        )
+
+        facts = await FactExtractor(llm_client=llm).extract_from_text("I was born in Rome.")
+
+        assert len(facts) == 1
+        assert facts[0].mutability is FactMutability.STATIC
+        assert facts[0].confidence == 1.0
+        assert facts[0].symbolic_repr == "user_fact.birth_place"
+        assert facts[0].payload == {"place": "Rome"}
+
+
+class TestSystemPrompt:
+    """The extraction prompt carries the mutability contract."""
+
+    def test_prompt_requires_mutability_and_separates_attitudes_from_behaviors(self):
+        """The prompt asks for mutability and keeps attitudes/behaviors distinct."""
+        assert "mutability" in _SYSTEM_PROMPT
+        assert "static" in _SYSTEM_PROMPT
+        assert "Attitudes and behaviors are distinct facts" in _SYSTEM_PROMPT
+        assert "symbolic_repr" in _SYSTEM_PROMPT
+
 
 class TestParseLlmFacts:
     """_parse_llm_facts tolerates noisy LLM output."""
@@ -208,3 +253,53 @@ class TestParseLlmFacts:
         )
 
         assert facts[0].payload == {}
+
+    def test_static_mutability_forces_confidence_to_one(self):
+        """A STATIC fact is pinned at confidence 1.0 regardless of LLM value."""
+        facts = _parse_llm_facts(
+            json.dumps(
+                {
+                    "facts": [
+                        {
+                            "type": "user_fact",
+                            "symbolic_repr": "user_fact.birth_place",
+                            "confidence": 0.3,
+                            "mutability": "static",
+                        }
+                    ]
+                }
+            )
+        )
+
+        assert facts[0].mutability is FactMutability.STATIC
+        assert facts[0].confidence == 1.0
+
+    @pytest.mark.parametrize("mutability", [None, "unknown"])
+    def test_unknown_or_missing_mutability_defaults_to_mutable(self, mutability):
+        """An unknown or absent mutability falls back to MUTABLE."""
+        item = {"type": "activity", "symbolic_repr": "activity.walking", "confidence": 0.7}
+        if mutability is not None:
+            item["mutability"] = mutability
+
+        facts = _parse_llm_facts(json.dumps({"facts": [item]}))
+
+        assert facts[0].mutability is FactMutability.MUTABLE
+        assert facts[0].confidence == 0.7
+
+    def test_known_non_static_mutability_is_parsed(self):
+        """A known non-static mutability is preserved."""
+        facts = _parse_llm_facts(
+            json.dumps(
+                {
+                    "facts": [
+                        {
+                            "type": "user_fact",
+                            "symbolic_repr": "user_fact.home_address",
+                            "mutability": "semi_static",
+                        }
+                    ]
+                }
+            )
+        )
+
+        assert facts[0].mutability is FactMutability.SEMI_STATIC

@@ -43,6 +43,7 @@ class CortexApp:
     context_provider: Any = field(default=None)
     fact_store: Any = field(default=None)
     fact_extractor: Any = field(default=None)
+    conversation_extractor: Any = field(default=None)
     rule_service: Any = field(default=None)
     minion_service: Any = field(default=None)
     llm_client: Any = field(default=None)
@@ -244,6 +245,14 @@ async def initialize_app() -> CortexApp:
     fact_store = FactStore(fact_repo, llm_client=cortex.llm_client)
     cortex.fact_store = fact_store
     cortex.fact_extractor = memory_extractor
+
+    # Conversation extraction (issue #82): user messages flow through the same
+    # LLM extractor and are stored in the fact store before the agent loop runs.
+    from cortex.memory.conversation_extractor import ConversationFactExtractor
+
+    cortex.conversation_extractor = ConversationFactExtractor(
+        cortex.fact_extractor, fact_store
+    )
     cortex.context_provider = ContextProvider(
         fact_repository=fact_repo,
         fact_store=fact_store,
@@ -283,6 +292,7 @@ async def initialize_app() -> CortexApp:
         event_bus=cortex.event_bus,
         goal_repository=goal_repo,
         trace_recorder=trace_recorder,
+        conversation_extractor=cortex.conversation_extractor,
     )
 
     # Resume goals left running at a previous shutdown. Startup concern —

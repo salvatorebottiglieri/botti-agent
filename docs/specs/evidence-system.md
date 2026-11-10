@@ -5,10 +5,11 @@
 > Rationale: `docs/adr/0013-evidence-based-fact-confidence.md`. Vocabulary: `CONTEXT.md` (`## Memory`).
 > Work items: issues #82 (conversation extraction + STATIC producer) and #83 (evidence engine).
 >
-> **Status: designed, not yet implemented.** There is no `evidence` table in
-> `migrations/` and no `EvidenceStore` in `src/cortex/`; `facts.confidence` is not
-> yet recomputed by the rule below. E1 (evidence invariants) is `importorskip`-gated on
-> issue #83. This document is the implementation contract for that issue.
+> **Status: conversation extraction + STATIC producer (#82) implemented; evidence
+> engine (#83) still designed.** There is no `evidence` table in `migrations/` and
+> no `EvidenceStore` in `src/cortex/`; `facts.confidence` is not yet recomputed by
+> the rule below. E1 (evidence invariants) is `importorskip`-gated on issue #83.
+> This document is the implementation contract for that issue.
 
 ## Purpose
 
@@ -34,7 +35,7 @@ to synonyms the glossary avoids.
 
 ## Ingestion flow
 
-Every observation (sensory event today; conversation message after #82) reaches the fact
+Every observation (sensory event today; conversation message from #82) reaches the fact
 store through the same seam: `FactStore.add_fact` → `EvidenceStore.record(fact)`:
 
 1. **Dedup**: if an evidence with the same `(source_type, source_id, fact_id, value_hash)`
