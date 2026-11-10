@@ -65,6 +65,14 @@ The host CLI uses the same directory (`SAFETY_STORE_DIR`, default
 `~/.local/share/cortex`), so a pre-migration dump taken in the container is
 restorable from the host.
 
+Compose notes: the mount path is `~/.local/share/cortex` (the default);
+`SAFETY_HOST_STORE_DIR` is not wired, so a custom `SAFETY_STORE_DIR` applies to
+host CLI runs only. The init uses `${UID:-1000}:${GID:-1000}`; on a host whose
+user is not 1000, export `UID`/`GID` or set them in `.env`. Rootless Docker
+maps UIDs, and NFS root-squash can refuse the chown: the dump then stays
+root-owned and the host CLI cannot read it — a known residual until the
+non-root/#120 work lands.
+
 ## Configuration (`SAFETY_` namespace)
 
 | Field | Default | Meaning |

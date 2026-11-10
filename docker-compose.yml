@@ -51,7 +51,7 @@ services:
     user: "0:0"
     volumes:
       - ${HOME}/.local/share/cortex:/store
-    command: ["sh", "-c", "mkdir -p /store/backups /store/snapshots && chown -R ${UID:-1000}:${GID:-1000} /store"]
+    command: ["sh", "-c", "mkdir -p /store/backups /store/snapshots && chmod 0700 /store /store/backups /store/snapshots && chown -R ${UID:-1000}:${GID:-1000} /store"]
     restart: "no"
 
   cortex:
