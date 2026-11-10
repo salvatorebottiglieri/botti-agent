@@ -340,7 +340,7 @@ Migrations in `migrations/` (raw SQL, applied by `src/cortex/db/migrations/runne
 | Table | Holds |
 |---|---|
 | `sessions`, `messages` | Conversation state that feeds context building |
-| `facts`, `concepts` | Memory: typed facts (payload + confidence + layer) and derived concepts |
+| `facts`, `concepts` | Memory: typed facts (payload + confidence + layer + `vector(1536)` embedding, ADR-0008) and derived concepts |
 | `goals`, `goal_steps` | Persistent, resumable goals |
 | `minions` | Registered minions, state, last heartbeat |
 | `api_keys` | Admin API tokens (hashed) |
@@ -359,7 +359,7 @@ SSE wire contract for `/chat/stream` is in [agentic-loop.md](agentic-loop.md).
 
 | Service | Image | Notes |
 |---|---|---|
-| `postgres` | `postgres:16-alpine` | Port 5432 (host: `${POSTGRES_HOST_PORT:-5433}`) |
+| `postgres` | `pgvector/pgvector:pg16` | Port 5432 (host: `${POSTGRES_HOST_PORT:-5433}`) |
 | `mosquitto` | `eclipse-mosquitto:2` | Port 1883; broker config in `docker/mosquitto.conf` |
 | `cortex` | built from `Dockerfile` | Port 8000; depends on healthy postgres + mosquitto |
 | `rizzo-pii` | pinned upstream `Rizzo-AI-Academy/rizzo-pii@v2.0.0` | Opt-in `--profile trace`; pseudonymization sidecar for trace capture |

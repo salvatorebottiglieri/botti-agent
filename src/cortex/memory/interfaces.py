@@ -84,20 +84,27 @@ class FactRepository(ABC):
     @abstractmethod
     async def search(
         self,
-        query: str,
+        query: str = "",
         *,
-        limit: int = 10,
+        limit: int | None = None,
         fact_types: list[FactType] | None = None,
         min_confidence: float | None = None,
+        query_embedding: list[float] | None = None,
     ) -> list[Fact]:
         """
-        Search for facts by text query.
+        Search for facts by text query or embedding.
+
+        When ``query_embedding`` is provided, ``query`` is ignored and the
+        search is an ANN search over stored embeddings; otherwise it is a
+        lexical ILIKE search. The default limit is 50 for the ANN branch and
+        10 for the lexical branch.
 
         Args:
-            query: Text to search for.
+            query: Text to search for (ignored when ``query_embedding`` is set).
             limit: Maximum number of results.
             fact_types: Filter by fact types.
             min_confidence: Minimum confidence threshold.
+            query_embedding: Optional embedding for semantic search.
 
         Returns:
             Matching facts.
@@ -181,6 +188,21 @@ class FactRepository(ABC):
 
         Returns:
             The fact if found.
+        """
+        ...
+
+    @abstractmethod
+    async def backfill_embeddings(
+        self,
+        fact_ids: list[UUID],
+        embeddings: list[list[float]],
+    ) -> None:
+        """
+        Store embeddings for existing facts.
+
+        Args:
+            fact_ids: IDs of the facts to update, in the same order as embeddings.
+            embeddings: One embedding vector per fact ID.
         """
         ...
 

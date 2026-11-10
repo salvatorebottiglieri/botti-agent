@@ -78,6 +78,7 @@ class Fact:
 
     # Associated data
     payload: dict[str, Any] = field(default_factory=dict)
+    embedding: list[float] | None = None
 
     # Metadata
     confidence: float = 0.5  # 0.0 to 1.0
@@ -104,6 +105,7 @@ class Fact:
             "symbolic_repr": self.symbolic_repr,
             "natural_lang_repr": self.natural_lang_repr,
             "payload": self.payload,
+            "embedding": self.embedding,
             "confidence": self.confidence,
             "layer": self.layer,
             "access_count": self.access_count,
@@ -122,6 +124,7 @@ class Fact:
             symbolic_repr=data.get("symbolic_repr", ""),
             natural_lang_repr=data.get("natural_lang_repr", ""),
             payload=data.get("payload", {}),
+            embedding=data.get("embedding"),
             confidence=data.get("confidence", 0.5),
             layer=data.get("layer", 0),
             access_count=data.get("access_count", 0),
