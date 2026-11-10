@@ -270,6 +270,53 @@ def rules_archive(
     asyncio.run(run())
 
 
+@cli.command("memory:backfill-embeddings", help="Backfill embeddings for facts that have none")
+def memory_backfill_embeddings(
+    db_url: str | None = typer.Option(None, "--db-url", help="Database URL"),
+    batch_size: int = typer.Option(100, "--batch-size", min=1, help="Facts per batch"),
+    reindex: bool = typer.Option(
+        False, "--reindex", help="Rebuild idx_facts_embedding after the backfill"
+    ),
+) -> None:
+    """Embed facts whose embedding is still NULL, then report the counts.
+
+    Bounded keyset batches; a provider failure leaves that row null and counts
+    it failed without aborting the run. The ivfflat index is built before bulk
+    embedding, so a large backfill needs ``REINDEX`` (``--reindex`` does it).
+    """
+    import asyncio
+
+    from cortex.config.loader import get_settings
+    from cortex.llm.factory import LLMClientFactory
+    from cortex.memory.backfill import EmbeddingBackfillRunner
+    from cortex.memory.repository import PostgresFactRepository
+
+    async def run() -> None:
+        import asyncpg
+
+        settings = get_settings()
+        conn = await asyncpg.connect(db_url or settings.database.database_url)
+        try:
+            repository = PostgresFactRepository(session_factory=lambda: _connection(conn))
+            client = LLMClientFactory(settings.llm).create()
+            stats = await EmbeddingBackfillRunner(
+                repository, client, batch_size=batch_size
+            ).run()
+            if reindex and stats.updated > 0:
+                await conn.execute("REINDEX INDEX idx_facts_embedding")
+        finally:
+            await conn.close()
+
+        typer.echo(f"scanned {stats.scanned}, updated {stats.updated}, failed {stats.failed}")
+        if stats.updated > 0:
+            if reindex:
+                typer.echo("reindexed idx_facts_embedding")
+            else:
+                typer.echo("run REINDEX INDEX idx_facts_embedding; after a large backfill")
+
+    asyncio.run(run())
+
+
 @cli.command("version", help="Show Cortex version")
 def version() -> None:
     """Show the installed Cortex version."""

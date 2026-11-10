@@ -1,5 +1,7 @@
 """PostgreSQL implementation of memory repositories."""
 
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -47,9 +49,19 @@ def _parse_vector(value: Any) -> list[float] | None:
 class PostgresFactRepository(FactRepository):
     """PostgreSQL implementation of fact storage."""
 
+    def __init__(
+        self,
+        session_factory: Callable[[], AbstractAsyncContextManager[Any]] | None = None,
+    ) -> None:
+        self._session_factory = session_factory
+
+    def _session(self) -> AbstractAsyncContextManager[Any]:
+        """The injected session (the CLI's own connection) or the shared pool."""
+        return self._session_factory() if self._session_factory is not None else DbSession()
+
     async def store(self, fact: Fact) -> Fact:
         """Store a new fact."""
-        async with DbSession() as db:
+        async with self._session() as db:
             row = await db.fetchrow(
                 """
                 INSERT INTO facts (type, mutability, symbolic_repr, natural_lang_repr,
@@ -78,7 +90,7 @@ class PostgresFactRepository(FactRepository):
 
     async def get(self, fact_id: UUID) -> Fact | None:
         """Get a fact by ID."""
-        async with DbSession() as db:
+        async with self._session() as db:
             row = await db.fetchrow(
                 """
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
@@ -94,7 +106,7 @@ class PostgresFactRepository(FactRepository):
 
     async def retract(self, fact_id: UUID, reason: str | None = None) -> None:
         """Retract (soft-delete) a fact."""
-        async with DbSession() as db:
+        async with self._session() as db:
             await db.execute(
                 """
                 UPDATE facts SET retracted_at = NOW()
@@ -132,7 +144,7 @@ class PostgresFactRepository(FactRepository):
                       last_accessed_at, access_count
         """
 
-        async with DbSession() as db:
+        async with self._session() as db:
             row = await db.fetchrow(query, *values)
             if row is None:
                 return None
@@ -171,7 +183,7 @@ class PostgresFactRepository(FactRepository):
 
         params.append(limit)
 
-        async with DbSession() as db:
+        async with self._session() as db:
             rows = await db.fetch(
                 f"""
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
@@ -207,7 +219,7 @@ class PostgresFactRepository(FactRepository):
 
     async def _ann_search(self, query_embedding: list[float]) -> list[tuple[Fact, float]]:
         """Return the top ANN candidates with their cosine similarity."""
-        async with DbSession() as db:
+        async with self._session() as db:
             await db.execute(f"SET ivfflat.probes = {_ANN_PROBES}")
             rows = await db.fetch(
                 f"""
@@ -269,7 +281,7 @@ class PostgresFactRepository(FactRepository):
         type_val = fact_type.value if hasattr(fact_type, 'value') else fact_type
         retracted_filter = "AND retracted_at IS NULL" if active_only else ""
 
-        async with DbSession() as db:
+        async with self._session() as db:
             rows = await db.fetch(
                 f"""
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
@@ -287,7 +299,7 @@ class PostgresFactRepository(FactRepository):
 
     async def get_recent(self, *, limit: int = 20) -> list[Fact]:
         """Get recent facts."""
-        async with DbSession() as db:
+        async with self._session() as db:
             rows = await db.fetch(
                 """
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
@@ -315,7 +327,7 @@ class PostgresFactRepository(FactRepository):
         if fact_type is not None:
             type_filter = "AND type = $2"
             params.insert(1, fact_type.value if hasattr(fact_type, "value") else fact_type)
-        async with DbSession() as db:
+        async with self._session() as db:
             rows = await db.fetch(
                 f"""
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
@@ -332,7 +344,7 @@ class PostgresFactRepository(FactRepository):
 
     async def record_access(self, fact_id: UUID) -> None:
         """Record that a fact was accessed."""
-        async with DbSession() as db:
+        async with self._session() as db:
             await db.execute(
                 """
                 UPDATE facts
@@ -344,7 +356,7 @@ class PostgresFactRepository(FactRepository):
 
     async def get_by_symbolic_repr(self, symbolic_repr: str) -> Fact | None:
         """Get a fact by its symbolic representation."""
-        async with DbSession() as db:
+        async with self._session() as db:
             row = await db.fetchrow(
                 """
                 SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
@@ -358,6 +370,30 @@ class PostgresFactRepository(FactRepository):
             if row is None:
                 return None
             return self._row_to_fact(row)
+
+    async def list_missing_embeddings(
+        self,
+        *,
+        limit: int = 100,
+        after_id: UUID | None = None,
+    ) -> list[Fact]:
+        """List active facts whose embedding is still NULL, ordered by id."""
+        async with self._session() as db:
+            rows = await db.fetch(
+                """
+                SELECT id, type, mutability, symbolic_repr, natural_lang_repr,
+                       payload, confidence, embedding, created_at, retracted_at,
+                       last_accessed_at, access_count
+                FROM facts
+                WHERE embedding IS NULL AND retracted_at IS NULL
+                  AND ($2::uuid IS NULL OR id > $2::uuid)
+                ORDER BY id
+                LIMIT $1
+                """,
+                limit,
+                after_id,
+            )
+            return [self._row_to_fact(row) for row in rows]
 
     async def backfill_embeddings(
         self,
@@ -376,7 +412,7 @@ class PostgresFactRepository(FactRepository):
                 f"{len(fact_ids)} ids, {len(embeddings)} embeddings"
             )
 
-        async with DbSession() as db:
+        async with self._session() as db:
             for fact_id, embedding in zip(fact_ids, embeddings, strict=True):
                 await db.execute(
                     "UPDATE facts SET embedding = $2::vector WHERE id = $1",

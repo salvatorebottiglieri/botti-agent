@@ -212,6 +212,28 @@ class FactRepository(ABC):
         ...
 
     @abstractmethod
+    async def list_missing_embeddings(
+        self,
+        *,
+        limit: int = 100,
+        after_id: UUID | None = None,
+    ) -> list[Fact]:
+        """
+        List active facts whose embedding is still NULL, ordered by id.
+
+        The keyset cursor (``id > after_id``) lets a caller page without
+        skipping rows that were written between two queries.
+
+        Args:
+            limit: Maximum number of facts to return.
+            after_id: Return only facts whose id is greater than this one.
+
+        Returns:
+            Facts without an embedding, by ascending id.
+        """
+        ...
+
+    @abstractmethod
     async def backfill_embeddings(
         self,
         fact_ids: list[UUID],
