@@ -100,7 +100,7 @@ approval are [#120](https://github.com/salvatorebottiglieri/botti-agent/issues/1
 Every non-obvious call is written down with its rationale in
 [`docs/adr/`](docs/adr/) — this is where the trade-offs live. Current subsystem
 contracts live in [`docs/specs/`](docs/specs/) (architecture, agentic loop,
-evidence, rules, minions, eval, trace).
+evidence, rules, minions, eval, trace, safety net).
 
 | ADR | Decision |
 |-----|----------|
@@ -115,8 +115,9 @@ evidence, rules, minions, eval, trace).
 | [0012](docs/adr/0012-system-invariants.md) | System invariants — CircuitBreaker + SessionPolicy |
 | [0018](docs/adr/0018-ask-user-tool-and-token-streaming.md) | ask_user tool + token streaming (refines 0002, supersedes 0005's `[QUESTION]`) |
 | [0020](docs/adr/0020-learned-rules.md) | Learned rules — staged, scored by outcome |
+| [0021](docs/adr/0021-safety-net.md) | Safety net — external backups, fail-closed migrations, deny-list shell guard |
 
-(Full list, 0001–0020, in the folder.)
+(Full list, 0001–0021, in the folder.)
 
 ## Architecture at a glance
 

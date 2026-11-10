@@ -1,0 +1,182 @@
+# Safety Net
+
+> Single source of truth for the mechanisms that make an agent's destructive
+> action recoverable. Rationale: ADR-0021. Work items: #145 (umbrella), #146
+> (DB backup, implemented), #147 (file snapshots, designed), #148 (shell guard,
+> designed).
+>
+> **Status: slice 1 (#146) implemented.** Slices #147 and #148 are designed here
+> but not built yet.
+
+## Why
+
+On 2026-10-28 a delegated agent ran `docker compose down -v` while verifying a
+UI fix and destroyed the dev database: the volume was recreated and 30 sessions
+were unrecoverable. The product had no guard and no backup. The safety net is
+the answer to that incident, in value order: prevent, snapshot, journal, undo.
+
+## Threat model
+
+The agent acts through three seams; each needs a net.
+
+| Seam | What it can destroy | Net today |
+|---|---|---|
+| `shell` (opt-in since #134) | anything: `rm -rf`, `docker compose down -v`, `git reset --hard`, `DROP TABLE` | none |
+| `file_write` | overwrites an existing file, no copy | none |
+| migrations / DDL at boot | schema and data | pre-migration dump (#146) |
+
+## Decisions (2026-11-10, owner)
+
+1. **Store location:** `~/.local/share/cortex/` (XDG user data), outside the
+   repo and outside every Docker volume. A backup inside the volume dies with
+   `down -v`, which is the incident this exists for; a repo path dies with
+   `rm -rf` or a fresh clone.
+2. **Pre-migration dump failure:** fail closed. If there are pending migrations
+   and the dump fails, startup aborts. `SAFETY_BACKUP_ON_MIGRATION=false` skips
+   the dump entirely; `SAFETY_REQUIRE_BACKUP_BEFORE_MIGRATION=false` keeps the
+   attempt but continues on failure (loud warning). The default is abort.
+3. **Shell guard policy (v1):** deny-list + explicit denial + journal. Known
+   destructive patterns are refused with an explanation; the exact command and
+   matched pattern are journaled. A config bypass exists and is journaled so it
+   is never silent. Consent via `ask_user` is deferred to #120's host sidecar,
+   which is the real trust boundary.
+
+## Store layout
+
+```
+~/.local/share/cortex/            # SAFETY_STORE_DIR, mode 0700
+├── backups/
+│   └── cortex-20261110T101500Z.dump
+├── snapshots/                    # #147
+│   └── <journal-id>/...
+└── journal.jsonl                 # #147/#148, append-only
+```
+
+A backup id is the file stem (`cortex-20261110T101500Z`). `backup:restore`
+accepts an id or a path.
+
+The compose `cortex` service runs as `${UID:-1000}:${GID:-1000}` and mounts the
+host store at `/var/lib/cortex/safety`; a one-shot `safety-store` service
+creates and chowns the host directory first. The host CLI uses the same
+directory (`SAFETY_STORE_DIR`, default `~/.local/share/cortex`), so a
+pre-migration dump taken in the container is restorable from the host.
+
+## Configuration (`SAFETY_` namespace)
+
+| Field | Default | Meaning |
+|---|---|---|
+| `SAFETY_STORE_DIR` | `~/.local/share/cortex` | Backup/snapshot/journal root |
+| `SAFETY_BACKUP_RETENTION` | `14` | Newest N backups kept; `0` disables pruning |
+| `SAFETY_BACKUP_ON_MIGRATION` | `true` | Dump before applying pending migrations |
+| `SAFETY_REQUIRE_BACKUP_BEFORE_MIGRATION` | `true` | Abort when the pre-migration dump fails |
+
+Slices #147/#148 add their own fields when implemented.
+
+## Slice 1 — DB backup/restore (#146)
+
+### `cortex backup:create`
+
+- `pg_dump --format=custom`, timestamped UTC filename
+  (`cortex-YYYYmmddTHHMMSSZ.dump`).
+- Written to a temporary file in the backups directory and atomically renamed:
+  a killed process never leaves a partial file that retention could count.
+- File mode `0600`; the directory `0700`.
+- Retention: keep the newest `backup_retention` files; never delete the file
+  just created; `0` keeps everything.
+- **Transport:** prefer `pg_dump` on `PATH`. If absent and the target is the
+  local compose Postgres, use `docker compose exec -T postgres pg_dump`.
+  Otherwise fail with a clear message (no silent fallback).
+- No secret (password, token, URL credentials) is printed. The connection
+  password travels in `PGPASSWORD`, never on the command line.
+- Output: path and size.
+
+### `cortex backup:restore <id|path>`
+
+- Resolves an id in the store or an explicit path.
+- Confirmation prompt by default; `--yes` skips it.
+- Refuses while the app is using the target database (any connection other than
+  the check itself) unless `--force`.
+- `pg_restore --clean --if-exists --no-owner --no-privileges`; the same
+  host/Docker transport rule as create (Docker path streams the file on stdin).
+- `--database` (restore into a scratch DB) is deferred: it needs database
+  creation privileges and is not required by the incident.
+
+### Automatic snapshot before migrations
+
+`run_migrations(settings)`:
+
+1. ensure `schema_migrations` exists;
+2. compute the pending versions;
+3. if none, apply nothing and take no dump;
+4. if pending and `backup_on_migration`, create a backup tagged
+   `pre-migration`; log its path;
+5. if the dump fails, abort when `require_backup_before_migration` (default),
+   otherwise log an error and continue;
+6. apply the pending migrations, each in its own transaction.
+
+The Cortex image installs PostgreSQL 16 client tools so the in-container boot
+can dump. A host running `cortex` directly needs `pg_dump` on `PATH` (the CLI
+falls back to the compose container for the CLI commands).
+
+## Slice 2 — file snapshots + undo (#147, designed)
+
+- Before `file_write` overwrites an existing file (not `append`, not a new
+  file), copy the previous content into `snapshots/<journal-id>/`.
+- Append one JSON line per destructive action to `journal.jsonl`:
+  `{id, ts, action, targets, snapshot, undo_recipe, status}`.
+- `cortex undo last` / `cortex undo <id>` restores the snapshot, marks the
+  entry `undone`, and prints what it cannot undo (shell/DB effects) with the
+  recorded recipe.
+- Snapshot failure policy: **fail closed** for an overwrite — the write is
+  refused rather than performed without a copy. A new file needs no snapshot
+  and writes no journal entry.
+- Two consecutive overwrites produce two entries; undo reverts them in reverse
+  order.
+- The store never lives inside the repo, so `git status` stays clean.
+
+## Slice 3 — shell guard (#148, designed)
+
+- A table-driven deny-list in one module; every entry carries the command it is
+  meant to stop. Examples: `rm -rf`, `docker (compose )?(down|rm).*(-v|--volumes)`,
+  `docker volume rm`, `docker system prune`, `git reset --hard`,
+  `git clean -fdx`, `DROP (TABLE|DATABASE|SCHEMA)`, `TRUNCATE`, `mkfs`,
+  `dd of=`, package-manager global uninstalls, `pkill`/`kill -9` on the app.
+- A match returns an error `ToolResult` with the matched pattern and reason;
+  the command is not executed.
+- Every classified command (denied or approved) appends a journal entry with
+  the pattern. Benign commands write nothing and pay one regex pass.
+- Bypass: `SAFETY_SHELL_GUARD=false` disables the guard for the process; the
+  startup/journal records the bypass. It is a mitigation, not a sandbox: an
+  unknown command still executes until #120 moves execution to the host
+  sidecar with policy + consent.
+- Tests are table-driven from the same list, so a pattern without a test fails.
+
+## Invariants
+
+1. A backup and the journal live outside the repo and outside every Docker
+   volume (`SAFETY_STORE_DIR`), so `down -v` and `rm -rf` cannot destroy both
+   the data and its net.
+2. A successful `backup:create` is restorable with `backup:restore`, and the
+   restored row counts match the source.
+3. A pending migration without a successful pre-migration dump never runs when
+   `require_backup_before_migration` is true.
+4. Retention keeps the newest N backups and never deletes the just-created
+   file.
+5. No secret appears in CLI output, logs, or a process command line.
+6. A file overwrite with a failed snapshot does not happen (#147).
+7. A denied shell command does not execute and is journaled with its pattern
+   (#148).
+
+## Non-goals
+
+- Sandboxing the process or per-argument policy for every tool — #120.
+- WAL/PITR or continuous replication.
+- Encryption of backups at rest (file mode `0600` only); a follow-up if the
+  threat model grows.
+- Multi-user or remote backup targets.
+
+## Sources of truth
+
+- `docs/adr/0021-safety-net.md` — why these choices, and what was rejected.
+- `CONTEXT.md` — vocabulary for backup, snapshot, journal, undo.
+- GitHub issues #145–#148 — slices and acceptance criteria.

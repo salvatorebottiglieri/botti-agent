@@ -38,6 +38,7 @@ _SETTINGS_SECTIONS = (
     "trace",
     "learning",
     "tools",
+    "safety",
 )
 
 

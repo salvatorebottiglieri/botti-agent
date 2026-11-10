@@ -132,7 +132,7 @@ async def initialize_app() -> CortexApp:
     # 3. Run DB migrations
     logger.info("Running database migrations...")
     from cortex.db.migrations.runner import run_migrations
-    await run_migrations()
+    await run_migrations(settings)
 
 
     # 4. Initialize event bus

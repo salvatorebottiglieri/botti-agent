@@ -26,6 +26,7 @@ SETTINGS_ENV_PREFIXES = (
     "LLM_",
     "LOG_",
     "MQTT_",
+    "SAFETY_",
     "TOOLS_",
     "TRACE_",
 )
@@ -40,6 +41,7 @@ SETTINGS_ENV_NAMES = frozenset(SETTINGS_ENV_PREFIXES) | {
     "LEARNING",
     "LOGGING",
     "MQTT",
+    "SAFETY",
     "TOOLS",
     "TRACE",
     "VERSION",

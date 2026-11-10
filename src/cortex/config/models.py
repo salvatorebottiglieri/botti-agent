@@ -16,6 +16,7 @@ from cortex.config.learning import LearningSettings
 from cortex.config.llm import LLMSettings, ModelPricing, derive_cost
 from cortex.config.logging import LoggingSettings
 from cortex.config.mqtt import MQTTSettings
+from cortex.config.safety import SafetySettings
 from cortex.config.tools import ToolsSettings
 from cortex.config.trace import TraceSettings
 
@@ -27,6 +28,7 @@ __all__ = [
     "LoggingSettings",
     "MQTTSettings",
     "ModelPricing",
+    "SafetySettings",
     "Settings",
     "ToolsSettings",
     "TraceSettings",
@@ -40,9 +42,9 @@ class Settings(CortexSettings):
 
     Holds one instance of each per-module slice. Composed fields read their own
     environment namespace (``DB_``/``DATABASE_``, ``LLM_``, ``MQTT_``, ``APP_``,
-    ``LOG_``, ``TRACE_``, ``LEARNING_``, ``TOOLS_``) and their own ``.env``; pass
-    a slice explicitly to fill a field the environment does not supply, e.g.
-    ``Settings(llm={"api_key": ...})`` (see ADR-0019).
+    ``LOG_``, ``TRACE_``, ``LEARNING_``, ``TOOLS_``, ``SAFETY_``) and their own
+    ``.env``; pass a slice explicitly to fill a field the environment does not
+    supply, e.g. ``Settings(llm={"api_key": ...})`` (see ADR-0019).
     """
 
     version: str = Field(default="0.1.0")
@@ -59,6 +61,7 @@ class Settings(CortexSettings):
     trace: TraceSettings = Field(default_factory=TraceSettings)
     learning: LearningSettings = Field(default_factory=LearningSettings)
     tools: ToolsSettings = Field(default_factory=ToolsSettings)
+    safety: SafetySettings = Field(default_factory=SafetySettings)
 
     def __repr__(self) -> str:
         """Hide sensitive values in repr."""

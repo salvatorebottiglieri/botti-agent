@@ -24,3 +24,9 @@ that document whenever the evidence system changes (ADR-0013, issues #82/#83).
 The learned-rule system is specified in `docs/specs/rule-system.md` — the single source of
 truth for its data model, scoring rule, constants, and invariants. Update that document
 whenever the rule system changes (ADR-0020, issue #130).
+
+### Safety net
+
+The backup/snapshot/journal safety net is specified in `docs/specs/safety-net.md` — the single
+source of truth for its store layout, backup contract, pre-migration policy, and shell guard.
+Update that document whenever the safety net changes (ADR-0021, issues #145–#148).
