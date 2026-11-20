@@ -110,7 +110,7 @@ async def test_no_rule_or_use_id_reaches_the_request() -> None:
 
 
 def test_one_child_is_refused() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="exactly two children"):
         _parse_split(
             json.dumps({**ANSWER, "children": ANSWER["children"][:1]}), use_count=2
         )
@@ -119,7 +119,7 @@ def test_one_child_is_refused() -> None:
 def test_three_children_are_refused() -> None:
     children = ANSWER["children"] + [ANSWER["children"][1]]
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="exactly two children"):
         _parse_split(json.dumps({**ANSWER, "children": children}), use_count=2)
 
 
