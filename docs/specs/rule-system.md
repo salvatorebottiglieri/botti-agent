@@ -203,12 +203,12 @@ Published on the tracker in dependency order. Work the frontier: a ticket can st
 - #173 — a promotion announces itself in the next response. Blocked by: #169.
 - #174 — a new dictation replaces the old Rule instead of inheriting its history. Blocked by: #170.
 - #175 — eval: a task can carry a Rule set, and eval never learns. Blocked by: #172.
-- #170 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-170-mutation
 
 ## Delivery
 
 - #168 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-slice-b-mutation
 - #169 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-169-mutation-r3
+- #170 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-170-mutation
 
 ## Model
 
@@ -477,6 +477,12 @@ conditions are disjoint, together covering the parent's situations.
   condition** (judged once, at split time).
 - The new child starts in `staging` and takes the parent's uses that fall
   inside its own condition.
+- **With no uses there is no child to prefer**: both children start in
+  `staging`, because nothing says which of the two preserves the behaviour.
+- The two children and the assignment of the parent's uses to them are the
+  classifier's reading of the correction, produced by its own call only when a
+  `scope_correction` is attributed; the service only validates them (a use
+  assigned twice or not at all is refused before the first write).
 - Both children carry `parent_id` = the parent, so the split is reconstructible
   from either end; the parent records the first child as its `superseded_by`.
 - The parent is archived.
@@ -604,7 +610,7 @@ tasks.
 | An expired use contributes nothing | posterior unchanged after the window passes |
 | Silence never moves the score | a turn with no user reply leaves confidence unchanged |
 | A rule only scores on uses it actually applied to | a rule present in context but not applied has no use row |
-| A split's children have disjoint conditions and cover the parent's | condition check on both children — verified by construction in slice A: every use is assigned to exactly one child and the parent is archived (`tests/unit/rules/test_service.py::TestSplit::test_split_redistributes_each_use_to_exactly_one_child`); condition disjointness is the slice-B classifier's responsibility |
+| A split's children have disjoint conditions and cover the parent's | condition check on both children — verified by construction in slice A: every use is assigned to exactly one child and the parent is archived (`tests/unit/rules/test_service.py::TestSplit::test_split_redistributes_each_use_to_exactly_one_child`); condition disjointness is the slice-B split proposer's responsibility (`tests/unit/rules/test_splits.py` pins what the prompt asks for) |
 | Archived rules are never applied | no rule in context has state `archived` |
 | The Golden Set never enters the learning loop | during eval, no rule is created and no use is recorded |
 | A dictated rule starts definitive and does not immediately demote | a fresh dictated rule's confidence is ≥ 0.9 |

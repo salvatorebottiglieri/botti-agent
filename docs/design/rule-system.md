@@ -83,6 +83,84 @@ one check that stands between them.
   it recorded and the one it created — so a caller can refresh or announce them
   without a second read.
 
+## Ticket #171 — the split path
+
+_Design, 2026-11-20, before the code. Signatures and contracts are in the
+`json design` block._
+
+The service can already split a rule (`RuleService.split`, slice A: two
+children, `parent_id` on both, `superseded_by` = the first child, the parent
+archived, every use reassigned, everything validated before the first write).
+#171 is the other half: the reading of the correction that produces the cut.
+The classifier says *that* the rule was too broad (`scope_correction`); a
+second call says *how* to cut it.
+
+- **`cortex.rules.splits`** (new): `SplitProposer` — one `chat()` per scope
+  correction. The prompt carries the rule and its uses as `<n> | <situation> →
+  <outcome>`, and asks for the two children plus, for every index, the child
+  that inherits that use. The assignment is **positional**: no use id and no
+  rule id enters the prompt, and the run maps the index back to the use it
+  already holds.
+- **`AttributionRun` gains a fourth optional collaborator**, `splits`,
+  symmetric with `conflicts`: after the uses are written, each
+  `scope_correction` entry asks the proposer and hands its answer to
+  `RuleService.split`. Without a proposer the run behaves exactly as in #168 —
+  the use is recorded, nothing splits — which is what leaves the existing tests
+  and the eval path unchanged.
+- **`RuleService.list_uses`** (one-line pass-through on the published
+  interface): the run needs the parent's uses — the situations the proposer
+  reads — and the repository stays private to the module.
+- **Order matters.** The use is written first, so the split's own `list_uses`
+  already contains it and it is redistributed with the others; a
+  `scope_correction` use is worth `ln(1) = 0`, so the parent's score does not
+  move before it is archived.
+- **A split with no uses leaves both children in `staging`** (ticket AC 4):
+  with no evidence there is no child that preserves the parent's behaviour, so
+  neither may inherit its state. With at least one use, child 0 still inherits
+  what slice A pinned.
+- **One handler, as in #170.** A failed proposer, a malformed answer, an
+  assignment that does not cover every use: the uses stand, the parent stays
+  active, nothing else is written. A split is lost, never half-made — the
+  service validates before its first write, which is why the run may hand it an
+  unvalidated assignment.
+
+### Exits for #171
+
+`tests/unit/rules/test_splits.py` — the proposer and its parse: two children
+and a positional assignment parsed; every use listed with its index, situation
+and outcome; one or three children refused; a blank condition or action
+refused; an assignment that is not a list of `0`/`1` of the right length
+refused; fenced or `<think>`-prefixed JSON accepted; a malformed reply raises
+`ValueError`.
+
+`tests/unit/rules/test_attribution.py` — the path through the run: a scope
+correction splits the parent and redistributes the parent's uses to the two
+children; without a proposer the use is recorded and nothing splits; a plain
+correction never asks the proposer; a failing proposer leaves the parent
+active with its use written; the returned list carries the children.
+
+`tests/unit/rules/test_service.py` — a split with no uses leaves both children
+in `staging`.
+
+## Decision 3 — the split is a second call, not part of the per-turn classification
+
+- **Choice**: the per-turn classifier keeps its current answer (uses plus at
+  most one proposal), and the two children plus the use assignment come from a
+  second call — `SplitProposer`, made only when a `scope_correction` is
+  attributed.
+- **Alternatives rejected**: (A) the classifier returns the split too, in the
+  same call — it would have to carry the uses of every rule in context in every
+  turn's prompt, so every attributed turn pays for a case that is rare.
+- **Consequences**: one extra provider call per scope correction (a rule is
+  split rarely, and only then); the classifier's prompt and its tests are
+  untouched; the two LLM seams (`ConflictCheck`, `SplitProposer`) have the same
+  shape — optional, `None`-safe, called only when their trigger fires; a
+  scope correction whose proposer is missing or failing records the use and
+  leaves the rule as it is, which costs one wrong application, never a score.
+- **Owner sign-off**: 2026-11-20, owner in chat — "B" (to the two options: A =
+  the classifier returns the split in its own call, B = a second call only on a
+  scope correction).
+
 ## Premises (design)
 
 Inherited: P1-P10 of the spec. New:
@@ -278,6 +356,36 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "kind": "mod",
    "path": "tests/unit/rules/test_attribution.py",
    "note": "#170 the proposal path through the run"
+  },
+  {
+   "kind": "add",
+   "path": "src/cortex/rules/splits.py",
+   "note": "#171 SplitProposal, _parse_split, SplitProposer"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/attribution.py",
+   "note": "#171 the run splits a rule whose scope correction was attributed"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/service.py",
+   "note": "#171 list_uses on the published interface; split leaves both children in staging when the parent has no use"
+  },
+  {
+   "kind": "add",
+   "path": "tests/unit/rules/test_splits.py",
+   "note": "#171 the proposer and its parse"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/test_attribution.py",
+   "note": "#171 the split path through the run"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/test_service.py",
+   "note": "#171 a split with no uses leaves both children in staging"
   }
  ],
  "signatures": [
@@ -324,12 +432,27 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
   {
    "module": "src/cortex/rules/attribution.py",
    "language": "python",
-   "code": "class AttributionRun:\n    def __init__(self, classifier: FeedbackClassifier, service: RuleService, conflicts: ConflictCheck | None = None) -> None: ...\n    async def attribute(self, rules: Sequence[Rule], session_id: UUID, assistant_turn: str, user_message: str, situation: str, feedback_id: UUID | None = None) -> list[Rule] | None: ..."
+   "code": "class AttributionRun:\n    def __init__(self, classifier: FeedbackClassifier, service: RuleService, conflicts: ConflictCheck | None = None, splits: SplitProposer | None = None) -> None: ...\n    async def attribute(self, rules: Sequence[Rule], session_id: UUID, assistant_turn: str, user_message: str, situation: str, feedback_id: UUID | None = None) -> list[Rule] | None: ..."
   },
   {
    "module": "src/cortex/rules/service.py",
    "language": "python",
    "code": "async def list_active(self) -> list[Rule]: ...\nasync def create_dictated(self, session_id: UUID, spec: RuleSpec) -> Rule: ...\nasync def create_from_correction(self, spec: RuleSpec) -> Rule: ..."
+  },
+  {
+   "module": "src/cortex/rules/splits.py",
+   "language": "python",
+   "code": "@dataclass(frozen=True)\nclass SplitProposal:\n    children: tuple[RuleSpec, RuleSpec]\n    assignment: tuple[int, ...]\n\ndef _parse_split(content: str, use_count: int) -> SplitProposal: ...\n\nclass SplitProposer:\n    def __init__(self, llm_client: LLMClient) -> None: ...\n    async def propose(self, rule: Rule, uses: Sequence[RuleUse]) -> SplitProposal: ..."
+  },
+  {
+   "module": "src/cortex/rules/service.py",
+   "language": "python",
+   "code": "async def list_uses(self, rule_id: UUID) -> list[RuleUse]: ..."
+  },
+  {
+   "module": "src/cortex/rules/service.py",
+   "language": "python",
+   "code": "async def split(self, rule_id: UUID, children: Sequence[RuleSpec], assignments: Mapping[int, int]) -> list[Rule]: ..."
   }
  ],
  "data_flow": {
@@ -408,6 +531,26 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     "id": "cortex.rules.service.RuleService.create_from_correction",
     "module": "src/cortex/rules/service.py",
     "kind": "keep"
+   },
+   {
+    "id": "cortex.rules.splits.SplitProposer.propose",
+    "module": "src/cortex/rules/splits.py",
+    "kind": "add"
+   },
+   {
+    "id": "cortex.rules.splits._parse_split",
+    "module": "src/cortex/rules/splits.py",
+    "kind": "add"
+   },
+   {
+    "id": "cortex.rules.service.RuleService.list_uses",
+    "module": "src/cortex/rules/service.py",
+    "kind": "add"
+   },
+   {
+    "id": "cortex.rules.service.RuleService.split",
+    "module": "src/cortex/rules/service.py",
+    "kind": "keep"
    }
   ],
   "edges": [
@@ -470,6 +613,26 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    {
     "from": "cortex.rules.attribution.AttributionRun.attribute",
     "to": "cortex.rules.service.RuleService.create_from_correction"
+   },
+   {
+    "from": "cortex.rules.attribution.AttributionRun.attribute",
+    "to": "cortex.rules.splits.SplitProposer.propose"
+   },
+   {
+    "from": "cortex.rules.splits.SplitProposer.propose",
+    "to": "cortex.llm.providers.openai.OpenAIClient.chat"
+   },
+   {
+    "from": "cortex.rules.splits.SplitProposer.propose",
+    "to": "cortex.rules.splits._parse_split"
+   },
+   {
+    "from": "cortex.rules.attribution.AttributionRun.attribute",
+    "to": "cortex.rules.service.RuleService.list_uses"
+   },
+   {
+    "from": "cortex.rules.attribution.AttributionRun.attribute",
+    "to": "cortex.rules.service.RuleService.split"
    }
   ]
  },
@@ -834,6 +997,136 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     {
      "kind": "effect",
      "type": "one rules row",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.attribution.AttributionRun.attribute",
+   "callee": "cortex.rules.splits.SplitProposer.propose",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "SplitProposal: two children and one child index per use",
+     "handled_at": "handed to RuleService.split with the use ids the run already holds"
+    },
+    {
+     "kind": "absent",
+     "type": "none: the proposer always answers or raises, as the classifier does",
+     "handled_at": "the only non-answer is an exception, handled below"
+    },
+    {
+     "kind": "raises",
+     "type": "ValueError on an unusable answer, the provider's error, CircuitOpenError",
+     "handled_at": "logged by the run; the uses stand, the parent stays active, no child is created"
+    },
+    {
+     "kind": "effect",
+     "type": "one provider call, and only when a scope correction was attributed",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.splits.SplitProposer.propose",
+   "callee": "cortex.llm.providers.openai.OpenAIClient.chat",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "ChatResult whose content is the JSON the prompt asked for",
+     "handled_at": "handed to _parse_split"
+    },
+    {
+     "kind": "absent",
+     "type": "content None or blank",
+     "handled_at": "_parse_split raises ValueError on it"
+    },
+    {
+     "kind": "raises",
+     "type": "the provider's error, or CircuitOpenError from the breaker",
+     "handled_at": "not caught here: AttributionRun.attribute catches it and writes nothing"
+    },
+    {
+     "kind": "effect",
+     "type": "one provider call, temperature 0",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.splits.SplitProposer.propose",
+   "callee": "cortex.rules.splits._parse_split",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "SplitProposal with exactly two non-blank children and an assignment of 0/1 of the right length",
+     "handled_at": "returned as is, unvalidated against the parent's uses: RuleService.split validates"
+    },
+    {
+     "kind": "absent",
+     "type": "no partial proposal: a reply that cannot yield two children is not a proposal",
+     "handled_at": "raised instead, see below"
+    },
+    {
+     "kind": "raises",
+     "type": "ValueError on malformed JSON, on a missing or extra child, on a blank condition/action, on an assignment that is not a list of 0/1",
+     "handled_at": "propagates to AttributionRun.attribute, which logs it and leaves the parent active"
+    },
+    {
+     "kind": "effect",
+     "type": "none, pure",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.attribution.AttributionRun.attribute",
+   "callee": "cortex.rules.service.RuleService.list_uses",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the parent's uses, oldest first, including the one just recorded",
+     "handled_at": "put into the proposer's prompt, one line per use"
+    },
+    {
+     "kind": "absent",
+     "type": "an empty list: the parent has no use to redistribute",
+     "handled_at": "the proposer is still asked (a rule can be split without evidence) and the split leaves both children in staging"
+    },
+    {
+     "kind": "raises",
+     "type": "the repository's error",
+     "handled_at": "logged by the same handler: no proposer call, the recorded use stands"
+    },
+    {
+     "kind": "effect",
+     "type": "one read per scope correction",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.attribution.AttributionRun.attribute",
+   "callee": "cortex.rules.service.RuleService.split",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the two new children, the parent archived with superseded_by set",
+     "handled_at": "collected into the returned list beside the parent"
+    },
+    {
+     "kind": "absent",
+     "type": "RuleNotFoundError when the rule vanished between the use and the split",
+     "handled_at": "caught by the single handler, logged; nothing is created"
+    },
+    {
+     "kind": "raises",
+     "type": "ValueError on an unassigned or out-of-range use before the first write, the repository's error part-way (the split is not transactional)",
+     "handled_at": "caught by the same handler, logged; the uses stand and the operator re-runs the split"
+    },
+    {
+     "kind": "effect",
+     "type": "two rules rows, one use reassignment per use, one refresh of the parent",
      "handled_at": null
     }
    ]

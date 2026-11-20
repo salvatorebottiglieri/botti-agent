@@ -29,6 +29,7 @@ the Rules it applied. Spec: `docs/specs/rule-system.md`; design:
 | Classifier | symbol | src.cortex.rules.feedback.FeedbackClassifier.classify | `src/cortex/rules/feedback.py` |
 | Attribution | symbol | src.cortex.rules.attribution.AttributionRun.attribute | `src/cortex/rules/attribution.py` |
 | Service | symbol | src.cortex.rules.service.RuleService.record_use | `src/cortex/rules/service.py:92` |
+| Split | symbol | src.cortex.rules.splits.SplitProposer.propose | `src/cortex/rules/splits.py` |
 | Render | symbol | render_rules | `src/cortex/rules/render.py:21` |
 | Provider | external | https://github.com/openai/openai-python | `src/cortex/llm/providers/openai.py` |
 
@@ -44,6 +45,8 @@ flowchart LR
   Bundle --> Classifier
   Bundle --> Render[render_rules into the prompt]
   Classifier -->|per applied Rule| Service[RuleService.record_use]
+  Run -->|a scope correction was attributed| Split[Split proposer]
+  Split -->|two children and one assignment| Service
   Service --> Score[Recomputed confidence and state]
   Run -->|classifier or storage failed| Nothing[Nothing written, caller unaffected]
 ```
@@ -88,6 +91,8 @@ stateDiagram-v2
   definitive --> archived : confidence < 0.3
   staging --> archived : the user archives
   definitive --> archived : the user archives
+  staging --> archived : a scope correction splits it
+  definitive --> archived : a scope correction splits it
   archived --> [*]
 ```
 
@@ -113,6 +118,7 @@ stateDiagram-v2
 |---|---|---|---|---|
 | 1 | `QueuedFeedback` | - | The design lists the queue; #168 delivered the classifier and the run only | https://github.com/salvatorebottiglieri/botti-agent/issues/166#issuecomment-7038922357 |
 | 2 | `QueuedFeedback` | + | #169 builds the queue: the row moves pending → attributed, stays pending when the classifier is unavailable, and is dropped past the validity window | https://github.com/salvatorebottiglieri/botti-agent/issues/169 |
+| 3 | `Rule` | + | #171 splits a rule through the service instead of penalising it: a scope correction archives the parent and creates two children, so the machine gains the transition that leaves a rule for a Split | https://github.com/salvatorebottiglieri/botti-agent/issues/171 |
 
 ## Notes
 
