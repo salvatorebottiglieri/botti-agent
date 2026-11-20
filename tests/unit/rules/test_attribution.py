@@ -95,7 +95,7 @@ async def test_the_run_writes_nothing_when_the_classifier_raises(caplog) -> None
             [rule], SESSION, "turn", "a reply", SITUATION
         )
 
-    assert returned == [rule]
+    assert returned is None
     assert repository.uses == []
     assert "attribution" in caplog.text.lower()
 
@@ -203,6 +203,29 @@ async def test_a_failed_write_does_not_stop_the_next_use(caplog) -> None:
 
 
 SECOND_SESSION = UUID("22222222-2222-4222-8222-222222222222")
+
+
+async def test_the_run_stamps_every_use_with_the_queued_turns_id() -> None:
+    """Witness: an unstamped use lets the same turn score a rule twice."""
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    first = await service.create_from_correction(SPEC)
+    second = await service.create_from_correction(SPEC)
+    feedback_id = uuid4()
+    classifier = StubClassifier(
+        Feedback(
+            uses=[
+                AttributedUse(rule_id=first.id, outcome=UseOutcome.APPROVAL),
+                AttributedUse(rule_id=second.id, outcome=UseOutcome.APPROVAL),
+            ]
+        )
+    )
+
+    await AttributionRun(classifier, service).attribute(
+        [first, second], SESSION, "turn", "a reply", SITUATION, feedback_id=feedback_id
+    )
+
+    assert [use.feedback_id for use in repository.uses] == [feedback_id, feedback_id]
 
 
 async def test_three_approvals_from_two_sessions_promote_a_staging_rule() -> None:

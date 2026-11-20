@@ -152,7 +152,7 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
      },
      {
       "name": "cortex.rules.queue.FeedbackQueue.mark_attributed",
-      "note": "#169 only when the run wrote something",
+      "note": "#169 only when attribute returned a list, never on None",
       "children": []
      },
      {
@@ -235,7 +235,7 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
   {
    "module": "src/cortex/rules/attribution.py",
    "language": "python",
-   "code": "class AttributionRun:\n    def __init__(self, classifier: FeedbackClassifier, service: RuleService) -> None: ...\n    async def attribute(self, rules: Sequence[Rule], session_id: UUID, assistant_turn: str, user_message: str, situation: str) -> list[Rule]: ..."
+   "code": "class AttributionRun:\n    def __init__(self, classifier: FeedbackClassifier, service: RuleService) -> None: ...\n    async def attribute(self, rules: Sequence[Rule], session_id: UUID, assistant_turn: str, user_message: str, situation: str, feedback_id: UUID | None = None) -> list[Rule] | None: ..."
   },
   {
    "module": "src/cortex/llm/providers/openai.py",
@@ -245,7 +245,7 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
   {
    "module": "src/cortex/rules/service.py",
    "language": "python",
-   "code": "async def record_use(self, rule_id: UUID, session_id: UUID, situation: str, outcome: UseOutcome) -> Rule: ..."
+   "code": "async def record_use(self, rule_id: UUID, session_id: UUID, situation: str, outcome: UseOutcome, feedback_id: UUID | None = None) -> Rule: ..."
   },
   {
    "module": "src/cortex/llm/providers/openai.py",
@@ -376,13 +376,13 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     },
     {
      "kind": "absent",
-     "type": "an empty Feedback: no rule was applied and nothing was proposed",
-     "handled_at": "no service call, the rule list is returned unchanged"
+     "type": "None: the classification failed and wrote nothing",
+     "handled_at": "the caller sees None, leaves the queued row pending and retries it later"
     },
     {
      "kind": "raises",
      "type": "ValueError on malformed provider output, provider and circuit-breaker errors",
-     "handled_at": "caught here by one handler, logged, nothing written; the caller gets the rules it passed, unchanged"
+     "handled_at": "caught here by one handler, logged, nothing written, returns None so a queued row is not consumed"
     },
     {
      "kind": "effect",
@@ -553,12 +553,12 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "exits": [
     {
      "kind": "returns",
-     "type": "the refreshed rules, or the given ones when nothing was attributed",
+     "type": "the refreshed rules, or None when the classification failed",
      "handled_at": "the drain loop"
     },
     {
      "kind": "absent",
-     "type": "an empty rule list: the row is marked attributed and scores nothing",
+     "type": "None: the row stays pending and a later pass retries it",
      "handled_at": "no work that pass"
     },
     {
@@ -579,7 +579,7 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "exits": [
     {
      "kind": "returns",
-     "type": "None",
+     "type": "None, called only when the run returned a list (not None)",
      "handled_at": "the drain loop"
     },
     {

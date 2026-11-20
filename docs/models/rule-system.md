@@ -16,7 +16,7 @@ the Rules it applied. Spec: `docs/specs/rule-system.md`; design:
 | Entity | Moves in time? | Statechart |
 |---|---|---|
 | `Rule` | yes — `state` enum plus confidence-driven transitions | required, see [Rule](#rule) |
-| `QueuedFeedback` | no — not built yet; the queue is #169 | — |
+| `QueuedFeedback` | yes — `status` enum (`pending`, `attributed`, `dropped`) driven by the drain | required, see [QueuedFeedback](#queuedfeedback) |
 | `RuleUse` | no — an immutable record of one application | — |
 | `Feedback` | no — it exists only inside one attribution run | — |
 
@@ -91,14 +91,30 @@ stateDiagram-v2
   archived --> [*]
 ```
 
+### QueuedFeedback
+
+A row waits, is attributed, or ages out. A failed classification keeps it
+waiting: the queue exists so that a provider outage costs a delay.
+
+```mermaid
+stateDiagram-v2
+  %% QueuedFeedback
+  [*] --> pending : a turn with rules and a reply is enqueued
+  pending --> attributed : the drain attributed it
+  pending --> pending : the classifier was unavailable
+  pending --> dropped : older than the Rule validity window
+  attributed --> [*]
+  dropped --> [*]
+```
+
 ## Model changes
 
 | # | Element | Change | Why | Approval |
 |---|---|---|---|---|
-| 1 | `QueuedFeedback` | - | The design lists the queue; #168 delivers the classifier and the run only, and the queue is #169 | https://github.com/salvatorebottiglieri/botti-agent/issues/166#issuecomment-7038922357 |
+| 1 | `QueuedFeedback` | - | The design lists the queue; #168 delivered the classifier and the run only | https://github.com/salvatorebottiglieri/botti-agent/issues/166#issuecomment-7038922357 |
+| 2 | `QueuedFeedback` | + | #169 builds the queue: the row moves pending → attributed, stays pending when the classifier is unavailable, and is dropped past the validity window | https://github.com/salvatorebottiglieri/botti-agent/issues/169 |
 
 ## Notes
 
-Nothing in `src/` calls `AttributionRun` yet: the wiring into a turn is #172, and
-until then the model describes the component, not the running system. The
-`QueuedFeedback` statechart the design also carries will land with #169.
+Nothing in `src/` calls `AttributionRun` or `FeedbackDrain` yet: the wiring into a turn is #172, and
+until then the model describes the component, not the running system. The enqueue side of the queue (writing the row after a turn) is #172.

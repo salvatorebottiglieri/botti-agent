@@ -174,10 +174,10 @@ Slice A's laws are in `## Invariants` below and stay the contract there; these a
 | Invariant (law) | Negation → test | Verified in |
 |---|---|---|
 | It must always be true that a use names a rule that was in that turn's bundle | a `rule_uses` row whose `rule_id` is not in its `feedback_id`'s `rule_ids` | `tests/unit/rules/test_attribution.py` |
-| It must always be true that one turn scores a rule at most once | two rows sharing `(feedback_id, rule_id)` | `tests/unit/rules/test_repository.py` (the unique index) and `tests/unit/rules/test_attribution.py` (the retry) |
-| It must always be true that a turn with no user reply is never enqueued | a `queued_feedback` row with a blank `user_reply` (the `CHECK` refuses it) | `tests/unit/rules/test_repository.py` |
-| It must always be true that an unusable classifier answer writes nothing | a use or a rule exists for a turn whose classification raised | `tests/unit/rules/test_attribution.py` |
-| It must always be true that pending feedback is not dropped inside the validity window | a `dropped` row whose `occurred_at` is younger than the window | `tests/unit/rules/test_attribution.py` |
+| It must always be true that one turn scores a rule at most once | two rows sharing `(feedback_id, rule_id)` | `tests/unit/rules/test_queue.py` (the partial unique index is read out of `migrations/011_queued_feedback.sql`, and the double-scoring test re-runs a drain over the same row) |
+| It must always be true that a turn with no user reply is never enqueued | a `queued_feedback` row with a blank `user_reply` (the `CHECK` refuses it) | `tests/unit/rules/test_queue.py` (the guard in `enqueue` and the `CHECK` in the migration) |
+| It must always be true that an unusable classifier answer writes nothing | a use or a rule exists for a turn whose classification raised, or a queued row consumed by it | `tests/unit/rules/test_attribution.py`, `tests/unit/rules/test_queue.py` |
+| It must always be true that pending feedback is not dropped inside the validity window | a `dropped` row whose `occurred_at` is younger than the window | `tests/unit/rules/test_queue.py` |
 | It must always be true that no rule is created or scored during an eval | a `rule_uses` row or a `rules` row written while the runner is in eval mode | `tests/eval/test_rule_fixtures.py` |
 | It must always be true that `rules`, `rule_uses` and `queued_feedback` are written only by `cortex.rules` | a write to those tables from another module — mechanically, an import of `cortex.rules.repository` outside `cortex.rules`, `cortex.main` and `cortex.cli` (every write goes through it) | `pyproject.toml` contract *rules: the repository is private to the rules module*, run by `uv run lint-imports` in the CI job `Boundaries`; `cortex.rules.scoring` likewise |
 

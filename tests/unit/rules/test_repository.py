@@ -46,6 +46,7 @@ def _use_row(use: RuleUse) -> dict:
         "situation": use.situation,
         "outcome": use.outcome.value,
         "occurred_at": use.occurred_at,
+        "feedback_id": use.feedback_id,
     }
 
 
@@ -159,7 +160,7 @@ class TestAddUse:
         assert "INSERT INTO rule_uses" in sql
         assert "RETURNING" in sql
         params = session.fetchrow.call_args.args[1:]
-        assert params == (use.rule_id, use.session_id, "book a table", "implicit", NOW)
+        assert params == (use.rule_id, use.session_id, "book a table", "implicit", NOW, None)
         assert stored.id == 7
         assert stored.outcome is UseOutcome.IMPLICIT
 

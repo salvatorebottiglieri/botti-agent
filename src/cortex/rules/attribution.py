@@ -32,17 +32,18 @@ class AttributionRun:
         assistant_turn: str,
         user_message: str,
         situation: str,
-    ) -> list[Rule]:
+        feedback_id: UUID | None = None,
+    ) -> list[Rule] | None:
         """Record what one turn said about the rules in its context.
 
         Returns the refreshed rules; a failed classification writes nothing and
-        returns the rules unchanged.
+        returns None, so a queued turn is retried instead of consumed.
         """
         try:
             feedback = await self._classifier.classify(rules, assistant_turn, user_message)
         except Exception:
             logger.warning("Rule attribution failed; nothing written", exc_info=True)
-            return list(rules)
+            return None
 
         # #170 owns the proposals: a proposal becomes a staging rule there.
         refreshed: list[Rule] = []
@@ -50,7 +51,11 @@ class AttributionRun:
             try:
                 refreshed.append(
                     await self._service.record_use(
-                        entry.rule_id, session_id, situation, entry.outcome
+                        entry.rule_id,
+                        session_id,
+                        situation,
+                        entry.outcome,
+                        feedback_id=feedback_id,
                     )
                 )
             except Exception:

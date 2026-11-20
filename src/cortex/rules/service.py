@@ -95,6 +95,7 @@ class RuleService:
         session_id: UUID,
         situation: str,
         outcome: UseOutcome,
+        feedback_id: UUID | None = None,
     ) -> Rule:
         """Append one use and persist the recomputed confidence and state."""
         rule = await self._repository.get(rule_id)
@@ -109,6 +110,7 @@ class RuleService:
                 situation=situation,
                 outcome=outcome,
                 occurred_at=now,
+                feedback_id=feedback_id,
             )
         )
         # Recomputed from the whole active set, never from the previous score:
