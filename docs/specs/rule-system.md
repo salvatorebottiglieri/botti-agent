@@ -220,6 +220,7 @@ Published on the tracker in dependency order. Work the frontier: a ticket can st
 | `QueuedFeedback` (new) | yes — a row waits, is attributed, or is dropped after the validity window | required — `### QueuedFeedback` |
 | `RuleUse` | no — an immutable record of one application, never updated | — |
 | `RuleProposal` | no — it lives inside one run: conflict check, then created or dropped, never stored as a proposal | — |
+| `SplitProposal` (new) | no — it lives inside one run: two children and one assignment, handed to the service and never stored | — |
 
 ### Elements
 

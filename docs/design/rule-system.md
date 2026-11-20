@@ -114,6 +114,11 @@ second call says *how* to cut it.
   already contains it and it is redistributed with the others; a
   `scope_correction` use is worth `ln(1) = 0`, so the parent's score does not
   move before it is archived.
+- **The prompt orders the children.** `RuleService.split` gives the parent's
+  state to child 0, so the proposer is told that the first child is the one that
+  keeps the current behaviour and the second is the new, narrower rule; a model
+  free to order them would hand a definitive rule's confidence to the wrong
+  text.
 - **A split with no uses leaves both children in `staging`** (ticket AC 4):
   with no evidence there is no child that preserves the parent's behaviour, so
   neither may inherit its state. With at least one use, child 0 still inherits

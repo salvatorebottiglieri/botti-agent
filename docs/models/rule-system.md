@@ -19,6 +19,7 @@ the Rules it applied. Spec: `docs/specs/rule-system.md`; design:
 | `QueuedFeedback` | yes — `status` enum (`pending`, `attributed`, `dropped`) driven by the drain | required, see [QueuedFeedback](#queuedfeedback) |
 | `RuleUse` | no — an immutable record of one application | — |
 | `Feedback` | no — it exists only inside one attribution run | — |
+| `SplitProposal` | no — it exists only inside one split, handed straight to the service | — |
 
 ## Elements
 
