@@ -203,11 +203,12 @@ Published on the tracker in dependency order. Work the frontier: a ticket can st
 - #173 — a promotion announces itself in the next response. Blocked by: #169.
 - #174 — a new dictation replaces the old Rule instead of inheriting its history. Blocked by: #170.
 - #175 — eval: a task can carry a Rule set, and eval never learns. Blocked by: #172.
+- #170 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-170-mutation
 
 ## Delivery
 
 - #168 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-slice-b-mutation
-- #169 — PR: pending · Model: docs/models/rule-system.md · Mutation: rule-system-169-mutation-r3
+- #169 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-169-mutation-r3
 
 ## Model
 

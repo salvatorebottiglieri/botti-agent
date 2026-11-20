@@ -60,6 +60,20 @@ class Feedback:
     proposals: list[RuleProposal] = field(default_factory=list)
 
 
+def strip_json_wrapping(content: str) -> str:
+    """Strip the ``<think>`` block and markdown fences an LLM reply may wrap its JSON in."""
+    # ``chat()`` prefixes out-of-band reasoning with an inline <think> block,
+    # the same convention ``chat_stream()`` already emits; the JSON follows it.
+    text = content.strip()
+    text = re.sub(
+        r"^<think>.*?</think>", "", text, count=1, flags=re.IGNORECASE | re.DOTALL
+    ).strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    return text.strip()
+
+
 def _parse_use(item: object, known_rule_ids: set[UUID]) -> AttributedUse | None:
     if not isinstance(item, dict):
         return None
@@ -100,17 +114,8 @@ def _parse_feedback(content: str, known_rule_ids: set[UUID]) -> Feedback:
 
     Raises ``ValueError`` on malformed JSON or a missing ``uses`` key.
     """
-    # ``chat()`` prefixes out-of-band reasoning with an inline <think> block,
-    # the same convention ``chat_stream()`` already emits; the JSON follows it.
-    text = content.strip()
-    text = re.sub(
-        r"^<think>.*?</think>", "", text, count=1, flags=re.IGNORECASE | re.DOTALL
-    ).strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
     try:
-        data = json.loads(text.strip())
+        data = json.loads(strip_json_wrapping(content))
     except json.JSONDecodeError as e:
         raise ValueError(f"Malformed JSON from LLM: {e}") from e
     if not isinstance(data, dict) or not isinstance(data.get("uses"), list):

@@ -54,6 +54,35 @@ wrong score.
   drop the claim criterion and rely on the unique index, B = add the `claimed`
   state).
 
+## Ticket #170 — proposals and the conflict check
+
+_Design, 2026-11-20, before the code. Signatures and contracts are in the
+`json design` block._
+
+The classifier already returns at most one proposal per turn (#168) and the run
+ignores it. #170 is the short path from that proposal to a stored Rule, and the
+one check that stands between them.
+
+- **`cortex.rules.conflicts.ConflictCheck`** — one `chat()` call comparing the
+  candidate with the active set. `True` when the candidate contradicts an active
+  Rule. An empty active set returns `False` without a provider call: there is
+  nothing to contradict, and an ordinary first rule must not cost a second call.
+- **`AttributionRun` gains an optional third collaborator.** With a
+  `ConflictCheck` the run applies the proposal after writing the uses: a
+  dictated proposal goes through `create_dictated` (definitive, the dictation as
+  its first use), a correction-born one through `create_from_correction`
+  (staging). Without one the run behaves exactly as in #168, which is what keeps
+  the existing tests and the eval-free path unchanged.
+- **The budget is the service's.** `list_active()` already returns at most
+  `CONTEXT_BUDGET` rules, so the run does not slice again; the check sees exactly
+  what the context would see.
+- **One handler covers both.** A conflict, a provider error or malformed output
+  drops the proposal and never the uses: the turn's evidence is already written
+  by then, and a proposal is the cheaper thing to lose.
+- **Return value.** The run returns every Rule it touched — the ones whose use
+  it recorded and the one it created — so a caller can refresh or announce them
+  without a second read.
+
 ## Premises (design)
 
 Inherited: P1-P10 of the spec. New:
@@ -161,6 +190,11 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
       "children": []
      }
     ]
+   },
+   {
+    "name": "cortex.rules.conflicts.ConflictCheck.contradicts",
+    "note": "#170 one provider call, only when the turn proposed something",
+    "children": []
    }
   ]
  },
@@ -224,6 +258,26 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "kind": "add",
    "path": "tests/unit/rules/test_queue.py",
    "note": "#169 the statements and the drain"
+  },
+  {
+   "kind": "add",
+   "path": "src/cortex/rules/conflicts.py",
+   "note": "#170 the conflict check against the active set"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/attribution.py",
+   "note": "#170 the run applies the proposal after the conflict check"
+  },
+  {
+   "kind": "add",
+   "path": "tests/unit/rules/test_conflicts.py",
+   "note": "#170 the check and the proposal path"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/test_attribution.py",
+   "note": "#170 the proposal path through the run"
   }
  ],
  "signatures": [
@@ -261,6 +315,21 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "module": "src/cortex/rules/service.py",
    "language": "python",
    "code": "async def get(self, rule_id: UUID) -> Rule | None: ..."
+  },
+  {
+   "module": "src/cortex/rules/conflicts.py",
+   "language": "python",
+   "code": "class ConflictCheck:\n    def __init__(self, llm_client: LLMClient) -> None: ...\n    async def contradicts(self, candidate: RuleSpec, active: Sequence[Rule]) -> bool: ..."
+  },
+  {
+   "module": "src/cortex/rules/attribution.py",
+   "language": "python",
+   "code": "class AttributionRun:\n    def __init__(self, classifier: FeedbackClassifier, service: RuleService, conflicts: ConflictCheck | None = None) -> None: ...\n    async def attribute(self, rules: Sequence[Rule], session_id: UUID, assistant_turn: str, user_message: str, situation: str, feedback_id: UUID | None = None) -> list[Rule] | None: ..."
+  },
+  {
+   "module": "src/cortex/rules/service.py",
+   "language": "python",
+   "code": "async def list_active(self) -> list[Rule]: ...\nasync def create_dictated(self, session_id: UUID, spec: RuleSpec) -> Rule: ...\nasync def create_from_correction(self, spec: RuleSpec) -> Rule: ..."
   }
  ],
  "data_flow": {
@@ -319,6 +388,26 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     "id": "cortex.rules.service.RuleService.get",
     "module": "src/cortex/rules/service.py",
     "kind": "keep"
+   },
+   {
+    "id": "cortex.rules.conflicts.ConflictCheck.contradicts",
+    "module": "src/cortex/rules/conflicts.py",
+    "kind": "new"
+   },
+   {
+    "id": "cortex.rules.service.RuleService.list_active",
+    "module": "src/cortex/rules/service.py",
+    "kind": "keep"
+   },
+   {
+    "id": "cortex.rules.service.RuleService.create_dictated",
+    "module": "src/cortex/rules/service.py",
+    "kind": "keep"
+   },
+   {
+    "id": "cortex.rules.service.RuleService.create_from_correction",
+    "module": "src/cortex/rules/service.py",
+    "kind": "keep"
    }
   ],
   "edges": [
@@ -361,6 +450,26 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    {
     "from": "cortex.rules.queue.FeedbackDrain.drain",
     "to": "cortex.rules.queue.FeedbackQueue.drop_stale"
+   },
+   {
+    "from": "cortex.rules.attribution.AttributionRun.attribute",
+    "to": "cortex.rules.conflicts.ConflictCheck.contradicts"
+   },
+   {
+    "from": "cortex.rules.attribution.AttributionRun.attribute",
+    "to": "cortex.rules.service.RuleService.record_use"
+   },
+   {
+    "from": "cortex.rules.attribution.AttributionRun.attribute",
+    "to": "cortex.rules.service.RuleService.list_active"
+   },
+   {
+    "from": "cortex.rules.attribution.AttributionRun.attribute",
+    "to": "cortex.rules.service.RuleService.create_dictated"
+   },
+   {
+    "from": "cortex.rules.attribution.AttributionRun.attribute",
+    "to": "cortex.rules.service.RuleService.create_from_correction"
    }
   ]
  },
@@ -621,6 +730,110 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     {
      "kind": "effect",
      "type": "one update",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.attribution.AttributionRun.attribute",
+   "callee": "cortex.rules.conflicts.ConflictCheck.contradicts",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "True or False from the provider's verdict",
+     "handled_at": "True drops the proposal, False lets it be created"
+    },
+    {
+     "kind": "absent",
+     "type": "an empty active set: nothing to contradict",
+     "handled_at": "False without any provider call, so a first rule costs one call, not two"
+    },
+    {
+     "kind": "raises",
+     "type": "the provider's error, or malformed JSON",
+     "handled_at": "logged, the proposal is dropped, the uses are still written"
+    },
+    {
+     "kind": "effect",
+     "type": "one provider call, and only when there is a proposal",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.attribution.AttributionRun.attribute",
+   "callee": "cortex.rules.service.RuleService.list_active",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the active rules, already capped at the context budget",
+     "handled_at": "the proposal is stored from it"
+    },
+    {
+     "kind": "absent",
+     "type": "no active rule: the check short-circuits",
+     "handled_at": "nothing to create"
+    },
+    {
+     "kind": "raises",
+     "type": "the repository's error",
+     "handled_at": "caught by the same handler as the conflict check: the proposal is dropped, the uses stand"
+    },
+    {
+     "kind": "effect",
+     "type": "one read per sweep",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.attribution.AttributionRun.attribute",
+   "callee": "cortex.rules.service.RuleService.create_dictated",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the new Rule, definitive with the dictation as its first use",
+     "handled_at": "the proposal is stored from it"
+    },
+    {
+     "kind": "absent",
+     "type": "none: the branch is taken only for a dictated proposal",
+     "handled_at": "nothing to create"
+    },
+    {
+     "kind": "raises",
+     "type": "ValueError on blank text, the repository's error",
+     "handled_at": "caught by the same handler as the conflict check: the proposal is dropped, the uses stand"
+    },
+    {
+     "kind": "effect",
+     "type": "one rules row plus one use row",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.attribution.AttributionRun.attribute",
+   "callee": "cortex.rules.service.RuleService.create_from_correction",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the new Rule, staging at the prior",
+     "handled_at": "the proposal is stored from it"
+    },
+    {
+     "kind": "absent",
+     "type": "none: the branch is taken only for a correction-born proposal",
+     "handled_at": "nothing to create"
+    },
+    {
+     "kind": "raises",
+     "type": "ValueError on blank text, the repository's error",
+     "handled_at": "caught by the same handler as the conflict check: the proposal is dropped, the uses stand"
+    },
+    {
+     "kind": "effect",
+     "type": "one rules row",
      "handled_at": null
     }
    ]
