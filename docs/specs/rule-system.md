@@ -189,6 +189,19 @@ Slice A's laws are in `## Invariants` below and stay the contract there; these a
 - **Not pinned by an invariant, measured by eval:** "a proposal never contradicts an active rule" needs LLM judgment, so it lives in `## Testing Decisions`-style eval fixtures, not in the table above.
 - **`rule.promoted` after commit**: the notification is a line in the next response, so losing it costs a line, never the promotion.
 
+## Tickets
+
+Published on the tracker in dependency order. Work the frontier: a ticket can start as soon as its blockers are done.
+
+- #168 — a turn becomes a Feedback (classifier and attribution run; folds in the non-streaming reasoning normalisation). Blocked by: none.
+- #169 — the feedback queue survives a restart (migration 011, drain, idempotent retry). Blocked by: #168.
+- #170 — proposals: a dictation or an uncovered correction becomes a Rule, after the conflict check. Blocked by: #168.
+- #171 — a scope correction splits the Rule instead of penalising it. Blocked by: #168.
+- #172 — the real chat turn is attributed (enqueue at the loop's caller, drain outside the request). Blocked by: #169.
+- #173 — a promotion announces itself in the next response. Blocked by: #169.
+- #174 — a new dictation replaces the old Rule instead of inheriting its history. Blocked by: #170.
+- #175 — eval: a task can carry a Rule set, and eval never learns. Blocked by: #172.
+
 ## Model
 
 ### Lifecycle inventory
