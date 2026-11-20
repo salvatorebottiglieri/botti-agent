@@ -6,6 +6,8 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
+import pytest
+
 from cortex.llm.base import LLMClient
 from cortex.llm.models import ChatMessage, ChatResult, Role
 from cortex.rules.models import Rule, RuleOrigin, RuleSpec, RuleUse, UseOutcome
@@ -105,3 +107,77 @@ async def test_no_rule_or_use_id_reaches_the_request() -> None:
     assert str(RULE.id) not in sent
     assert "4711" not in sent
     assert "4712" not in sent
+
+
+def test_one_child_is_refused() -> None:
+    with pytest.raises(ValueError):
+        _parse_split(
+            json.dumps({**ANSWER, "children": ANSWER["children"][:1]}), use_count=2
+        )
+
+
+def test_three_children_are_refused() -> None:
+    children = ANSWER["children"] + [ANSWER["children"][1]]
+
+    with pytest.raises(ValueError):
+        _parse_split(json.dumps({**ANSWER, "children": children}), use_count=2)
+
+
+def test_a_child_with_a_blank_condition_is_refused() -> None:
+    children = [{**ANSWER["children"][0], "condition": "  "}, ANSWER["children"][1]]
+
+    with pytest.raises(ValueError):
+        _parse_split(json.dumps({**ANSWER, "children": children}), use_count=2)
+
+
+def test_a_child_with_a_blank_action_is_refused() -> None:
+    children = [{**ANSWER["children"][0], "action": ""}, ANSWER["children"][1]]
+
+    with pytest.raises(ValueError):
+        _parse_split(json.dumps({**ANSWER, "children": children}), use_count=2)
+
+
+def test_an_assignment_of_the_wrong_length_is_refused() -> None:
+    with pytest.raises(ValueError):
+        _parse_split(json.dumps({**ANSWER, "assignment": [0]}), use_count=2)
+    with pytest.raises(ValueError):
+        _parse_split(json.dumps({**ANSWER, "assignment": [0, 1, 0]}), use_count=2)
+
+
+def test_an_assignment_that_names_no_child_is_refused() -> None:
+    with pytest.raises(ValueError):
+        _parse_split(json.dumps({**ANSWER, "assignment": [0, 2]}), use_count=2)
+
+
+def test_a_boolean_is_not_a_child_index() -> None:
+    with pytest.raises(ValueError):
+        _parse_split(json.dumps({**ANSWER, "assignment": [True, False]}), use_count=2)
+
+
+def test_a_malformed_answer_raises_value_error() -> None:
+    with pytest.raises(ValueError):
+        _parse_split("not json", use_count=2)
+
+
+def test_a_fenced_or_think_prefixed_answer_is_parsed() -> None:
+    plain = _parse_split(json.dumps(ANSWER), use_count=2)
+
+    fenced = _parse_split("```json\n" + json.dumps(ANSWER) + "\n```", use_count=2)
+    assert fenced == plain
+    thought = _parse_split(
+        "<think>cutting the rule</think>" + json.dumps(ANSWER), use_count=2
+    )
+    assert thought == plain
+
+
+async def test_the_prompt_asks_for_disjoint_children_and_names_the_keeping_child_first() -> None:
+    llm = _llm_returning(json.dumps(ANSWER))
+
+    await SplitProposer(llm).propose(RULE, USES)
+
+    sent = _sent_text(llm)
+    assert "disjoint" in sent
+    assert (
+        "List first the child that keeps the current behaviour, and second the new, "
+        "narrower rule."
+    ) in sent

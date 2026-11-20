@@ -23,6 +23,8 @@ _SYSTEM_PROMPT = (
     '              {"condition": "...", "action": "...", "rationale": "..."}],\n'
     ' "assignment": [0, 1, ...]}\n'
     "The two conditions must be disjoint and together cover the original rule.\n"
+    "List first the child that keeps the current behaviour, and second the new, "
+    "narrower rule.\n"
     "Answer one child index (0 or 1) per use, in the order the uses are listed; "
     "no markdown."
 )
@@ -33,7 +35,6 @@ class SplitProposal:
     """Two children and, positionally, the child each of the parent's uses goes to."""
 
     children: tuple[RuleSpec, RuleSpec]
-    # uses[i] -> child index (0 or 1)
     assignment: tuple[int, ...]
 
 
@@ -68,9 +69,8 @@ def _parse_split(content: str, use_count: int) -> SplitProposal:
     raw_assignment = data.get("assignment")
     if not isinstance(raw_assignment, list) or len(raw_assignment) != use_count:
         raise ValueError(f"the assignment must name one child for each of the {use_count} uses")
-    for index in raw_assignment:
-        if not isinstance(index, int) or index not in (0, 1):
-            raise ValueError("an assignment is a list of 0/1 child indexes")
+    if any(type(index) is not int or index not in (0, 1) for index in raw_assignment):
+        raise ValueError("an assignment is a list of 0/1 child indexes")
     return SplitProposal(children=(first, second), assignment=tuple(raw_assignment))
 
 

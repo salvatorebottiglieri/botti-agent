@@ -582,3 +582,27 @@ async def test_a_failing_split_does_not_cancel_the_other_uses() -> None:
         (corrected.id, UseOutcome.CORRECTION),
     }
     assert await service.list_children(split_parent.id) == []
+
+
+async def test_the_returned_parent_is_the_archived_one() -> None:
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    rule = await service.create_from_correction(SPEC)
+    await service.record_use(rule.id, SESSION, "a dinner for two", UseOutcome.APPROVAL)
+    await service.record_use(rule.id, SECOND_SESSION, "a pizza slice", UseOutcome.IMPLICIT)
+    classifier = StubClassifier(
+        Feedback(uses=[AttributedUse(rule_id=rule.id, outcome=UseOutcome.SCOPE_CORRECTION)])
+    )
+    proposer = StubSplitProposer()
+
+    returned = await AttributionRun(classifier, service, splits=proposer).attribute(
+        [rule], SESSION, "turn", "no, I meant a booking", SITUATION
+    )
+
+    parents = [stored for stored in returned if stored.id == rule.id]
+    assert len(parents) == 1
+    assert parents[0].state is RuleState.ARCHIVED
+    assert parents[0].superseded_by is not None
+    children = [stored for stored in returned if stored.id != rule.id]
+    assert len(children) == 2
+    assert {child.parent_id for child in children} == {rule.id}

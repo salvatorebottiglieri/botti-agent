@@ -236,9 +236,7 @@ class RuleService:
         # No use means no evidence of which child preserves the parent's
         # behaviour, so neither may inherit its state.
         child_states = (
-            [parent.state, RuleState.STAGING]
-            if uses
-            else [RuleState.STAGING, RuleState.STAGING]
+            [parent.state, RuleState.STAGING] if uses else [RuleState.STAGING, RuleState.STAGING]
         )
         created: list[Rule] = []
         for index, spec in enumerate(children):

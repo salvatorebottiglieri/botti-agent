@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from cortex.rules.conflicts import ConflictCheck
-from cortex.rules.feedback import FeedbackClassifier
+from cortex.rules.feedback import Feedback, FeedbackClassifier
 from cortex.rules.models import Rule, RuleOrigin, UseOutcome
 from cortex.rules.service import RuleService
 from cortex.rules.splits import SplitProposer
@@ -105,30 +105,57 @@ class AttributionRun:
                     exc_info=True,
                 )
 
-        if self._splits is not None:
-            for entry in feedback.uses:
-                if entry.outcome is not UseOutcome.SCOPE_CORRECTION:
-                    continue
-                try:
-                    rule = await self._service.get(entry.rule_id)
-                    if rule is None:
-                        continue
-                    uses = await self._service.list_uses(entry.rule_id)
-                    split_proposal = await self._splits.propose(rule, uses)
-                    # A use without an id is unassignable; split() rejects it.
-                    assignments = {
-                        use.id: split_proposal.assignment[index]
-                        for index, use in enumerate(uses)
-                        if use.id is not None
-                    }
-                    refreshed.extend(
-                        await self._service.split(
-                            entry.rule_id, split_proposal.children, assignments
-                        )
-                    )
-                except Exception:
-                    logger.warning(
-                        f"Splitting rule {entry.rule_id} failed; the rule and its uses stand",
-                        exc_info=True,
-                    )
+        split_refreshed = await self._split_scope_corrections(feedback)
+        if split_refreshed:
+            # record_use put the pre-split parent in refreshed; replace it
+            # with the archived parent the split returned.
+            split_ids = {stored.id for stored in split_refreshed}
+            refreshed[:] = [
+                touched for touched in refreshed if touched.id not in split_ids
+            ]
+        refreshed.extend(split_refreshed)
         return refreshed or list(rules)
+
+    async def _split_scope_corrections(self, feedback: Feedback) -> list[Rule]:
+        """Split each rule whose scope correction this turn attributed.
+
+        Returns the archived parents and their children, so ``attribute`` can
+        replace the pre-split snapshots it recorded. Empty when no proposer is
+        configured.
+        """
+        if self._splits is None:
+            return []
+        refreshed: list[Rule] = []
+        for entry in feedback.uses:
+            if entry.outcome is not UseOutcome.SCOPE_CORRECTION:
+                continue
+            try:
+                rule = await self._service.get(entry.rule_id)
+                if rule is None:
+                    continue
+                uses = await self._service.list_uses(entry.rule_id)
+                split_proposal = await self._splits.propose(rule, uses)
+                # A use without an id is unassignable; split() rejects it.
+                assignments = {
+                    use.id: split_proposal.assignment[index]
+                    for index, use in enumerate(uses)
+                    if use.id is not None
+                }
+                children = await self._service.split(
+                    entry.rule_id, split_proposal.children, assignments
+                )
+                # The split archived the parent: replace the snapshot
+                # record_use put in the list before it.
+                refreshed[:] = [
+                    touched for touched in refreshed if touched.id != entry.rule_id
+                ]
+                archived = await self._service.get(entry.rule_id)
+                if archived is not None:
+                    refreshed.append(archived)
+                refreshed.extend(children)
+            except Exception:
+                logger.warning(
+                    f"Splitting rule {entry.rule_id} failed; the rule and its uses stand",
+                    exc_info=True,
+                )
+        return refreshed
