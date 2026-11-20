@@ -20,6 +20,40 @@ _CLASSIFY: new capability inside an existing module (one new seam, no schema in 
 - **Consequences**: the number of calls is bounded by turns that had Rules and got an answer, which is what a Rule system actually needs.
 - **Owner sign-off**: 2026-11-20, owner in chat — "Ok tutte" (to the four recommendations of the phase-1 interview, of which this is the first).
 
+## Ticket #169 — the feedback queue
+
+_Written 2026-11-20, before the code. Signatures and contracts are in the
+`json design` block below, under their own entries._
+
+The queue is what makes attribution survive a provider outage or a restart: a
+turn that had Rules in context and got a reply is written as a pending row, and
+a later pass attributes it. Three shapes: the row (`QueuedFeedback`), the port
+(`FeedbackQueue`), the Postgres implementation, plus `FeedbackDrain` that ties
+the queue to #168's `AttributionRun`.
+
+**No claim state.** Two drains may pick the same pending row and both classify
+it; the partial unique index on `rule_uses (feedback_id, rule_id)` means the
+second writes nothing, so the guarantee that matters — one turn never scores a
+Rule twice — is held by the database, not by a locking protocol. A second drain
+can therefore redo a classification that is still in flight: wasted work, never a
+wrong score.
+
+## Decision 2 — the queue needs no claim state
+
+- **Choice**: three states (`pending`, `attributed`, `dropped`) and no
+  `FOR UPDATE SKIP LOCKED` claim; idempotency comes from the partial unique
+  index on `rule_uses (feedback_id, rule_id)`.
+- **Rejected**: a fourth `claimed` state with a locking claim (it holds a
+  connection across an LLM call, or needs a lease and a timeout); keeping the
+  ticket's original "two drains cannot both claim the same row" criterion (it
+  protects against a harm the index already prevents).
+- **Consequences**: `RuleUse` gains a nullable `feedback_id`, the drain becomes a
+  plain loop, and the ticket's criterion was rewritten to "no double scoring".
+  The cost is a duplicated provider call when two drains race.
+- **Owner sign-off**: 2026-11-20, owner in chat — "A" (to the two options, A =
+  drop the claim criterion and rely on the unique index, B = add the `claimed`
+  state).
+
 ## Premises (design)
 
 Inherited: P1-P10 of the spec. New:
@@ -96,6 +130,37 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
       "children": []
      }
     ]
+   },
+   {
+    "name": "cortex.rules.queue.FeedbackDrain.drain",
+    "note": "#169 one pass over the pending rows; returns how many were attributed",
+    "children": [
+     {
+      "name": "cortex.rules.queue.FeedbackQueue.list_pending",
+      "note": "#169 oldest pending first",
+      "children": []
+     },
+     {
+      "name": "cortex.rules.service.RuleService.get",
+      "note": "#169 the rules of that turn, by id",
+      "children": []
+     },
+     {
+      "name": "cortex.rules.attribution.AttributionRun.attribute",
+      "note": "#168 unchanged",
+      "children": []
+     },
+     {
+      "name": "cortex.rules.queue.FeedbackQueue.mark_attributed",
+      "note": "#169 only when the run wrote something",
+      "children": []
+     },
+     {
+      "name": "cortex.rules.queue.FeedbackQueue.drop_stale",
+      "note": "#169 rows past the validity window",
+      "children": []
+     }
+    ]
    }
   ]
  },
@@ -129,6 +194,36 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "kind": "mod",
    "path": "tests/unit/test_llm.py",
    "note": "#168 the non-streaming reasoning tests"
+  },
+  {
+   "kind": "add",
+   "path": "migrations/011_queued_feedback.sql",
+   "note": "#169 the queue table and rule_uses.feedback_id with its partial unique index"
+  },
+  {
+   "kind": "add",
+   "path": "src/cortex/rules/queue.py",
+   "note": "#169 QueuedFeedback, QueuedFeedbackStatus, FeedbackQueue, PostgresFeedbackQueue, FeedbackDrain"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/interfaces.py",
+   "note": "#169 the FeedbackQueue port"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/models.py",
+   "note": "#169 RuleUse.feedback_id, nullable"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/repository.py",
+   "note": "#169 write and read rule_uses.feedback_id"
+  },
+  {
+   "kind": "add",
+   "path": "tests/unit/rules/test_queue.py",
+   "note": "#169 the statements and the drain"
   }
  ],
  "signatures": [
@@ -156,23 +251,117 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "module": "src/cortex/llm/providers/openai.py",
    "language": "python",
    "code": "def _reasoning_delta(delta: Any) -> str | None: ..."
+  },
+  {
+   "module": "src/cortex/rules/queue.py",
+   "language": "python",
+   "code": "class QueuedFeedbackStatus(StrEnum):\n    PENDING = \"pending\"\n    ATTRIBUTED = \"attributed\"\n    DROPPED = \"dropped\"\n\n@dataclass(frozen=True)\nclass QueuedFeedback:\n    session_id: UUID\n    rule_ids: tuple[UUID, ...]\n    assistant_turn: str\n    user_reply: str\n    status: QueuedFeedbackStatus = QueuedFeedbackStatus.PENDING\n    occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))\n    attributed_at: datetime | None = None\n    id: UUID | None = None\n\nclass FeedbackQueue(ABC):\n    @abstractmethod\n    async def enqueue(self, item: QueuedFeedback) -> QueuedFeedback: ...\n    @abstractmethod\n    async def list_pending(self, limit: int = 10) -> list[QueuedFeedback]: ...\n    @abstractmethod\n    async def mark_attributed(self, feedback_id: UUID, now: datetime) -> None: ...\n    @abstractmethod\n    async def drop_stale(self, cutoff: datetime) -> int: ...\n\nclass PostgresFeedbackQueue(FeedbackQueue):\n    def __init__(self, session_factory: Callable[[], AbstractAsyncContextManager[Any]] = DbSession) -> None: ...\n\nclass FeedbackDrain:\n    def __init__(self, queue: FeedbackQueue, run: AttributionRun, service: RuleService, *, clock: Callable[[], datetime] = _utcnow) -> None: ...\n    async def drain(self, limit: int = 10) -> int: ..."
+  },
+  {
+   "module": "src/cortex/rules/service.py",
+   "language": "python",
+   "code": "async def get(self, rule_id: UUID) -> Rule | None: ..."
   }
  ],
  "data_flow": {
   "nodes": [
-   { "id": "cortex.rules.attribution.AttributionRun.attribute", "module": "src/cortex/rules/attribution.py", "kind": "new" },
-   { "id": "cortex.rules.feedback.FeedbackClassifier.classify", "module": "src/cortex/rules/feedback.py", "kind": "new" },
-   { "id": "cortex.rules.feedback._parse_feedback", "module": "src/cortex/rules/feedback.py", "kind": "new" },
-   { "id": "cortex.rules.service.RuleService.record_use", "module": "src/cortex/rules/service.py", "kind": "keep" },
-   { "id": "cortex.llm.providers.openai.OpenAIClient.chat", "module": "src/cortex/llm/providers/openai.py", "kind": "mod" },
-   { "id": "cortex.llm.providers.openai._reasoning_delta", "module": "src/cortex/llm/providers/openai.py", "kind": "keep" }
+   {
+    "id": "cortex.rules.attribution.AttributionRun.attribute",
+    "module": "src/cortex/rules/attribution.py",
+    "kind": "new"
+   },
+   {
+    "id": "cortex.rules.feedback.FeedbackClassifier.classify",
+    "module": "src/cortex/rules/feedback.py",
+    "kind": "new"
+   },
+   {
+    "id": "cortex.rules.feedback._parse_feedback",
+    "module": "src/cortex/rules/feedback.py",
+    "kind": "new"
+   },
+   {
+    "id": "cortex.rules.service.RuleService.record_use",
+    "module": "src/cortex/rules/service.py",
+    "kind": "keep"
+   },
+   {
+    "id": "cortex.llm.providers.openai.OpenAIClient.chat",
+    "module": "src/cortex/llm/providers/openai.py",
+    "kind": "mod"
+   },
+   {
+    "id": "cortex.llm.providers.openai._reasoning_delta",
+    "module": "src/cortex/llm/providers/openai.py",
+    "kind": "keep"
+   },
+   {
+    "id": "cortex.rules.queue.FeedbackDrain.drain",
+    "module": "src/cortex/rules/queue.py",
+    "kind": "new"
+   },
+   {
+    "id": "cortex.rules.queue.FeedbackQueue.list_pending",
+    "module": "src/cortex/rules/queue.py",
+    "kind": "new"
+   },
+   {
+    "id": "cortex.rules.queue.FeedbackQueue.mark_attributed",
+    "module": "src/cortex/rules/queue.py",
+    "kind": "new"
+   },
+   {
+    "id": "cortex.rules.queue.FeedbackQueue.drop_stale",
+    "module": "src/cortex/rules/queue.py",
+    "kind": "new"
+   },
+   {
+    "id": "cortex.rules.service.RuleService.get",
+    "module": "src/cortex/rules/service.py",
+    "kind": "keep"
+   }
   ],
   "edges": [
-   { "from": "cortex.rules.attribution.AttributionRun.attribute", "to": "cortex.rules.feedback.FeedbackClassifier.classify" },
-   { "from": "cortex.rules.attribution.AttributionRun.attribute", "to": "cortex.rules.service.RuleService.record_use" },
-   { "from": "cortex.rules.feedback.FeedbackClassifier.classify", "to": "cortex.rules.feedback._parse_feedback" },
-   { "from": "cortex.rules.feedback.FeedbackClassifier.classify", "to": "cortex.llm.providers.openai.OpenAIClient.chat" },
-   { "from": "cortex.llm.providers.openai.OpenAIClient.chat", "to": "cortex.llm.providers.openai._reasoning_delta" }
+   {
+    "from": "cortex.rules.attribution.AttributionRun.attribute",
+    "to": "cortex.rules.feedback.FeedbackClassifier.classify"
+   },
+   {
+    "from": "cortex.rules.attribution.AttributionRun.attribute",
+    "to": "cortex.rules.service.RuleService.record_use"
+   },
+   {
+    "from": "cortex.rules.feedback.FeedbackClassifier.classify",
+    "to": "cortex.rules.feedback._parse_feedback"
+   },
+   {
+    "from": "cortex.rules.feedback.FeedbackClassifier.classify",
+    "to": "cortex.llm.providers.openai.OpenAIClient.chat"
+   },
+   {
+    "from": "cortex.llm.providers.openai.OpenAIClient.chat",
+    "to": "cortex.llm.providers.openai._reasoning_delta"
+   },
+   {
+    "from": "cortex.rules.queue.FeedbackDrain.drain",
+    "to": "cortex.rules.queue.FeedbackQueue.list_pending"
+   },
+   {
+    "from": "cortex.rules.queue.FeedbackDrain.drain",
+    "to": "cortex.rules.service.RuleService.get"
+   },
+   {
+    "from": "cortex.rules.queue.FeedbackDrain.drain",
+    "to": "cortex.rules.attribution.AttributionRun.attribute"
+   },
+   {
+    "from": "cortex.rules.queue.FeedbackDrain.drain",
+    "to": "cortex.rules.queue.FeedbackQueue.mark_attributed"
+   },
+   {
+    "from": "cortex.rules.queue.FeedbackDrain.drain",
+    "to": "cortex.rules.queue.FeedbackQueue.drop_stale"
+   }
   ]
  },
  "contracts": [
@@ -180,50 +369,260 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "site": "cortex.rules.attribution.AttributionRun.attribute",
    "callee": "cortex.rules.feedback.FeedbackClassifier.classify",
    "exits": [
-    { "kind": "returns", "type": "Feedback: the attributed uses and at most one proposal", "handled_at": "each use goes to RuleService.record_use; the proposal is not acted on in this ticket" },
-    { "kind": "absent", "type": "an empty Feedback: no rule was applied and nothing was proposed", "handled_at": "no service call, the rule list is returned unchanged" },
-    { "kind": "raises", "type": "ValueError on malformed provider output, provider and circuit-breaker errors", "handled_at": "caught here by one handler, logged, nothing written; the caller gets the rules it passed, unchanged" },
-    { "kind": "effect", "type": "one billable provider call", "handled_at": null }
+    {
+     "kind": "returns",
+     "type": "Feedback: the attributed uses and at most one proposal",
+     "handled_at": "each use goes to RuleService.record_use; the proposal is not acted on in this ticket"
+    },
+    {
+     "kind": "absent",
+     "type": "an empty Feedback: no rule was applied and nothing was proposed",
+     "handled_at": "no service call, the rule list is returned unchanged"
+    },
+    {
+     "kind": "raises",
+     "type": "ValueError on malformed provider output, provider and circuit-breaker errors",
+     "handled_at": "caught here by one handler, logged, nothing written; the caller gets the rules it passed, unchanged"
+    },
+    {
+     "kind": "effect",
+     "type": "one billable provider call",
+     "handled_at": null
+    }
    ]
   },
   {
    "site": "cortex.rules.feedback.FeedbackClassifier.classify",
    "callee": "cortex.llm.providers.openai.OpenAIClient.chat",
    "exits": [
-    { "kind": "returns", "type": "ChatResult whose message content is the JSON the prompt asked for", "handled_at": "handed to _parse_feedback" },
-    { "kind": "absent", "type": "content None or blank", "handled_at": "_parse_feedback raises ValueError on it" },
-    { "kind": "raises", "type": "the provider's error, or CircuitOpenError from the breaker", "handled_at": "not caught here: AttributionRun.attribute catches and writes nothing" },
-    { "kind": "effect", "type": "one provider call, temperature 0", "handled_at": null }
+    {
+     "kind": "returns",
+     "type": "ChatResult whose message content is the JSON the prompt asked for",
+     "handled_at": "handed to _parse_feedback"
+    },
+    {
+     "kind": "absent",
+     "type": "content None or blank",
+     "handled_at": "_parse_feedback raises ValueError on it"
+    },
+    {
+     "kind": "raises",
+     "type": "the provider's error, or CircuitOpenError from the breaker",
+     "handled_at": "not caught here: AttributionRun.attribute catches and writes nothing"
+    },
+    {
+     "kind": "effect",
+     "type": "one provider call, temperature 0",
+     "handled_at": null
+    }
    ]
   },
   {
    "site": "cortex.rules.attribution.AttributionRun.attribute",
    "callee": "cortex.rules.service.RuleService.record_use",
    "exits": [
-    { "kind": "returns", "type": "Rule with the recomputed confidence and state", "handled_at": "collected into the returned list" },
-    { "kind": "absent", "type": "RuleNotFoundError when the rule vanished between classify and write", "handled_at": "caught by the single handler, logged with the rule id, the remaining uses are still written" },
-    { "kind": "raises", "type": "the repository's error (asyncpg) from the write", "handled_at": "caught by the same handler, logged, the remaining uses are still written" },
-    { "kind": "effect", "type": "one rule_uses row plus one rules refresh per use", "handled_at": null }
+    {
+     "kind": "returns",
+     "type": "Rule with the recomputed confidence and state",
+     "handled_at": "collected into the returned list"
+    },
+    {
+     "kind": "absent",
+     "type": "RuleNotFoundError when the rule vanished between classify and write",
+     "handled_at": "caught by the single handler, logged with the rule id, the remaining uses are still written"
+    },
+    {
+     "kind": "raises",
+     "type": "the repository's error (asyncpg) from the write",
+     "handled_at": "caught by the same handler, logged, the remaining uses are still written"
+    },
+    {
+     "kind": "effect",
+     "type": "one rule_uses row plus one rules refresh per use",
+     "handled_at": null
+    }
    ]
   },
   {
    "site": "cortex.rules.feedback.FeedbackClassifier.classify",
    "callee": "cortex.rules.feedback._parse_feedback",
    "exits": [
-    { "kind": "returns", "type": "Feedback with only the uses and proposals that parse and name a known rule", "handled_at": "returned as is" },
-    { "kind": "absent", "type": "an empty Feedback when every entry was dropped", "handled_at": "returned as is, AttributionRun writes nothing" },
-    { "kind": "raises", "type": "ValueError on malformed JSON or a missing uses key", "handled_at": "propagates to AttributionRun.attribute, which logs it and writes nothing" },
-    { "kind": "effect", "type": "none, pure", "handled_at": null }
+    {
+     "kind": "returns",
+     "type": "Feedback with only the uses and proposals that parse and name a known rule",
+     "handled_at": "returned as is"
+    },
+    {
+     "kind": "absent",
+     "type": "an empty Feedback when every entry was dropped",
+     "handled_at": "returned as is, AttributionRun writes nothing"
+    },
+    {
+     "kind": "raises",
+     "type": "ValueError on malformed JSON or a missing uses key",
+     "handled_at": "propagates to AttributionRun.attribute, which logs it and writes nothing"
+    },
+    {
+     "kind": "effect",
+     "type": "none, pure",
+     "handled_at": null
+    }
    ]
   },
   {
    "site": "cortex.llm.providers.openai.OpenAIClient.chat",
    "callee": "cortex.llm.providers.openai._reasoning_delta",
    "exits": [
-    { "kind": "returns", "type": "the reasoning text of the delta", "handled_at": "wrapped into one inline think block in the content" },
-    { "kind": "absent", "type": "None or empty for a provider/model that publishes no reasoning", "handled_at": "content left untouched" },
-    { "kind": "raises", "type": "nothing expected: it reads attributes off a dict-like delta", "handled_at": "— nothing raised, nothing to handle" },
-    { "kind": "effect", "type": "none, pure", "handled_at": null }
+    {
+     "kind": "returns",
+     "type": "the reasoning text of the delta",
+     "handled_at": "wrapped into one inline think block in the content"
+    },
+    {
+     "kind": "absent",
+     "type": "None or empty for a provider/model that publishes no reasoning",
+     "handled_at": "content left untouched"
+    },
+    {
+     "kind": "raises",
+     "type": "nothing expected: it reads attributes off a dict-like delta",
+     "handled_at": "\u2014 nothing raised, nothing to handle"
+    },
+    {
+     "kind": "effect",
+     "type": "none, pure",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.queue.FeedbackDrain.drain",
+   "callee": "cortex.rules.queue.FeedbackQueue.list_pending",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the pending rows, oldest first",
+     "handled_at": "the drain loop"
+    },
+    {
+     "kind": "absent",
+     "type": "an empty list: nothing to attribute",
+     "handled_at": "no work that pass"
+    },
+    {
+     "kind": "raises",
+     "type": "the repository's error (asyncpg)",
+     "handled_at": "logged, the row stays pending, the drain continues"
+    },
+    {
+     "kind": "effect",
+     "type": "one read-only query",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.queue.FeedbackDrain.drain",
+   "callee": "cortex.rules.service.RuleService.get",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the Rule, or None when it has been deleted since",
+     "handled_at": "the drain loop"
+    },
+    {
+     "kind": "absent",
+     "type": "None: the id is skipped, the rest of the row is still processed",
+     "handled_at": "no work that pass"
+    },
+    {
+     "kind": "raises",
+     "type": "the repository's error",
+     "handled_at": "logged, the row stays pending, the drain continues"
+    },
+    {
+     "kind": "effect",
+     "type": "one read per rule id",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.queue.FeedbackDrain.drain",
+   "callee": "cortex.rules.attribution.AttributionRun.attribute",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the refreshed rules, or the given ones when nothing was attributed",
+     "handled_at": "the drain loop"
+    },
+    {
+     "kind": "absent",
+     "type": "an empty rule list: the row is marked attributed and scores nothing",
+     "handled_at": "no work that pass"
+    },
+    {
+     "kind": "raises",
+     "type": "nothing: the run catches its own failures",
+     "handled_at": "logged, the row stays pending, the drain continues"
+    },
+    {
+     "kind": "effect",
+     "type": "one provider call per pending row that still has rules",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.queue.FeedbackDrain.drain",
+   "callee": "cortex.rules.queue.FeedbackQueue.mark_attributed",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "None",
+     "handled_at": "the drain loop"
+    },
+    {
+     "kind": "absent",
+     "type": "the row was already attributed by another drain: a no-op update",
+     "handled_at": "no work that pass"
+    },
+    {
+     "kind": "raises",
+     "type": "the repository's error, logged; the row stays pending",
+     "handled_at": "logged, the row stays pending, the drain continues"
+    },
+    {
+     "kind": "effect",
+     "type": "one update",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.queue.FeedbackDrain.drain",
+   "callee": "cortex.rules.queue.FeedbackQueue.drop_stale",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the number of rows dropped",
+     "handled_at": "the drain loop"
+    },
+    {
+     "kind": "absent",
+     "type": "zero: nothing is old enough",
+     "handled_at": "no work that pass"
+    },
+    {
+     "kind": "raises",
+     "type": "the repository's error, logged; the pass still reports its attributions",
+     "handled_at": "logged, the row stays pending, the drain continues"
+    },
+    {
+     "kind": "effect",
+     "type": "one update",
+     "handled_at": null
+    }
    ]
   }
  ]
