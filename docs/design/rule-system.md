@@ -51,7 +51,6 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
 - `test_fenced_json_is_accepted`.
 - `test_a_proposal_with_blank_condition_or_action_is_dropped`.
 - `test_a_proposal_with_an_unknown_origin_defaults_to_correction`.
-- `test_a_proposal_never_carries_a_confidence`.
 - `test_the_run_writes_one_use_per_attributed_rule_through_the_service`: confidence and state move for the staged Rule.
 - `test_the_run_writes_nothing_when_the_classifier_raises`: no use row, no error to the caller.
 - `test_the_run_skips_a_rule_that_vanished`: `RuleNotFoundError` from the service is logged and the other uses are still written.
@@ -136,7 +135,7 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
   {
    "module": "src/cortex/rules/feedback.py",
    "language": "python",
-   "code": "@dataclass(frozen=True)\nclass AttributedUse:\n    rule_id: UUID\n    outcome: UseOutcome\n\n@dataclass(frozen=True)\nclass RuleProposal:\n    spec: RuleSpec\n    origin: RuleOrigin\n\n@dataclass(frozen=True)\nclass Feedback:\n    uses: list[AttributedUse] = field(default_factory=list)\n    proposals: list[RuleProposal] = field(default_factory=list)\n\ndef _parse_feedback(content: str, known_rule_ids: set[UUID]) -> Feedback: ...\n\nclass FeedbackClassifier:\n    def __init__(self, llm_client: LLMClient, *, generation: GenerationConfig | None = None) -> None: ...\n    async def classify(self, rules: Sequence[Rule], assistant_turn: str, user_message: str) -> Feedback: ..."
+   "code": "@dataclass(frozen=True)\nclass AttributedUse:\n    rule_id: UUID\n    outcome: UseOutcome\n\n@dataclass(frozen=True)\nclass RuleProposal:\n    spec: RuleSpec\n    origin: RuleOrigin\n\n@dataclass(frozen=True)\nclass Feedback:\n    uses: list[AttributedUse] = field(default_factory=list)\n    proposals: list[RuleProposal] = field(default_factory=list)\n\ndef _parse_feedback(content: str, known_rule_ids: set[UUID]) -> Feedback: ...\n\nclass FeedbackClassifier:\n    def __init__(self, llm_client: LLMClient) -> None: ...\n    async def classify(self, rules: Sequence[Rule], assistant_turn: str, user_message: str) -> Feedback: ..."
   },
   {
    "module": "src/cortex/rules/attribution.py",
@@ -183,7 +182,7 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "exits": [
     { "kind": "returns", "type": "Feedback: the attributed uses and at most one proposal", "handled_at": "each use goes to RuleService.record_use; the proposal is not acted on in this ticket" },
     { "kind": "absent", "type": "an empty Feedback: no rule was applied and nothing was proposed", "handled_at": "no service call, the rule list is returned unchanged" },
-    { "kind": "raises", "type": "ValueError on malformed provider output, provider and circuit-breaker errors", "handled_at": "caught here, logged, nothing written; the caller sees an empty list" },
+    { "kind": "raises", "type": "ValueError on malformed provider output, provider and circuit-breaker errors", "handled_at": "caught here by one handler, logged, nothing written; the caller gets the rules it passed, unchanged" },
     { "kind": "effect", "type": "one billable provider call", "handled_at": null }
    ]
   },
@@ -202,8 +201,8 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "callee": "cortex.rules.service.RuleService.record_use",
    "exits": [
     { "kind": "returns", "type": "Rule with the recomputed confidence and state", "handled_at": "collected into the returned list" },
-    { "kind": "absent", "type": "RuleNotFoundError when the rule vanished between classify and write", "handled_at": "caught here, logged, the remaining uses are still written" },
-    { "kind": "raises", "type": "the repository's error (asyncpg) from the write", "handled_at": "caught here, logged, the remaining uses are still written" },
+    { "kind": "absent", "type": "RuleNotFoundError when the rule vanished between classify and write", "handled_at": "caught by the single handler, logged with the rule id, the remaining uses are still written" },
+    { "kind": "raises", "type": "the repository's error (asyncpg) from the write", "handled_at": "caught by the same handler, logged, the remaining uses are still written" },
     { "kind": "effect", "type": "one rule_uses row plus one rules refresh per use", "handled_at": null }
    ]
   },

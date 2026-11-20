@@ -16,10 +16,12 @@ tracker: #166
 > `rules` and `rule_uses` tables, `src/cortex/rules/` holds the pure score, the
 > repository, the lifecycle service and the prompt rendering, rules are the
 > fourth dimension of the context bundle, and `cortex rules:list` /
-> `rules:show` / `rules:archive` manage them. Slice B — the feedback classifier
-> that attributes uses and proposes rules — does not exist yet: nothing writes a
-> `rule_uses` row at runtime except `RuleService` itself, so the set changes
-> only through the service API and the CLI.
+> `rules:show` / `rules:archive` manage them. Slice B is in progress: the
+> feedback classifier and its attribution run exist
+> (`cortex.rules.feedback`, `cortex.rules.attribution`, #168) but nothing
+> wires them into a turn yet — no caller in `src/` records a use at runtime, so
+> the set still changes only through the service API and the CLI. The queue,
+> proposals storage, the split path and the wiring are #169-#175.
 
 ## Phase plan
 
