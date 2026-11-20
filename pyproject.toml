@@ -73,6 +73,34 @@ ignore_missing_imports = true
 
 [dependency-groups]
 dev = [
+    "import-linter>=2.6",
     "types-colorama>=0.4.15.20260508",
     "types-pyyaml>=6.0.12.20260724",
 ]
+
+[tool.importlinter]
+root_package = "cortex"
+
+# The fitness function for module boundaries (issue #167, found in #166 phase 3).
+# The repo is a modular monolith by document (docs/specs/architecture.md § Module
+# map); these contracts are the part of that map a check can hold today. The
+# whole-map contracts (layer order, acyclic) are NOT green on the current code and
+# are the MODULARIZE project, not this file: measured cycles are memory <-> agentic
+# and config -> llm -> tools -> config. Freezing them as ignore_imports would turn
+# a design debt into a passing check.
+#
+# Law held here: a module's persistence seam and its score are private to it. The
+# composition root and the CLI may reach the repository because they are the ones
+# that build it; nothing else may.
+
+[[tool.importlinter.contracts]]
+name = "rules: the repository is private to the rules module"
+type = "protected"
+protected_modules = ["cortex.rules.repository"]
+allowed_importers = ["cortex.rules", "cortex.main", "cortex.cli"]
+
+[[tool.importlinter.contracts]]
+name = "rules: the score is private to the rules module"
+type = "protected"
+protected_modules = ["cortex.rules.scoring"]
+allowed_importers = ["cortex.rules"]

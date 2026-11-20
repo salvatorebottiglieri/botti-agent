@@ -128,6 +128,26 @@ number: the weight comes from the table, because a model's confidence in
 itself is not calibrated.
 _Avoid_: grader, evaluator, scorer
 
+**Rule proposal**:
+A candidate Rule produced by the same classifier pass that attributes uses: condition,
+action, rationale and origin. Born from a dictation (created definitive) or from a
+correction no active Rule covers (created in staging). It passes the conflict check
+before it is stored; it is never a stored entity in itself.
+_Avoid_: suggestion, candidate rule, draft rule
+
+**Feedback**:
+The classifier's verdict on one turn: the uses it attributes (Rule id + outcome
+category) and at most one Rule proposal. Distinct from an Outcome, which is the single
+category of one use.
+_Avoid_: signal, score, judgement
+
+**Feedback queue**:
+The persisted set of turns that had Rules in context, got a user reply and are not
+attributed yet. It is what lets attribution survive a provider outage or a restart; an
+entry older than the Rule validity window is dropped, because a use that old would
+contribute nothing.
+_Avoid_: outbox, retry buffer, dead letter queue
+
 **Reasoning**:
 The model's own account of why it acted, produced out of band by reasoning
 models and normalised by the provider into an inline `<think>...</think>` block

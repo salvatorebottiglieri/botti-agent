@@ -569,6 +569,33 @@ class TestSplit:
 
         assert set(repository.rules) == {parent.id}
 
+    async def test_a_split_of_a_rule_with_no_uses_leaves_both_children_in_staging(self):
+        """Witness: inheriting the parent's state unconditionally makes child 0
+        definitive off no evidence at all; with no use nothing says which child
+        preserves the behaviour."""
+        service, repository, _ = _service()
+        parent = await repository.create(
+            Rule(
+                condition=SPEC.condition,
+                action=SPEC.action,
+                state=RuleState.DEFINITIVE,
+                confidence=ONE_APPROVAL,
+                origin=RuleOrigin.DICTATED,
+            )
+        )
+        assert await repository.list_uses(parent.id) == []
+
+        created = await service.split(
+            parent.id,
+            [
+                RuleSpec(condition="a dinner booking", action="confirm first"),
+                RuleSpec(condition="a pizza order", action="order directly"),
+            ],
+            {},
+        )
+
+        assert [child.state for child in created] == [RuleState.STAGING, RuleState.STAGING]
+
     async def test_split_rejects_an_unassigned_use(self):
         """Witness: silently leaving a use on the archived parent loses evidence;
         every use must land with exactly one child."""

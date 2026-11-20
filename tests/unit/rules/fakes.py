@@ -1,19 +1,26 @@
-"""In-memory RuleRepository double for the rule-system tests.
+"""In-memory doubles for the rule-system tests.
 
 Reads and writes copy the Rule, so a mutation that is not persisted through
 ``refresh()`` has no effect — the same staleness the Postgres row mapping gives
 you. That is what lets a test tell "recomputed and stored" from "mutated in
-memory".
+memory". ``InMemoryFeedbackQueue`` gives the queue the same ids and ordering.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from uuid import UUID
+from datetime import datetime
+from uuid import UUID, uuid4
 
-from cortex.rules.interfaces import RuleRepository
+from cortex.rules.interfaces import FeedbackQueue, RuleRepository
 from cortex.rules.models import Rule, RuleState, RuleUse
+from cortex.rules.queue import QueuedFeedback, QueuedFeedbackStatus
+
+
+class DuplicateUseError(RuntimeError):
+    """The in-memory copy of the partial unique index on
+    ``rule_uses (feedback_id, rule_id)``: a turn scores a rule at most once."""
 
 
 class InMemoryRuleRepository(RuleRepository):
@@ -33,6 +40,13 @@ class InMemoryRuleRepository(RuleRepository):
         return replace(rule) if rule is not None else None
 
     async def add_use(self, use: RuleUse) -> RuleUse:
+        if use.feedback_id is not None and any(
+            stored.feedback_id == use.feedback_id and stored.rule_id == use.rule_id
+            for stored in self.uses
+        ):
+            raise DuplicateUseError(
+                f"rule {use.rule_id} already has a use from feedback {use.feedback_id}"
+            )
         stored = replace(use, id=self._next_use_id)
         self._next_use_id += 1
         self.uses.append(stored)
@@ -68,3 +82,41 @@ class InMemoryRuleRepository(RuleRepository):
         for use in self.uses:
             if use.id in wanted:
                 use.rule_id = rule_id
+
+
+class InMemoryFeedbackQueue(FeedbackQueue):
+    """A FeedbackQueue over a list, with the ids and ordering of Postgres."""
+
+    def __init__(self) -> None:
+        self.items: list[QueuedFeedback] = []
+
+    async def enqueue(self, item: QueuedFeedback) -> QueuedFeedback:
+        if not item.user_reply.strip():
+            raise ValueError("a turn with no user reply is never enqueued")
+        stored = replace(item, id=item.id or uuid4())
+        self.items.append(stored)
+        return replace(stored)
+
+    async def list_pending(self, limit: int = 10) -> list[QueuedFeedback]:
+        pending = [
+            replace(item)
+            for item in self.items
+            if item.status is QueuedFeedbackStatus.PENDING
+        ]
+        pending.sort(key=lambda item: item.occurred_at)
+        return pending[:limit]
+
+    async def mark_attributed(self, feedback_id: UUID, now: datetime) -> None:
+        for index, item in enumerate(self.items):
+            if item.id == feedback_id and item.status is QueuedFeedbackStatus.PENDING:
+                self.items[index] = replace(
+                    item, status=QueuedFeedbackStatus.ATTRIBUTED, attributed_at=now
+                )
+
+    async def drop_stale(self, cutoff: datetime) -> int:
+        dropped = 0
+        for index, item in enumerate(self.items):
+            if item.status is QueuedFeedbackStatus.PENDING and item.occurred_at < cutoff:
+                self.items[index] = replace(item, status=QueuedFeedbackStatus.DROPPED)
+                dropped += 1
+        return dropped

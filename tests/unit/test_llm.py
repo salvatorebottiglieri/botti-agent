@@ -54,6 +54,17 @@ def _chunk(
     return SimpleNamespace(model=model, usage=usage, choices=choices)
 
 
+def _completion(content=None, reasoning=None, finish="stop", model="MiniMax-M3"):
+    """A non-streaming ChatCompletion; `reasoning` populates the out-of-band
+    `reasoning_content` field on the choice's message."""
+    message = SimpleNamespace(content=content, tool_calls=None, reasoning_content=reasoning)
+    return SimpleNamespace(
+        model=model,
+        usage=_usage(4, 2, 6),
+        choices=[SimpleNamespace(message=message, finish_reason=finish)],
+    )
+
+
 async def _drain_stream(agen):
     """Collect str deltas and the terminal ChatResult from chat_stream()."""
     deltas = []
@@ -371,6 +382,54 @@ class TestOpenAIClient:
 
         assert deltas == ["<think>inline</think>", "Answer"]
         assert final.message.content == "<think>inline</think>Answer"
+
+    async def test_chat_normalises_reasoning_into_an_inline_think_block(self):
+        """Out-of-band reasoning in a non-streaming response becomes the same
+        inline <think>...</think> block chat_stream() builds, so a turn carries
+        the reasoning the classifier reads."""
+        from unittest.mock import AsyncMock, patch
+
+        client = OpenAIClient(api_key="test", model="MiniMax-M3")
+        reasoning, answer = "Let me think.", "Hello world"
+
+        with patch.object(
+            client._client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=_completion(content=answer, reasoning=reasoning)),
+        ):
+            result = await client.chat([ChatMessage(role=Role.USER, content="hi")])
+
+        async def fake_stream():
+            yield _chunk(reasoning=reasoning)
+            yield _chunk(content=answer, finish="stop")
+
+        with patch.object(
+            client._client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=fake_stream()),
+        ):
+            _, streamed = await _drain_stream(
+                client.chat_stream([ChatMessage(role=Role.USER, content="hi")])
+            )
+
+        assert result.message.content == f"<think>{reasoning}</think>{answer}"
+        assert result.message.content == streamed.message.content
+
+    async def test_chat_without_reasoning_is_unchanged(self):
+        """A response with no reasoning keeps its content verbatim: no empty
+        <think></think> block is synthesized."""
+        from unittest.mock import AsyncMock, patch
+
+        client = OpenAIClient(api_key="test", model="MiniMax-M3")
+
+        with patch.object(
+            client._client.chat.completions,
+            "create",
+            new=AsyncMock(return_value=_completion(content="Hello world")),
+        ):
+            result = await client.chat([ChatMessage(role=Role.USER, content="hi")])
+
+        assert result.message.content == "Hello world"
 
 
 class TestOpenAIClientEmbed:
