@@ -173,7 +173,7 @@ Slice A's laws are in `## Invariants` below and stay the contract there; these a
 
 | Invariant (law) | Negation → test | Verified in |
 |---|---|---|
-| It must always be true that a use names a rule that was in that turn's bundle | a `rule_uses` row whose `rule_id` is not in its `feedback_id`'s `rule_ids` | `tests/unit/rules/test_attribution.py` |
+| It must always be true that a use names a rule that was in that turn's bundle — except the uses a Split moved to a child of a rule in the bundle, which keeps its `feedback_id` and whose child exists only because that rule did | a `rule_uses` row whose `rule_id` is neither in its `feedback_id`'s `rule_ids` nor a split child of one of them | `tests/unit/rules/test_feedback.py` (an invented rule id is dropped) |
 | It must always be true that one turn scores a rule at most once | two rows sharing `(feedback_id, rule_id)` | `tests/unit/rules/test_queue.py` (the partial unique index is read out of `migrations/011_queued_feedback.sql`, and the double-scoring test re-runs a drain over the same row) |
 | It must always be true that a turn with no user reply is never enqueued | a `queued_feedback` row with a blank `user_reply` (the `CHECK` refuses it) | `tests/unit/rules/test_queue.py` (the guard in `enqueue` and the `CHECK` in the migration) |
 | It must always be true that an unusable classifier answer writes nothing | a use or a rule exists for a turn whose classification raised, or a queued row consumed by it | `tests/unit/rules/test_attribution.py`, `tests/unit/rules/test_queue.py` |
