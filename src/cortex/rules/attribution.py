@@ -18,7 +18,7 @@ from uuid import UUID
 
 from cortex.rules.conflicts import ConflictCheck
 from cortex.rules.feedback import Feedback, FeedbackClassifier
-from cortex.rules.models import Rule, RuleOrigin, UseOutcome
+from cortex.rules.models import Rule, RuleOrigin, RuleState, UseOutcome
 from cortex.rules.service import RuleService
 from cortex.rules.splits import SplitProposer
 
@@ -131,7 +131,9 @@ class AttributionRun:
                 continue
             try:
                 rule = await self._service.get(entry.rule_id)
-                if rule is None:
+                # An archived rule is never applied, so it is never split: its
+                # children would inherit ARCHIVED and hold its evidence.
+                if rule is None or rule.state is RuleState.ARCHIVED:
                     continue
                 uses = await self._service.list_uses(entry.rule_id)
                 split_proposal = await self._splits.propose(rule, uses)
@@ -144,11 +146,8 @@ class AttributionRun:
                 children = await self._service.split(
                     entry.rule_id, split_proposal.children, assignments
                 )
-                # The split archived the parent: replace the snapshot
-                # record_use put in the list before it.
-                refreshed[:] = [
-                    touched for touched in refreshed if touched.id != entry.rule_id
-                ]
+                # The split archived the parent; return it with its children
+                # so ``attribute`` can replace the pre-split snapshot.
                 archived = await self._service.get(entry.rule_id)
                 if archived is not None:
                     refreshed.append(archived)

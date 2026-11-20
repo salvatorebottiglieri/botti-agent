@@ -495,6 +495,30 @@ async def test_a_scope_correction_splits_the_rule_and_redistributes_its_uses() -
     assert {child.id for child in children} <= {stored.id for stored in returned}
 
 
+async def test_an_archived_rule_is_not_split() -> None:
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    rule = await service.create_from_correction(SPEC)
+    await service.record_use(rule.id, SESSION, "a dinner for two", UseOutcome.APPROVAL)
+    await service.record_use(rule.id, SECOND_SESSION, "a pizza slice", UseOutcome.IMPLICIT)
+    await service.archive(rule.id)
+    classifier = StubClassifier(
+        Feedback(uses=[AttributedUse(rule_id=rule.id, outcome=UseOutcome.SCOPE_CORRECTION)])
+    )
+    proposer = StubSplitProposer()
+
+    returned = await AttributionRun(classifier, service, splits=proposer).attribute(
+        [rule], SESSION, "turn", "no, I meant a booking", SITUATION
+    )
+
+    assert proposer.calls == []
+    assert await service.list_children(rule.id) == []
+    stored = await repository.get(rule.id)
+    assert stored is not None
+    assert stored.state is RuleState.ARCHIVED
+    assert returned is not None
+
+
 async def test_a_scope_correction_without_a_proposer_records_the_use_and_does_not_split() -> None:
     repository = InMemoryRuleRepository()
     service = _service(repository)
