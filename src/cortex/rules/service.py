@@ -176,6 +176,10 @@ class RuleService:
         """
         return await self._repository.list_children(rule_id)
 
+    async def list_uses(self, rule_id: UUID) -> list[RuleUse]:
+        """The evidence behind a rule, oldest first — what a split redistributes."""
+        return await self._repository.list_uses(rule_id)
+
     async def archive(self, rule_id: UUID) -> Rule | None:
         """Retire a rule on the user's command."""
         rule = await self._repository.get(rule_id)
@@ -197,9 +201,11 @@ class RuleService:
         ``assignments`` maps each of the parent's use ids to the index of the
         child that inherits it — the classifier's decision in slice B. Every
         use must be assigned exactly once: a use left on the archived parent
-        would silently stop scoring. Child 0 inherits the parent's state; child
-        1 starts in staging. Each child records ``parent_id`` = the parent, so
-        the split is reconstructible from either end.
+        would silently stop scoring. Child 0 inherits the parent's state and
+        child 1 starts in staging — but only when the parent has a use: with no
+        use nothing says which child preserves the behaviour, so both children
+        start in staging. Each child records ``parent_id`` = the parent, so the
+        split is reconstructible from either end.
         """
         if len(children) != 2:
             raise ValueError("a split needs exactly two children")
@@ -227,6 +233,13 @@ class RuleService:
             assigned.append((use, child_index))
 
         now = self._clock()
+        # No use means no evidence of which child preserves the parent's
+        # behaviour, so neither may inherit its state.
+        child_states = (
+            [parent.state, RuleState.STAGING]
+            if uses
+            else [RuleState.STAGING, RuleState.STAGING]
+        )
         created: list[Rule] = []
         for index, spec in enumerate(children):
             inherited = [use for use, assigned_index in assigned if assigned_index == index]
@@ -236,7 +249,7 @@ class RuleService:
                         condition=spec.condition,
                         action=spec.action,
                         rationale=spec.rationale,
-                        state=parent.state if index == 0 else RuleState.STAGING,
+                        state=child_states[index],
                         confidence=posterior(PRIOR, inherited, now),
                         origin=RuleOrigin.CORRECTION,
                         parent_id=parent.id,

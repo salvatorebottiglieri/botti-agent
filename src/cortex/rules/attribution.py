@@ -1,10 +1,13 @@
 """AttributionRun — a turn's Feedback becomes uses on the rules it applied (#168)
 and, with a ``ConflictCheck``, the rule it proposed (#170).
 
-The run is the only writer of a turn's evidence. A classifier or storage
-failure must never reach the caller: the turn already happened, and the worst
-case is one turn of evidence lost, not a broken reply. A proposal is the
-cheaper thing to lose than the uses already written.
+The run is the only writer of a turn's evidence. It also splits a rule whose
+scope correction it attributed (#171): the correction is a use like any other,
+and on top of it the rule is cut in two. A classifier or storage failure must
+never reach the caller: the turn already happened, and the worst case is one
+turn of evidence lost, not a broken reply. A proposal is the cheaper thing to
+lose than the uses already written, and a lost split keeps the rule, never a
+half-made one.
 """
 
 from __future__ import annotations
@@ -15,8 +18,9 @@ from uuid import UUID
 
 from cortex.rules.conflicts import ConflictCheck
 from cortex.rules.feedback import FeedbackClassifier
-from cortex.rules.models import Rule, RuleOrigin
+from cortex.rules.models import Rule, RuleOrigin, UseOutcome
 from cortex.rules.service import RuleService
+from cortex.rules.splits import SplitProposer
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +34,14 @@ class AttributionRun:
         classifier: FeedbackClassifier,
         service: RuleService,
         conflicts: ConflictCheck | None = None,
+        splits: SplitProposer | None = None,
     ) -> None:
         self._classifier = classifier
         self._service = service
         # Without a check the proposals are ignored, exactly as in #168.
         self._conflicts = conflicts
+        # Without a proposer a scope correction is recorded and nothing splits.
+        self._splits = splits
 
     async def attribute(
         self,
@@ -97,4 +104,31 @@ class AttributionRun:
                     f"Applying the proposed rule {proposal.spec.condition!r} failed",
                     exc_info=True,
                 )
+
+        if self._splits is not None:
+            for entry in feedback.uses:
+                if entry.outcome is not UseOutcome.SCOPE_CORRECTION:
+                    continue
+                try:
+                    rule = await self._service.get(entry.rule_id)
+                    if rule is None:
+                        continue
+                    uses = await self._service.list_uses(entry.rule_id)
+                    split_proposal = await self._splits.propose(rule, uses)
+                    # A use without an id is unassignable; split() rejects it.
+                    assignments = {
+                        use.id: split_proposal.assignment[index]
+                        for index, use in enumerate(uses)
+                        if use.id is not None
+                    }
+                    refreshed.extend(
+                        await self._service.split(
+                            entry.rule_id, split_proposal.children, assignments
+                        )
+                    )
+                except Exception:
+                    logger.warning(
+                        f"Splitting rule {entry.rule_id} failed; the rule and its uses stand",
+                        exc_info=True,
+                    )
         return refreshed or list(rules)

@@ -8,14 +8,16 @@ leaves both untouched.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from cortex.rules.attribution import AttributionRun
 from cortex.rules.constants import CONTEXT_BUDGET
 from cortex.rules.feedback import AttributedUse, Feedback, RuleProposal
-from cortex.rules.models import RuleOrigin, RuleSpec, RuleState, UseOutcome
+from cortex.rules.models import Rule, RuleOrigin, RuleSpec, RuleState, RuleUse, UseOutcome
 from cortex.rules.service import RuleService
+from cortex.rules.splits import SplitProposal
 from tests.unit.rules.fakes import InMemoryRuleRepository
 
 NOW = datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC)
@@ -427,3 +429,156 @@ async def test_only_the_first_proposal_is_created_and_the_dropped_one_is_logged(
     created = [stored for stored in repository.rules.values() if stored.id != existing.id]
     assert [rule.condition for rule in created] == [PROPOSAL.condition]
     assert "2 proposals" in caplog.text
+
+
+SECOND_SPEC = RuleSpec(condition="the user asks for a bill", action="ask for a tip")
+
+TWO_CHILDREN = (
+    RuleSpec(condition="a dinner booking", action="confirm first"),
+    RuleSpec(condition="a pizza order", action="order directly"),
+)
+
+
+class StubSplitProposer:
+    """A split proposer that records its calls, answers two children, or raises.
+
+    Its assignment names one child per use it is handed, exactly as the real
+    proposer's does: a use left unassigned is a use the service refuses.
+    """
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self._error = error
+        self.calls: list[tuple[Rule, list[RuleUse]]] = []
+
+    async def propose(self, rule: Rule, uses: Sequence[RuleUse]) -> SplitProposal:
+        self.calls.append((rule, list(uses)))
+        if self._error is not None:
+            raise self._error
+        return SplitProposal(
+            children=TWO_CHILDREN,
+            assignment=tuple(index % 2 for index in range(len(uses))),
+        )
+
+
+async def test_a_scope_correction_splits_the_rule_and_redistributes_its_uses() -> None:
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    rule = await service.create_from_correction(SPEC)
+    await service.record_use(rule.id, SESSION, "a dinner for two", UseOutcome.APPROVAL)
+    await service.record_use(rule.id, SECOND_SESSION, "a pizza slice", UseOutcome.IMPLICIT)
+    classifier = StubClassifier(
+        Feedback(uses=[AttributedUse(rule_id=rule.id, outcome=UseOutcome.SCOPE_CORRECTION)])
+    )
+    proposer = StubSplitProposer()
+
+    returned = await AttributionRun(classifier, service, splits=proposer).attribute(
+        [rule], SESSION, "turn", "no, I meant a booking", SITUATION
+    )
+
+    parent = await repository.get(rule.id)
+    assert parent is not None
+    assert parent.state is RuleState.ARCHIVED
+    children = await service.list_children(rule.id)
+    assert [child.parent_id for child in children] == [rule.id, rule.id]
+    inherited_by_first = next(
+        child.id for child in children if child.condition == TWO_CHILDREN[0].condition
+    )
+    assert parent.superseded_by == inherited_by_first
+    # Every use of the parent moved to exactly one child: a use left on the
+    # archived parent or copied onto both would score a rule that is gone.
+    per_child = {child.id: await service.list_uses(child.id) for child in children}
+    assert len(per_child) == 2
+    assert all(uses for uses in per_child.values())
+    assert sum(len(uses) for uses in per_child.values()) == len(repository.uses) == 3
+    assert [use.id for use in repository.uses if use.rule_id == rule.id] == []
+    assert [len(uses) for _, uses in proposer.calls] == [3]
+    assert {child.id for child in children} <= {stored.id for stored in returned}
+
+
+async def test_a_scope_correction_without_a_proposer_records_the_use_and_does_not_split() -> None:
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    rule = await service.create_from_correction(SPEC)
+    classifier = StubClassifier(
+        Feedback(uses=[AttributedUse(rule_id=rule.id, outcome=UseOutcome.SCOPE_CORRECTION)])
+    )
+
+    await AttributionRun(classifier, service).attribute(
+        [rule], SESSION, "turn", "no, I meant a booking", SITUATION
+    )
+
+    assert [(use.rule_id, use.outcome) for use in repository.uses] == [
+        (rule.id, UseOutcome.SCOPE_CORRECTION)
+    ]
+    stored = await repository.get(rule.id)
+    assert stored is not None
+    assert stored.state is RuleState.STAGING
+    assert await service.list_children(rule.id) == []
+
+
+async def test_a_plain_correction_never_asks_the_proposer() -> None:
+    """Witness: a split on every correction pays a provider call for nothing."""
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    rule = await service.create_from_correction(SPEC)
+    classifier = StubClassifier(
+        Feedback(uses=[AttributedUse(rule_id=rule.id, outcome=UseOutcome.CORRECTION)])
+    )
+    proposer = StubSplitProposer()
+
+    await AttributionRun(classifier, service, splits=proposer).attribute(
+        [rule], SESSION, "turn", "no, ask for a time", SITUATION
+    )
+
+    assert proposer.calls == []
+    assert await service.list_children(rule.id) == []
+
+
+async def test_a_failing_proposer_leaves_the_parent_active_with_its_use_written(caplog) -> None:
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    rule = await service.create_from_correction(SPEC)
+    classifier = StubClassifier(
+        Feedback(uses=[AttributedUse(rule_id=rule.id, outcome=UseOutcome.SCOPE_CORRECTION)])
+    )
+    proposer = StubSplitProposer(error=ValueError("Malformed JSON from LLM"))
+
+    with caplog.at_level(logging.WARNING):
+        returned = await AttributionRun(classifier, service, splits=proposer).attribute(
+            [rule], SESSION, "turn", "no, I meant a booking", SITUATION
+        )
+
+    assert [use.outcome for use in repository.uses] == [UseOutcome.SCOPE_CORRECTION]
+    stored = await repository.get(rule.id)
+    assert stored is not None
+    assert stored.state in (RuleState.STAGING, RuleState.DEFINITIVE)
+    assert stored.superseded_by is None
+    assert await service.list_children(rule.id) == []
+    assert [refreshed.id for refreshed in returned] == [rule.id]
+    assert "Malformed JSON from LLM" in caplog.text
+
+
+async def test_a_failing_split_does_not_cancel_the_other_uses() -> None:
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    split_parent = await service.create_from_correction(SPEC)
+    corrected = await service.create_from_correction(SECOND_SPEC)
+    classifier = StubClassifier(
+        Feedback(
+            uses=[
+                AttributedUse(rule_id=split_parent.id, outcome=UseOutcome.SCOPE_CORRECTION),
+                AttributedUse(rule_id=corrected.id, outcome=UseOutcome.CORRECTION),
+            ]
+        )
+    )
+    proposer = StubSplitProposer(error=ValueError("Malformed JSON from LLM"))
+
+    await AttributionRun(classifier, service, splits=proposer).attribute(
+        [split_parent, corrected], SESSION, "turn", "no, I meant a booking", SITUATION
+    )
+
+    assert {(use.rule_id, use.outcome) for use in repository.uses} == {
+        (split_parent.id, UseOutcome.SCOPE_CORRECTION),
+        (corrected.id, UseOutcome.CORRECTION),
+    }
+    assert await service.list_children(split_parent.id) == []
