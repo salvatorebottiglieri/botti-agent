@@ -15,7 +15,7 @@ _RULE_COLUMNS = (
     "id, condition, action, rationale, state, confidence, origin, "
     "superseded_by, parent_id, created_at, updated_at, archived_at"
 )
-_USE_COLUMNS = "id, rule_id, session_id, situation, outcome, occurred_at"
+_USE_COLUMNS = "id, rule_id, session_id, situation, outcome, occurred_at, feedback_id"
 
 
 class PostgresRuleRepository(RuleRepository):
@@ -71,8 +71,8 @@ class PostgresRuleRepository(RuleRepository):
             row = await db.fetchrow(
                 f"""
                 INSERT INTO rule_uses (rule_id, session_id, situation, outcome,
-                                       occurred_at)
-                VALUES ($1, $2, $3, $4, $5)
+                                       occurred_at, feedback_id)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING {_USE_COLUMNS}
                 """,
                 use.rule_id,
@@ -80,6 +80,7 @@ class PostgresRuleRepository(RuleRepository):
                 use.situation,
                 use.outcome.value,
                 use.occurred_at,
+                use.feedback_id,
             )
             return self._row_to_use(row)
 
@@ -186,4 +187,5 @@ class PostgresRuleRepository(RuleRepository):
             situation=row["situation"],
             outcome=UseOutcome(row["outcome"]),
             occurred_at=row["occurred_at"],
+            feedback_id=row["feedback_id"],
         )

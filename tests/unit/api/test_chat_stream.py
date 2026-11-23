@@ -8,11 +8,9 @@ loop itself is never exercised.
 import asyncio
 import json
 from typing import Any
-from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi.testclient import TestClient
 
 from cortex.agentic.events import (
     AskUserEvent,
@@ -23,10 +21,10 @@ from cortex.agentic.events import (
     ToolResultEvent,
     ToolStartEvent,
 )
-from cortex.api.auth import get_api_key
-from cortex.api.dependencies import get_execution_module, get_interaction_service
-from cortex.main import create_app
+from cortex.rules.models import Rule
 from cortex.sessions.models import Session, SessionState
+from tests.unit.api.fakes import FakeInteractionService, FakeRuleService, build_client
+from tests.unit.rules.fakes import InMemoryFeedbackQueue, RaisingQueue
 
 AUTH_HEADERS = {"Authorization": "Bearer dummy-key"}
 
@@ -76,45 +74,6 @@ class FakeExecutionModule:
             raise self._exc
         for event in self._events:
             yield event
-
-
-class FakeInteractionService:
-    """Records session lookups/creations; serves a scripted existing session."""
-
-    def __init__(self, existing_session: Session | None = None):
-        self._existing_session = existing_session
-        self.created_sessions: list[Session] = []
-
-    async def get_session(self, session_id: UUID) -> Session | None:
-        if self._existing_session is not None and self._existing_session.id == session_id:
-            return self._existing_session
-        return None
-
-    async def get_or_create_session(self, session_id: UUID | None) -> Session:
-        if session_id is not None:
-            existing = await self.get_session(session_id)
-            if existing is not None and existing.state != SessionState.ENDED:
-                return existing
-        session = Session()
-        self.created_sessions.append(session)
-        return session
-
-
-def build_client(
-    execution_module: FakeExecutionModule,
-    interaction_service: FakeInteractionService,
-    *,
-    raise_server_exceptions: bool = True,
-) -> TestClient:
-    """App with the three chat dependencies overridden by fakes."""
-    settings = MagicMock()
-    settings.version = "0.1.0"
-    with patch("cortex.main.get_settings", return_value=settings):
-        app = create_app()
-    app.dependency_overrides[get_api_key] = lambda: "dummy-key"
-    app.dependency_overrides[get_execution_module] = lambda: execution_module
-    app.dependency_overrides[get_interaction_service] = lambda: interaction_service
-    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
 
 class TestChatStreamSSE:
@@ -563,6 +522,8 @@ class TestChatStreamSSE:
                 key="dummy-key",
                 interaction_service=fake_interaction,
                 execution_module=fake_exec,
+                rule_service=FakeRuleService(),
+                feedback_queue=InMemoryFeedbackQueue(),
             )
         )
 
@@ -624,3 +585,133 @@ class TestChatStreamSSE:
             headers=AUTH_HEADERS,
         )
         assert fake_plain.calls[0][4] is False
+
+
+class TestChatStreamAttribution:
+    """POST /chat/stream enqueues the finished turn for attribution (#172)."""
+
+    def _drive(
+        self,
+        events: list[Any],
+        *,
+        rule_service: FakeRuleService | None = None,
+        feedback_queue: InMemoryFeedbackQueue | None = None,
+        message: str = "no, don't book without asking",
+    ) -> tuple[Any, InMemoryFeedbackQueue, UUID]:
+        session_id = uuid4()
+        queue = feedback_queue or InMemoryFeedbackQueue()
+        fake_exec = FakeExecutionModule(events)
+        client = build_client(
+            fake_exec,
+            FakeInteractionService(existing_session=Session(id=session_id)),
+            rule_service=rule_service,
+            feedback_queue=queue,
+        )
+        response = client.post(
+            "/chat/stream",
+            json={"message": message, "session_id": str(session_id)},
+            headers=AUTH_HEADERS,
+        )
+        return response, queue, session_id
+
+    def test_one_row_before_the_done_frame_carries_the_turn(self):
+        """The row is written before the done frame goes out, naming the rules
+        read before the turn, the assistant text and the user's reply."""
+        session_id = uuid4()
+        rule = Rule(condition="the user asks to book", action="ask before booking")
+        done = ResponseDoneEvent(
+            session_id=session_id,
+            message="of course, booking it",
+            tools_used=[],
+            iterations=1,
+        )
+        rule_service = FakeRuleService([rule])
+
+        response, queue, turn_session = self._drive([done], rule_service=rule_service)
+
+        assert parse_sse(response.text) == [
+            (
+                "done",
+                {
+                    "final_message": "of course, booking it",
+                    "tool_calls": [],
+                    "iterations": 1,
+                },
+            ),
+        ]
+        assert rule_service.calls == ["list_active"]
+        assert len(queue.items) == 1
+        row = queue.items[0]
+        assert row.session_id == turn_session
+        assert row.rule_ids == (rule.id,)
+        assert row.assistant_turn == "of course, booking it"
+        assert row.user_reply == "no, don't book without asking"
+
+    def test_no_row_when_the_snapshot_was_empty(self):
+        response, queue, _ = self._drive(
+            [ResponseDoneEvent(session_id=uuid4(), message="ok", tools_used=[], iterations=0)],
+            rule_service=FakeRuleService([]),
+        )
+
+        assert "event: done" in response.text
+        assert queue.items == []
+
+    def test_a_clarifying_question_is_attributed(self):
+        """The done frame follows an ask_user, and that turn is still a turn: the
+        reply exists and the rules were in context."""
+        session_id = uuid4()
+        rule = Rule(condition="the user asks to book", action="ask before booking")
+        response, queue, _ = self._drive(
+            [
+                AskUserEvent(session_id=session_id, question="Which table?"),
+                ResponseDoneEvent(
+                    session_id=session_id, message="Which table?", tools_used=[], iterations=0
+                ),
+            ],
+            rule_service=FakeRuleService([rule]),
+        )
+
+        assert [event for event, _ in parse_sse(response.text)] == ["ask_user", "done"]
+        assert len(queue.items) == 1
+        assert queue.items[0].rule_ids == (rule.id,)
+
+    def test_no_row_on_an_error_frame(self):
+        session_id = uuid4()
+        rule = Rule(condition="the user asks to book", action="ask before booking")
+        _, queue, _ = self._drive(
+            [ErrorEvent(session_id=session_id, error="Max iterations exceeded", code="max_iterations")],
+            rule_service=FakeRuleService([rule]),
+        )
+
+        assert queue.items == []
+
+    def test_the_stream_is_unchanged_when_the_enqueue_raises(self):
+        """A storage failure never reaches the user: enqueue_turn swallows it."""
+        session_id = uuid4()
+        rule = Rule(condition="the user asks to book", action="ask before booking")
+
+        response, _, _ = self._drive(
+            [ResponseDoneEvent(session_id=session_id, message="ok", tools_used=[], iterations=1)],
+            rule_service=FakeRuleService([rule]),
+            feedback_queue=RaisingQueue(),
+        )
+
+        assert response.status_code == 200
+        assert parse_sse(response.text) == [
+            ("done", {"final_message": "ok", "tool_calls": [], "iterations": 1}),
+        ]
+
+    def test_the_stream_is_unchanged_when_the_snapshot_read_raises(self):
+        """A failing list_active costs attribution, never the turn."""
+        session_id = uuid4()
+
+        response, queue, _ = self._drive(
+            [ResponseDoneEvent(session_id=session_id, message="ok", tools_used=[], iterations=1)],
+            rule_service=FakeRuleService(exc=RuntimeError("database down")),
+        )
+
+        assert response.status_code == 200
+        assert parse_sse(response.text) == [
+            ("done", {"final_message": "ok", "tool_calls": [], "iterations": 1}),
+        ]
+        assert queue.items == []

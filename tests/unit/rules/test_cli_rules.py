@@ -45,6 +45,7 @@ def _use_row(outcome: UseOutcome = UseOutcome.APPROVAL, occurred_at: dt.datetime
         "situation": "book a table for two",
         "outcome": outcome.value,
         "occurred_at": occurred_at,
+        "feedback_id": None,
     }
 
 

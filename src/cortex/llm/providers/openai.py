@@ -150,10 +150,17 @@ class OpenAIClient(LLMClient):
                     for tc in message.tool_calls
                 ]
 
+            # Out-of-band reasoning is normalized into the same inline
+            # <think>...</think> block chat_stream() emits.
+            reasoning = _reasoning_delta(message)
+            content = (
+                f"<think>{reasoning}</think>{message.content or ''}" if reasoning else message.content
+            )
+
             return ChatResult(
                 message=ChatMessage(
                     role=Role.ASSISTANT,
-                    content=message.content,
+                    content=content,
                 ),
                 tool_calls=tool_calls,
                 usage=UsageStats(

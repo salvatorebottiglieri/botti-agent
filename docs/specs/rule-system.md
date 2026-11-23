@@ -1,18 +1,327 @@
+---
+feature: rule-system
+repo: salvatorebottiglieri/botti-agent
+branch: feat-166-rule-feedback
+tracker: #166
+---
+
 # Rule System
 
 > Single source of truth for the learned-rule system.
 > **Update this document whenever the rule system changes.**
 > Rationale: `docs/adr/0020-learned-rules.md`. Vocabulary: `CONTEXT.md` (`## Rules`).
-> Work items: issue #130 (rule system v1).
+> Work items: issue #130 (slice A, closed), #166 (slice B).
 >
-> **Status: implemented (slice A).** `migrations/008_rules.sql` holds the
-> `rules` and `rule_uses` tables, `src/cortex/rules/` holds the pure score, the
-> repository, the lifecycle service and the prompt rendering, rules are the
-> fourth dimension of the context bundle, and `cortex rules:list` /
-> `rules:show` / `rules:archive` manage them. Slice B — the feedback classifier
-> that attributes uses and proposes rules — does not exist yet: nothing writes a
-> `rule_uses` row at runtime except `RuleService` itself, so the set changes
-> only through the service API and the CLI.
+> **Status: slice A implemented, slice B in progress (tickets #168-#172 delivered).**
+> `migrations/008_rules.sql` holds the `rules` and `rule_uses` tables and
+> `migrations/011_queued_feedback.sql` the queue; `src/cortex/rules/` holds the
+> pure score, the repository, the lifecycle service, the prompt rendering, the
+> feedback classifier, the attribution run and the durable queue. Rules are the
+> fourth dimension of the context bundle, and `cortex rules:list` / `rules:show`
+> / `rules:archive` manage them. Since #172 the set changes from real turns: both
+> chat endpoints read the active set before the turn and enqueue one
+> `queued_feedback` row after the answer, and the composition root starts the
+> drain beside the evidence sweep, so `AttributionRun` scores the rules a turn
+> applied. There is no CLI chat turn, so the CLI inserts nothing. The eval runner
+> calls the loop directly and never enqueues. Remaining: proposals storage, the
+> promotion line and the eval Rule set (#173-#175).
+
+## Phase plan
+
+| Phase | Decision | Reason |
+|---|---|---|
+| 1 · Design & alignment | run | slice A shipped without the harness, so the premises below have never been checked with a command and the classifier's own contract (what "applied" means, when a turn proposes a rule) is a decision, not a text to transcribe |
+| 2 · Product review | skip | nothing new is shown to the user: the classifier is invisible, and rules already surface through `cortex rules:*` and the chat |
+| 3 · System architecture | run | the attribution runner adds an asynchronous seam after the turn and a feedback queue that must survive a process restart, so the component and the storage boundary are settled before the shapes |
+| 4 · Tickets | run | — |
+| 5 · Program design | run | — |
+| 6 · Implement-loop | run | — |
+
+Approved: 2026-11-20, owner in chat — "Ok" (to the plan as written: phases 1, 3, 4, 5, 6 run, phase 2 skip because the classifier is invisible and rules already surface through `cortex rules:*` and the chat; phase 3 kept because the runner's queue is a new stored thing).
+
+## Premises
+
+Measured on 2026-11-20 against `develop` (af1c42e is the last merge on `master`; `develop` carries 61 commits more) by a read-only scout; each row is a claim the slice-B design depends on.
+
+| # | Premise | Command | Output | Verdict |
+|---|---|---|---|---|
+| P1 | Nothing writes a `rule_uses` row at runtime: `RuleService.record_use` has no caller outside the service and the tests | `rg -n "record_use" src tests` | `src/cortex/rules/service.py:92` (the definition) is the only hit under `src/`; every other hit is `tests/unit/rules/test_service.py` or prose in `docs/` | Confirmed |
+| P2 | `create_for_module` exists but is never called from `src/`; `main.py` builds one client with `create()` | `rg -n "create_for_module" src` | `src/cortex/llm/factory.py:56` (definition) and two error strings in `wrapper.py:117,119`; `main.py:212` calls `llm_factory.create()` | Confirmed |
+| P3 | The provider normalises out-of-band reasoning into an inline `<think>` block only on the streaming path; `chat()` drops it | `rg -n "reasoning" src/cortex/llm/providers/openai.py` | hits at 23–32 (`_reasoning_delta`) and 246–254 (the stream loop, `content_parts.append("<think>")`); none inside `chat()` (105–177), which builds `content=message.content` | Confirmed |
+| P4 | The Learning module is an Echo State Network with no LLM client and is not mounted in the composition root, so the classifier cannot extend it | `rg -n "LLM\|llm" src/cortex/learning/` and `rg -n "LearningModule" src` | no match in `src/cortex/learning/`; `LearningModule` appears in `src/` only as a docstring mention in `config/learning.py:15`, never instantiated | Confirmed |
+| P5 | There is no general job/queue mechanism in the codebase: every `create_task` is a one-off | `rg -n "asyncio.Queue" src/cortex` and `rg -n "create_task" src/cortex --type py` | no `Queue`/`scheduler`/`enqueue` match; `create_task` at `minions/mqtt_client.py:70`, `execution/module.py:404`, `main.py:364` — three one-off loops, none reusable | Confirmed |
+| P6 | The agentic loop has no post-turn hook: no callback parameter, no event a runner could subscribe to after a turn | `rg -n "on_turn\|after_turn\|hook" src/cortex/agentic src/cortex/execution --type py` and the public surface of `AgentLoop` | no match for a turn hook (only `task.add_done_callback` at `execution/module.py:406`); `AgentLoop` exposes `run_chat` (`loop.py:80`), `stream_chat` (`:140`), `run_goal` (`:444`), none taking a callback | Confirmed |
+| P7 | No outbox/queue table exists in the migrations to reuse for a feedback queue | `ls migrations` and `rg -n "CREATE TABLE" migrations` | ten migrations, tables: `schema_migrations`, `sessions`, `messages`, `facts`, `concepts`, `api_keys`, `minions`, `goals`, `goal_steps`, `loop_events`, `rules`, `rule_uses`, `evidence` — no outbox/jobs/queue table | Confirmed |
+| P8 | `EvalTask` carries no rules, and the eval runner injects an empty context bundle | `rg -n "class EvalTask" -A30 src/cortex/eval/fixtures.py` and `rg -n "rules" src/cortex/eval` | fields are `name`, `turns`, `goal`, `description`, `sandbox`; no `rules` match anywhere in `src/cortex/eval`; `runner.py:164` returns a bare `MemoryContext()` | Confirmed |
+| P9 | Rules are already the fourth dimension of the context bundle, so the runner can read the rules a turn had in context | `rg -n "rules" src/cortex/memory/context_provider.py src/cortex/agentic/models.py` | `agentic/models.py:112: rules: list[Rule]`, populated at `context_provider.py:94: bundle.rules = await self.get_rules_context()` with per-dimension degradation at `:96` | Confirmed — with a correction: the bundle type is `MemoryContext` in `src/cortex/agentic/models.py`, not in `src/cortex/memory/models.py` |
+| P10 | `render_rules` injects the rule set into the system prompt, and a staged rule carries a `[provisional]` marker plus a declaration instruction | `rg -n "render_rules" src` | `agentic/reasoner.py:182: rules_text = render_rules(context.memory.rules)`; `render.py:36: line += " [provisional]"`, `render.py:39-40` appends the declaration instruction | Confirmed |
+
+## Problem Statement
+
+The rule system is inert. It can create a Rule, score it, promote it, split it and archive it, but nothing in the running system ever records that a Rule was applied, so a Rule's confidence never moves (P1: `RuleService.record_use` has no caller under `src/`, only the tests).
+
+What the owner experiences as a result:
+
+- Every correction he gives — "d'ora in poi chiedi conferma prima di prenotare" — becomes a Rule and is then forgotten. Nothing he does afterwards changes it.
+- A provisional Rule stays provisional forever: promotion needs uses, and uses are never written. The assistant keeps declaring the same hypothesis in every response, and the declaration stops meaning anything.
+- A Rule that was followed and rejected keeps its confidence, because a correction is an outcome and no outcome is recorded. Conversely a Rule that is right every day never consolidates.
+- A Rule that is too broad keeps being applied to the situations it gets wrong, because a scope correction is what triggers a Split and nothing ever observes one.
+- The Rule set only changes through the CLI, so the assistant's behaviour changes only when the owner hand-edits it — which is the thing the Rule system exists to avoid.
+
+Second problem, structural: even a written classifier would have nowhere to run. The loop has no post-turn hook (P6: `AgentLoop` exposes `run_chat`, `stream_chat`, `run_goal`, none taking a callback) and the codebase has no queue and no outbox table (P5, P7: every `create_task` is a one-off; the ten migrations hold no job table). Feedback that cannot be written must not be lost, and today there is nothing to put it in.
+
+## Solution
+
+- **A feedback classifier** — one LLM call per attributed turn. It receives the Rules that turn had in context, the assistant turn as the model produced it (reasoning included, P3, P10) and the user's next message, and returns: for each Rule that was actually applied, one outcome category — approval, implicit, correction, scope correction or neutral, never a number — plus at most one proposal for a Rule the turn reveals. A Rule present in context but not applied gets no entry; an id the model invents is dropped; malformed output raises, so the caller can queue instead of losing it.
+- **An attribution run after the turn.** It attaches at the *caller* of the loop — the chat endpoint, the CLI — never inside it: the answer is produced first, attribution follows, and a slow or failed classifier never delays or breaks a response. The run reads the Rules from the turn's own context bundle (P9), so it can only attribute to Rules the model could see.
+- **A feedback queue.** A new table (migration 011) holds the turns waiting for attribution, with their bundle, the turn and the reply. It is drained when the classifier is available again; a provider outage or a restart postpones attribution, it does not erase it. A queued turn that is never attributable is dropped after the Rule validity window, because a use older than the window would contribute nothing anyway.
+- **Proposals.** A dictation ("from now on…") becomes a dictated Rule, born definitive; a correction that no existing Rule covers becomes a correction-born Rule, born in staging. Both pass the conflict check against the active set before they are stored, and both go through `RuleService`, so the CLI and the classifier create Rules the same way.
+- **The user sees the effect, not the machinery**: a provisional Rule either consolidates and stops declaring itself, or fades back to staging where he can correct it again. One line tells him when a Rule is promoted. There is no new UI; `cortex rules:list` / `rules:show` keep showing the same thing, now with uses that move.
+
+## User Stories
+
+1. As the owner, I want a correction I give in chat to become a Rule that is then scored by what happens next, so that the assistant stops repeating a mistake I already corrected.
+2. As the owner, I want a Rule the assistant applied and I accepted to gain confidence, so that it can stop being provisional without me approving it explicitly.
+3. As the owner, I want a Rule I explicitly approved to gain confidence faster than one I merely did not object to, so that my explicit answers weigh more than my silence.
+4. As the owner, I want a Rule I corrected to lose confidence, so that a stale Rule stops being applied.
+5. As the owner, I want a Rule that is right in general but wrong in this situation to be split instead of penalised, so that correcting an over-broad Rule does not throw away the part that works.
+6. As the owner, I want silence to never count as approval, so that a Rule is not promoted just because I said nothing about it.
+7. As the owner, I want a Rule that was in context but never applied to score nothing, so that merely being available does not inflate a Rule.
+8. As the owner, I want the assistant's own reasoning to be read when attributing a Rule, so that attribution is based on why it acted and not only on what it wrote.
+9. As the owner, I want attribution to work with a provider that publishes no reasoning, so that the feature does not depend on one provider's capability.
+10. As the owner, I want a Rule I dictate ("d'ora in poi…") to be created authoritative and in force immediately, so that my explicit instruction is not treated as a hypothesis.
+11. As the owner, I want a correction that no existing Rule covers to propose a new provisional Rule, so that the set grows from my corrections instead of me writing Rules by hand.
+12. As the owner, I want a proposed Rule that contradicts an active one to be refused before it is stored, so that two Rules can never tell the assistant to do opposite things.
+13. As the owner, I want one line when a Rule is promoted, so that consolidation is visible without digging into the CLI.
+14. As the owner, I want the answer to arrive before any attribution happens, so that learning never slows a response down.
+15. As the owner, I want feedback to survive a provider outage, so that a turn I gave feedback in is not silently unlearned.
+16. As the owner, I want queued feedback to survive a restart, so that closing Cortex does not throw away what I just said.
+17. As the owner, I want a turn that is never attributable to be dropped once it is older than the Rule validity window, so that the queue does not grow forever with feedback that could no longer score anything.
+18. As the owner, I want my explicit commands to win over the classifier, so that archiving a Rule is not undone by an inferred approval.
+19. As the owner, I want `cortex rules:show` to show the uses that were attributed, so that I can see why a Rule's confidence is what it is.
+20. As the owner, I want no Rule to be created and no use recorded while an eval runs, so that measurements never mutate what they measure.
+21. As the owner, I want an eval task to be able to carry a Rule set, so that I can measure behaviour with Rules and compare it with behaviour without them.
+22. As the owner, I want a classifier that returns an unusable answer to change nothing, so that a bad model output cannot invent a use, a Rule or a promotion.
+
+## Implementation Decisions
+
+- **Module.** The classifier is a new module `cortex.rules.feedback`; it is not an extension of `cortex.learning`, which is an Echo State Network with no LLM client and is not mounted in the composition root (P4).
+- **The seam.** The classifier receives an `LLMClient`; the composition root passes `LLMClientFactory.create_for_module("rules")`, the first use of that seam anywhere in `src/` (P2), so a classifier outage opens its own circuit and leaves the rest of Cortex alone.
+- **The contract of a run.** Inputs: the turn's Rules, the assistant turn, the user's next message. Output: a `Feedback` — the attributed uses (Rule id + category) and at most one proposal (a `RuleSpec` plus its origin). No numbers, no free text, no rule text invented for an existing Rule.
+- **Where a run attaches.** At the caller of the loop, not inside it (P6). The chat endpoint and the CLI enqueue after the response; nothing in `AgentLoop` changes.
+- **The queue.** A table in migration 011, one row per unattributed turn with the body it needs to be attributed later. Not process memory: the codebase has no queue to reuse (P5) and memory loses the row exactly when the provider is down, which is the case it exists for.
+- **Creation paths.** The classifier creates Rules only through `RuleService.create_dictated` / `create_from_correction`, after the conflict check; it never writes a Rule row directly. Uses go through `RuleService.record_use`, so the recompute-and-refresh invariant of slice A holds unchanged.
+- **Conflict check.** One LLM pass comparing the candidate against the whole active set (≤ 40 Rules, the context budget); it runs only when there is a proposal, so it costs nothing on ordinary turns.
+- **Degradation.** Attribution degrades in the direction of scoring less, never more: no reasoning available → attribute from the text; classifier error → the turn stays queued; unusable output → that turn scores nothing; nothing in the path ever promotes a Rule that was not observed.
+
+## System Architecture
+
+Module: `cortex.rules` (Layer 2, published interface `RuleService` + `render_rules`). Slice B adds no module: it adds a table, one internal seam (`feedback`) and one edge out of the module (a promotion event).
+
+### Module map
+
+| Module | Bounded context (`CONTEXT.md`) | Published interface | Owns (stored data) | Depends on | Publishes events |
+|---|---|---|---|---|---|
+| rules | Rules | `RuleService` (`create_dictated`, `create_from_correction`, `record_use`, `list_active`, `archive`, `split`, `merge`), `render_rules` | `rules`, `rule_uses`, `queued_feedback` | llm (the classifier's `LLMClient`), db | `rule.promoted` (after commit) — new in slice B |
+| agentic | Agentic loop | `AgentLoop`, `MemoryContext` | — | rules (reads `rules` into the bundle, renders them) | — |
+| api / cli | — | the chat endpoint and the CLI | — | rules (attribution run), agentic | — |
+
+```mermaid
+flowchart LR
+  api --> rules
+  cli --> rules
+  agentic --> rules
+  rules --> llm
+  rules -. rule.promoted .-> agentic
+```
+
+Only one edge is new: `rules -. rule.promoted .-> agentic`, published after commit, so a promotion is announced in the next response and a failed delivery costs a line, not the promotion. `api` and `cli` already depend on `rules` through the bundle and the CLI commands; the attribution run adds a call, not an edge.
+
+### Data model
+
+Migration 011, additive only: one new table and one nullable column with its unique index.
+
+```sql
+-- One row per turn waiting for attribution. The rules are the turn's own
+-- bundle, copied at enqueue time: attribution may never name a rule the model
+-- could not see.
+CREATE TABLE IF NOT EXISTS queued_feedback (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL,
+    rule_ids UUID[] NOT NULL,
+    assistant_turn TEXT NOT NULL,
+    user_reply TEXT NOT NULL CHECK (length(btrim(user_reply)) > 0),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    attributed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_queued_feedback_pending
+    ON queued_feedback(status, occurred_at);
+
+-- A use remembers the turn it came from: a re-run of a half-written
+-- attribution cannot double-score the rules it already wrote.
+ALTER TABLE rule_uses ADD COLUMN IF NOT EXISTS feedback_id UUID
+    REFERENCES queued_feedback(id) ON DELETE SET NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rule_uses_feedback_rule
+    ON rule_uses(feedback_id, rule_id) WHERE feedback_id IS NOT NULL;
+```
+
+The unique index is what lets the runner be idempotent without a transaction spanning `rules` and `rule_uses`: every write is retryable, and a retry can only fill in the uses that are missing.
+
+### System invariants
+
+Slice A's laws are in `## Invariants` below and stay the contract there; these are the laws slice B adds, in the campaign format. Their tests are written in phase 6, before the implementation.
+
+| Invariant (law) | Negation → test | Verified in |
+|---|---|---|
+| It must always be true that a use names a rule that was in that turn's bundle — except the uses a Split moved to a child of a rule in the bundle, which keeps its `feedback_id` and whose child exists only because that rule did | a `rule_uses` row whose `rule_id` is neither in its `feedback_id`'s `rule_ids` nor a split child of one of them | `tests/unit/rules/test_feedback.py` (an invented rule id is dropped) |
+| It must always be true that one turn scores a rule at most once | two rows sharing `(feedback_id, rule_id)` | `tests/unit/rules/test_queue.py` (the partial unique index is read out of `migrations/011_queued_feedback.sql`, and the double-scoring test re-runs a drain over the same row) |
+| It must always be true that a turn with no user reply is never enqueued | a `queued_feedback` row with a blank `user_reply` (the `CHECK` refuses it) | `tests/unit/rules/test_queue.py` (the guard in `enqueue` and the `CHECK` in the migration) |
+| It must always be true that an unusable classifier answer writes nothing | a use or a rule exists for a turn whose classification raised, or a queued row consumed by it | `tests/unit/rules/test_attribution.py`, `tests/unit/rules/test_queue.py` |
+| It must always be true that pending feedback is not dropped inside the validity window | a `dropped` row whose `occurred_at` is younger than the window | `tests/unit/rules/test_queue.py` |
+| It must always be true that no rule is created or scored during an eval | a `rule_uses` row or a `rules` row written while the runner is in eval mode | `tests/eval/test_rule_fixtures.py` |
+| It must always be true that `rules`, `rule_uses` and `queued_feedback` are written only by `cortex.rules` | a write to those tables from another module — mechanically, an import of `cortex.rules.repository` outside `cortex.rules`, `cortex.main` and `cortex.cli` (every write goes through it) | `pyproject.toml` contract *rules: the repository is private to the rules module*, run by `uv run lint-imports` in the CI job `Boundaries`; `cortex.rules.scoring` likewise |
+
+### Architecture notes
+
+- **The seam is the loop's caller.** `AgentLoop` gains nothing (P6). The chat endpoint and the CLI insert the queue row after the answer is produced, so attribution can never delay or fail a response; a single `INSERT` is the only added latency.
+- **Enqueue after the answer, drain outside the request.** The row is written when the turn is complete (rules, assistant turn and reply are all known) and is attributed by the drain, which runs on the next request or on the existing periodic task loop — no new scheduler.
+- **Idempotency without a cross-module transaction.** `rule_uses(feedback_id, rule_id)` is unique, so a retry after a partial write fills the gaps and cannot double-score.
+- **Finding, resolved by the owner's decision (B):** the repo was a modular monolith by document (`docs/specs/architecture.md` § Module map) but not by check. Two contracts landed (issue #167): `cortex.rules.repository` is private to `cortex.rules` (the composition root and the CLI may reach it — they build it) and `cortex.rules.scoring` likewise; each proven red by a control violation before being kept, and run by `uv run lint-imports` in the `Boundaries` CI job.
+- **Not frozen, deliberately:** the whole-map contracts (layer order, acyclic siblings) are **not** green on the current code, so they were not added with an exception list — that would turn a design debt into a passing check. Measured today: `memory ↔ agentic` and `config → llm → tools → config` are cycles, and four modules reach *up* the documented layers (`memory`, `goals`, `trace`, `eval` → `agentic`). Burning those down is the MODULARIZE project (issue #167), not a slice-B ticket, and no ticket here may rely on a law those contracts would hold.
+- **Not pinned by an invariant, measured by eval:** "a proposal never contradicts an active rule" needs LLM judgment, so it lives in `## Testing Decisions`-style eval fixtures, not in the table above.
+- **`rule.promoted` after commit**: the notification is a line in the next response, so losing it costs a line, never the promotion.
+
+## Tickets
+
+Published on the tracker in dependency order. Work the frontier: a ticket can start as soon as its blockers are done.
+
+- #168 — a turn becomes a Feedback (classifier and attribution run; folds in the non-streaming reasoning normalisation). Blocked by: none.
+- #169 — the feedback queue survives a restart (migration 011, drain, idempotent retry). Blocked by: #168.
+- #170 — proposals: a dictation or an uncovered correction becomes a Rule, after the conflict check. Blocked by: #168.
+- #171 — a scope correction splits the Rule instead of penalising it. Blocked by: #168.
+- #172 — the real chat turn is attributed (enqueue at the loop's caller, drain outside the request). Blocked by: #169.
+- #173 — a promotion announces itself in the next response. Blocked by: #169.
+- #174 — a new dictation replaces the old Rule instead of inheriting its history. Blocked by: #170.
+- #175 — eval: a task can carry a Rule set, and eval never learns. Blocked by: #172.
+
+## Delivery
+
+- #168 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-slice-b-mutation
+- #169 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-169-mutation-r3
+- #170 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-170-mutation
+- #171 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-171-mutation-r2
+- #172 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-172-mutation-r3
+
+## Model
+
+### Lifecycle inventory
+
+| Entity | Moves in time? | Statechart |
+|---|---|---|
+| `Rule` | yes — `state` enum (`staging`, `definitive`, `archived`) plus confidence-driven transitions | required — `### Rule` |
+| `QueuedFeedback` (new) | yes — a row waits, is attributed, or is dropped after the validity window | required — `### QueuedFeedback` |
+| `RuleUse` | no — an immutable record of one application, never updated | — |
+| `RuleProposal` | no — it lives inside one run: conflict check, then created or dropped, never stored as a proposal | — |
+| `SplitProposal` (new) | no — it lives inside one run: two children and one assignment, handed to the service and never stored | — |
+
+### Elements
+
+| ID | Kind | Code | Source |
+|---|---|---|---|
+| `Loop` | module | `cortex.agentic.loop` (`AgentLoop`) | `src/cortex/agentic/loop.py:44` |
+| `Bundle` | entity | `cortex.agentic.models.MemoryContext` | `src/cortex/agentic/models.py:102` |
+| `Rules` | module | `cortex.rules` | `src/cortex/rules/` |
+| `Render` | symbol | `cortex.rules.render.render_rules` | `src/cortex/rules/render.py:21` |
+| `Service` | symbol | `cortex.rules.service.RuleService` | `src/cortex/rules/service.py:37` |
+| `Classifier` | module | `cortex.rules.feedback` — design-time, slice B | — |
+| `Queue` | entity | `queued_feedback`, migration 011 — design-time, slice B | — |
+| `Runner` | module | `cortex.rules.attribution` — design-time, slice B | — |
+| `Provider` | external | the chat-completion API behind `LLMClient` | `src/cortex/llm/base.py` |
+
+### Flow
+
+```mermaid
+flowchart LR
+  User[User replies] --> Loop[Loop answers the turn]
+  Loop --> Bundle[Bundle carried rules]
+  Loop --> Reply[Reply delivered]
+  Reply --> Runner[Attribution run]
+  Runner -->|had rules and got a reply| Classifier[Feedback classifier]
+  Bundle --> Classifier
+  Classifier -->|per applied Rule| Service[RuleService.record_use]
+  Classifier -->|one proposal| Conflict[Conflict check]
+  Conflict -->|no contradiction| Service
+  Conflict -->|contradicts an active Rule| Drop[Dropped]
+  Classifier -->|provider error| Queue[(Feedback queue)]
+  Queue -->|provider back| Classifier
+  Service --> Sweep[Sweep: promote / demote / archive]
+  Sweep -->|promoted| Notify[One line to the user]
+```
+
+### Sequence
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Client as Chat endpoint / CLI
+  participant Loop as AgentLoop
+  participant Queue as queued_feedback
+  participant Classifier as Feedback classifier
+  participant Service as RuleService
+
+  User->>Client: reply to the previous turn
+  Client->>Loop: run the next turn
+  Loop-->>Client: answer and the rules that were in context
+  Client-->>User: answer (unchanged latency)
+  Client->>Queue: insert one pending row (rules, assistant turn, reply)
+  Note over Queue,Classifier: drained after the answer, never inside it
+  Queue->>Classifier: claim pending row
+  alt classifier available
+    Classifier-->>Queue: Feedback — uses plus at most one proposal
+    Queue->>Service: create proposal after the conflict check
+    Queue->>Service: record_use per attributed rule
+    Queue->>Queue: mark attributed
+  else provider error
+    Classifier-->>Queue: error
+    Queue->>Queue: stay pending, retried later
+  end
+```
+
+### State machines
+
+#### Rule
+
+Slice A's machine, unchanged; slice B is what finally drives it.
+
+```mermaid
+stateDiagram-v2
+  %% Rule
+  [*] --> staging : correction reveals a Rule
+  [*] --> definitive : user dictates a Rule
+  staging --> definitive : confidence >= 0.9 and 3 positive uses from 2 sessions
+  definitive --> staging : confidence < 0.7
+  staging --> archived : confidence < 0.3
+  definitive --> archived : confidence < 0.3
+  staging --> archived : user archives
+  definitive --> archived : user archives
+  archived --> [*]
+```
+
+#### QueuedFeedback
+
+```mermaid
+stateDiagram-v2
+  %% QueuedFeedback
+  [*] --> pending : turn enqueued after the reply
+  pending --> attributed : classifier ran
+  pending --> pending : classifier unavailable
+  pending --> dropped : older than the validity window
+  attributed --> [*]
+  dropped --> [*]
+```
 
 ## Purpose
 
@@ -174,6 +483,12 @@ conditions are disjoint, together covering the parent's situations.
   condition** (judged once, at split time).
 - The new child starts in `staging` and takes the parent's uses that fall
   inside its own condition.
+- **With no uses there is no child to prefer**: both children start in
+  `staging`, because nothing says which of the two preserves the behaviour.
+- The two children and the assignment of the parent's uses to them are the
+  classifier's reading of the correction, produced by its own call only when a
+  `scope_correction` is attributed; the service only validates them (a use
+  assigned twice or not at all is refused before the first write).
 - Both children carry `parent_id` = the parent, so the split is reconstructible
   from either end; the parent records the first child as its `superseded_by`.
 - The parent is archived.
@@ -301,7 +616,7 @@ tasks.
 | An expired use contributes nothing | posterior unchanged after the window passes |
 | Silence never moves the score | a turn with no user reply leaves confidence unchanged |
 | A rule only scores on uses it actually applied to | a rule present in context but not applied has no use row |
-| A split's children have disjoint conditions and cover the parent's | condition check on both children — verified by construction in slice A: every use is assigned to exactly one child and the parent is archived (`tests/unit/rules/test_service.py::TestSplit::test_split_redistributes_each_use_to_exactly_one_child`); condition disjointness is the slice-B classifier's responsibility |
+| A split's children have disjoint conditions and cover the parent's | condition check on both children — verified by construction in slice A: every use is assigned to exactly one child and the parent is archived (`tests/unit/rules/test_service.py::TestSplit::test_split_redistributes_each_use_to_exactly_one_child`); condition disjointness is the slice-B split proposer's responsibility (`tests/unit/rules/test_splits.py` pins what the prompt asks for) |
 | Archived rules are never applied | no rule in context has state `archived` |
 | The Golden Set never enters the learning loop | during eval, no rule is created and no use is recorded |
 | A dictated rule starts definitive and does not immediately demote | a fresh dictated rule's confidence is ≥ 0.9 |

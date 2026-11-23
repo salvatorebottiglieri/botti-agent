@@ -90,3 +90,4 @@ class RuleUse:
     outcome: UseOutcome
     occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     id: int | None = None
+    feedback_id: UUID | None = None

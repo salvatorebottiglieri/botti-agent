@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from cortex.execution.module import ExecutionModule
     from cortex.interaction.service import InteractionService
     from cortex.llm.base import LLMClient
+    from cortex.rules.interfaces import FeedbackQueue
+    from cortex.rules.service import RuleService
     from cortex.services.minion_service import MinionService
     from cortex.sessions.interfaces import SessionRepository
 
@@ -58,6 +60,18 @@ async def get_minion_service() -> MinionService | None:
     """Get the minion service."""
     state = get_app_state()
     return cast("MinionService | None", state.get("minion_service"))
+
+
+async def get_rule_service() -> RuleService:
+    """Get the rule service."""
+    state = get_app_state()
+    return cast("RuleService", state["rule_service"])
+
+
+async def get_feedback_queue() -> FeedbackQueue:
+    """Get the queued-feedback store."""
+    state = get_app_state()
+    return cast("FeedbackQueue", state["feedback_queue"])
 
 
 async def get_db_pool() -> asyncpg.Pool:
