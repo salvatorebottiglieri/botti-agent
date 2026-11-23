@@ -33,6 +33,7 @@ from cortex.tools.meta.ask_user import ASK_USER_CONTROL, ASK_USER_TOOL_NAME
 if TYPE_CHECKING:
     from cortex.agentic.context_builder import ContextBuilder
     from cortex.agentic.executor import LoopExecutor
+    from cortex.agentic.notices import PromotionNotices
     from cortex.agentic.reasoner import Reasoner
     from cortex.events import EventBus
     from cortex.llm.models import UsageStats
@@ -67,6 +68,7 @@ class AgentLoop:
         max_chat_iterations: int = 20,
         max_goal_iterations: int = 100,
         now: Callable[[], float] = time.monotonic,
+        notices: PromotionNotices | None = None,
     ):
         self._context_builder = context_builder
         self._reasoner = reasoner
@@ -76,6 +78,7 @@ class AgentLoop:
         self._max_chat_iterations = max_chat_iterations
         self._max_goal_iterations = max_goal_iterations
         self._now = now
+        self._notices = notices
 
     async def run_chat(
         self,
@@ -175,6 +178,14 @@ class AgentLoop:
         started_at = self._now()
         total_usage: UsageStats | None = None
 
+        # A pending promotion opens the turn: fixed copy, not the model's
+        # words, so it is its own delta and never enters the response `text`.
+        # With nothing pending the loop emits exactly what it did before.
+        notice = self._notices.take() if self._notices is not None else None
+        prefix = f"{notice}\n" if notice else ""
+        if prefix:
+            yield TextDeltaEvent(session_id, delta=prefix)
+
         # Seed history from the repository so multi-turn context works. The
         # limit mirrors the context builder's window (max_messages - 1) so
         # the seeded conversation never exceeds what the builder expects.
@@ -261,7 +272,7 @@ class AgentLoop:
                             yield TextDeltaEvent(session_id, delta=text)
                         yield self._done_event(
                             session_id,
-                            text,
+                            prefix + text,
                             tools_used,
                             iterations,
                             total_usage=total_usage,
@@ -317,7 +328,7 @@ class AgentLoop:
                                 yield TextDeltaEvent(session_id, delta=question)
                             yield self._done_event(
                                 session_id,
-                                question,
+                                prefix + question,
                                 tools_used,
                                 iterations,
                                 total_usage=total_usage,
@@ -423,7 +434,7 @@ class AgentLoop:
                             yield TextDeltaEvent(session_id, delta=fallback)
                             yield self._done_event(
                                 session_id,
-                                fallback,
+                                prefix + fallback,
                                 tools_used,
                                 iterations,
                                 total_usage=total_usage,

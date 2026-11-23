@@ -283,10 +283,15 @@ files this as "Not in slice A"). #173 is the one line the user reads.
   oldest dropped): a line nobody read for weeks is noise, and dropping it is
   the same loss a failed delivery already accepts.
 - **`AgentLoop(notices=None)`**: at the start of a chat turn it takes at most
-  one line and yields it as the turn's **first** `TextDeltaEvent`, prepending it
-  to the response text. One prefix, one place: `run_chat` accumulates the same
-  delta, the streamed path already emitted it before the answer, and the `done`
-  frame's message carries it too. No notices → the loop is exactly what it was.
+  one line and yields it as the turn's **first** `TextDeltaEvent`, `line + "\n"`
+  (the sentence on its own line, never glued to the answer). One prefix, one
+  place: `run_chat` accumulates the same delta, the streamed path already
+  emitted it before the answer, and **every** terminal `done` message of the
+  turn carries it — RESPOND, a clarifying question, the no-tools fallback — so
+  the three views of one turn always agree. The prefix **never enters the
+  session history**: `add_message` stores the model's own text, because the
+  line is not the model's words and history is what the model reads next turn.
+  No notices → the loop emits exactly what it did before.
 - **`main.py`**: `PromotionNotices()` built with the loop, subscribed to
   `EventTypes.RULE_PROMOTED` after the bus starts, `RuleService` given
   `EventEmitter(cortex.event_bus, "rules")`. The event is published after the
@@ -332,8 +337,11 @@ loop gets the notices; the handler is subscribed to `rule.promoted`.
 - **Consequences**: a second promotion is announced in the response after its
   own; a turn that ends in an error, or a stream the client cancels before the
   first frame, loses its line — the cost the AC already accepts. The wording is
-  not the model's, so the line is identical in every language and costs no
-  provider call.
+  not the model's, so the line is identical in every language, costs no provider
+  call and is kept out of the session history (the model must not learn to say
+  it). Two sweeps racing on the same rule can both see `staging` and announce
+  the same promotion twice; the line is content-neutral and the sweep is already
+  non-transactional (a later ticket, if it ever matters).
 - **Owner sign-off**: 2026-11-23, owner in chat — "A" (to the two options: A =
   one line per response, FIFO; B = every pending line in the next response),
   with the proposed wording accepted.

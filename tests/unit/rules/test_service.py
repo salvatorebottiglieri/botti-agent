@@ -14,6 +14,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from cortex.events.base import BaseEvent
+from cortex.events.emitter import EventEmitter
+from cortex.events.types import EventTypes
 from cortex.rules.constants import CONTEXT_BUDGET, VALIDITY_WINDOW
 from cortex.rules.models import (
     Rule,
@@ -770,3 +773,174 @@ class TestDeclaresItself:
         assert Rule(state=RuleState.STAGING).declares_itself() is True
         assert Rule(state=RuleState.DEFINITIVE).declares_itself() is False
         assert Rule(state=RuleState.ARCHIVED).declares_itself() is False
+
+
+class JournalBus:
+    """A bus double that writes to the same journal as the repository, so the
+    tests can see whether the publish landed after the refresh it announces."""
+
+    def __init__(self, journal: list[str]) -> None:
+        self._journal = journal
+        self.events: list[BaseEvent] = []
+
+    async def publish(self, event: BaseEvent) -> None:
+        self._journal.append("emit")
+        self.events.append(event)
+
+
+class RaisingBus:
+    """A bus whose publish fails the way a stopped bus does."""
+
+    async def publish(self, event: BaseEvent) -> None:
+        raise RuntimeError("event bus is down")
+
+
+class JournalRepository(InMemoryRuleRepository):
+    """An in-memory repository that records its refreshes in the journal."""
+
+    def __init__(self, journal: list[str]) -> None:
+        super().__init__()
+        self._journal = journal
+
+    async def refresh(self, rule: Rule) -> Rule | None:
+        self._journal.append("refresh")
+        return await super().refresh(rule)
+
+
+def _announcing_service() -> tuple[RuleService, JournalRepository, FakeClock, list[str], JournalBus]:
+    journal: list[str] = []
+    repository = JournalRepository(journal)
+    clock = FakeClock()
+    bus = JournalBus(journal)
+    service = RuleService(repository, clock=clock, emitter=EventEmitter(bus, "rules"))
+    return service, repository, clock, journal, bus
+
+
+def _promotions(bus: JournalBus) -> list[BaseEvent]:
+    return [event for event in bus.events if event.type == EventTypes.RULE_PROMOTED]
+
+
+class TestPromotionAnnouncement:
+    """#173: a promotion is published as `rule.promoted` after the write.
+
+    Witness in every case: the announcement is an event on the bus with the
+    line the loop will read, not a log line and not a second return value.
+    """
+
+    async def test_record_use_across_the_threshold_emits_one_promotion_after_the_refresh(
+        self,
+    ):
+        """Witness: the third positive use is what takes staging to definitive;
+        it must publish exactly one event, after the refresh, carrying the line."""
+        service, _, _, journal, bus = _announcing_service()
+        rule = await service.create_from_correction(SPEC)
+
+        for session_id in (SESSION_A, SESSION_A, SESSION_B):
+            await service.record_use(
+                rule.id, session_id, "book a table for two", UseOutcome.APPROVAL
+            )
+
+        promotions = _promotions(bus)
+        assert len(promotions) == 1
+        assert promotions[0].payload == {
+            "rule_id": str(rule.id),
+            "condition": SPEC.condition,
+            "action": SPEC.action,
+            "line": f"Rule confirmed: {SPEC.condition} → {SPEC.action}",
+        }
+        # The event is published after the write it announces: a reader that
+        # reacted to it can already see the promoted row.
+        assert journal[-2:] == ["refresh", "emit"]
+
+    async def test_the_sweep_emits_one_promotion_for_the_rule_it_promotes(self):
+        """Witness: the evidence is written straight into the repository, so
+        only the sweep in `list_active` can promote — and only it can announce."""
+        service, repository, _, journal, bus = _announcing_service()
+        rule = Rule(condition="x", action="y", state=RuleState.STAGING, confidence=0.5)
+        await repository.create(rule)
+        for session_id in (SESSION_A, SESSION_A, SESSION_B):
+            await repository.add_use(
+                RuleUse(
+                    rule_id=rule.id,
+                    session_id=session_id,
+                    situation="x applies",
+                    outcome=UseOutcome.APPROVAL,
+                    occurred_at=NOW,
+                )
+            )
+        journal.clear()
+
+        await service.list_active()
+
+        promotions = _promotions(bus)
+        assert len(promotions) == 1
+        assert promotions[0].payload["rule_id"] == str(rule.id)
+        assert promotions[0].payload["line"] == "Rule confirmed: x → y"
+        assert journal[-2:] == ["refresh", "emit"]
+
+    async def test_a_demotion_emits_nothing(self):
+        """Witness: a definitive rule whose dictation expired drops to staging;
+        a helper keyed on "the state changed" would announce it as a promotion."""
+        service, _, clock, _, bus = _announcing_service()
+        await service.create_dictated(SESSION_A, SPEC)
+        clock.advance(VALIDITY_WINDOW + timedelta(days=1))
+
+        active = await service.list_active()
+
+        assert [r.state for r in active] == [RuleState.STAGING]
+        assert _promotions(bus) == []
+
+    async def test_an_archive_emits_nothing(self):
+        """Witness: staging to archived is a change of state too; only
+        staging to definitive is a promotion."""
+        service, _, _, _, bus = _announcing_service()
+        rule = await service.create_dictated(SESSION_A, SPEC)
+
+        after_one = await service.record_use(
+            rule.id, SESSION_B, "book", UseOutcome.CORRECTION
+        )
+        after_two = await service.record_use(
+            rule.id, SESSION_C, "book", UseOutcome.CORRECTION
+        )
+        await service.archive(rule.id)
+
+        assert after_one.state is RuleState.STAGING
+        assert after_two.state is RuleState.ARCHIVED
+        assert _promotions(bus) == []
+
+    async def test_a_service_without_an_emitter_emits_nothing_and_still_promotes(self):
+        """Witness: every CLI caller and every existing test builds the service
+        with no emitter; the promotion must still be stored."""
+        service, repository, _ = _service()
+        rule = await service.create_from_correction(SPEC)
+
+        for session_id in (SESSION_A, SESSION_A, SESSION_B):
+            promoted = await service.record_use(
+                rule.id, session_id, "book a table", UseOutcome.APPROVAL
+            )
+
+        assert promoted.state is RuleState.DEFINITIVE
+        stored = await repository.get(rule.id)
+        assert stored is not None
+        assert stored.state is RuleState.DEFINITIVE
+
+    async def test_a_raising_bus_leaves_the_promotion_stored(self):
+        """Witness: AC 3 — a failed delivery costs the line, never the
+        promotion. The house EventEmitter swallows the bus failure."""
+        repository = InMemoryRuleRepository()
+        clock = FakeClock()
+        service = RuleService(
+            repository, clock=clock, emitter=EventEmitter(RaisingBus(), "rules")
+        )
+        rule = await service.create_from_correction(SPEC)
+
+        for session_id in (SESSION_A, SESSION_A, SESSION_B):
+            promoted = await service.record_use(
+                rule.id, session_id, "book a table", UseOutcome.APPROVAL
+            )
+
+        assert promoted.state is RuleState.DEFINITIVE
+        stored = await repository.get(rule.id)
+        assert stored is not None
+        assert stored.state is RuleState.DEFINITIVE
+        assert stored.confidence == pytest.approx(THREE_APPROVALS)

@@ -111,3 +111,37 @@ async def test_the_drain_loop_logs_and_survives_a_failed_drain(caplog):
 
     drain.drain.assert_awaited_once()
     assert any("Feedback drain failed" in record.message for record in caplog.records)
+
+
+async def test_the_rule_service_publishes_through_the_bus(wired_app):
+    """#173: the promotion edge exists only if the service can publish at all."""
+    from cortex.events.emitter import EventEmitter
+
+    cortex, _, _ = wired_app
+
+    emitter = cortex.rule_service._emitter
+    assert isinstance(emitter, EventEmitter)
+    assert emitter._bus is cortex.event_bus
+    assert emitter._source_module == "rules"
+
+
+async def test_the_loop_reads_the_notices_the_root_built(wired_app):
+    """One buffer: the object the loop drains is the object the bus feeds."""
+    from cortex.agentic.notices import PromotionNotices
+
+    cortex, _, _ = wired_app
+
+    assert isinstance(cortex.promotion_notices, PromotionNotices)
+    assert cortex.execution_module._agent_loop._notices is cortex.promotion_notices
+
+
+async def test_the_notices_handler_is_subscribed_to_rule_promoted(wired_app):
+    from cortex.events.types import EventTypes
+
+    cortex, _, _ = wired_app
+
+    subscriptions = {
+        call.args[0]: call.args[1] for call in cortex.event_bus.subscribe.await_args_list
+    }
+    handler = subscriptions[EventTypes.RULE_PROMOTED]
+    assert handler.__self__ is cortex.promotion_notices

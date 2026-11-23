@@ -34,6 +34,11 @@ class EventTypes(StrEnum):
     GOAL_FAILED = "goal.failed"
     GOAL_RESUMED = "goal.resumed"
 
+    # ─── Rules ────────────────────────────────────────────────
+    # Published after commit, so a failed delivery costs a line, never the
+    # promotion (docs/specs/rule-system.md ## Lifecycle).
+    RULE_PROMOTED = "rule.promoted"
+
     # ─── Validation ───────────────────────────────────────────
     CONCEPT_VALIDATED = "concept.validated"
     CONCEPT_REJECTED = "concept.rejected"
