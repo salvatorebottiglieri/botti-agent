@@ -2,12 +2,14 @@
 
 The seam is the full HTTP path: auth, session resolution, SSE framing and
 streaming. The execution module and interaction service are fakes so the
-loop itself is never exercised.
+loop itself is not exercised, except where a test drives the real AgentLoop
+through the route to see the frames it actually produces.
 """
 
 import asyncio
 import json
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,6 +23,12 @@ from cortex.agentic.events import (
     ToolResultEvent,
     ToolStartEvent,
 )
+from cortex.agentic.loop import AgentLoop
+from cortex.agentic.models import Context, Decision
+from cortex.agentic.notices import PromotionNotices
+from cortex.events.base import BaseEvent
+from cortex.events.types import EventTypes
+from cortex.execution.module import ExecutionModule
 from cortex.rules.models import Rule
 from cortex.sessions.models import Session, SessionState
 from tests.unit.api.fakes import FakeInteractionService, FakeRuleService, build_client
@@ -668,6 +676,63 @@ class TestChatStreamAttribution:
         assert row.assistant_turn == "of course, booking it"
         assert "Rule confirmed:" not in row.assistant_turn
         assert row.user_reply == "no, don't book without asking"
+
+    def test_the_done_frame_opens_with_the_pending_line(self):
+        """Witness: the frames above are hand-built, so they say nothing about
+        what the loop puts on the wire. Here the real loop answers a turn with a
+        pending line: the done frame's final message is the line and then the
+        answer, the deltas already sent add up to it, and the queued turn stays
+        the model's own text. A loop that drops the line from its done message
+        leaves the line off the wire."""
+        notice = "Rule confirmed: the user asks to book → ask before booking"
+        answer = "of course, booking it"
+        rule = Rule(condition="the user asks to book", action="ask before booking")
+        session_id = uuid4()
+
+        notices = PromotionNotices()
+        asyncio.run(
+            notices.handle(
+                BaseEvent.create(
+                    event_type=EventTypes.RULE_PROMOTED,
+                    payload={"line": notice},
+                    source_module="rules",
+                )
+            )
+        )
+        context_builder = MagicMock()
+        context_builder.max_messages = 20
+        context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        reasoner = MagicMock()
+        reasoner.reason = AsyncMock(return_value=Decision.respond(answer))
+        loop = AgentLoop(
+            context_builder=context_builder,
+            reasoner=reasoner,
+            executor=MagicMock(),
+            notices=notices,
+            now=lambda: 0.0,
+        )
+
+        queue = InMemoryFeedbackQueue()
+        client = build_client(
+            ExecutionModule(agent_loop=loop),
+            FakeInteractionService(existing_session=Session(id=session_id)),
+            rule_service=FakeRuleService([rule]),
+            feedback_queue=queue,
+        )
+        response = client.post(
+            "/chat/stream",
+            json={"message": "book a table", "session_id": str(session_id), "stream": False},
+            headers=AUTH_HEADERS,
+        )
+
+        frames = parse_sse(response.text)
+        assert frames[-1][0] == "done"
+        final_message = frames[-1][1]["final_message"]
+        assert final_message == f"{notice}\n{answer}"
+        # The line the client already read as deltas is the frame's own prefix.
+        assert "".join(d["delta"] for e, d in frames if e == "text") == final_message
+        # ...and the line is not what the classifier is asked to attribute.
+        assert queue.items[0].assistant_turn == answer
 
     def test_no_row_when_the_snapshot_was_empty(self):
         response, queue, _ = self._drive(
