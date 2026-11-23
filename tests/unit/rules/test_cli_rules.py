@@ -31,6 +31,7 @@ CHILD_ID = UUID("7e5b3c1a-2d4f-4a6b-8c9d-0e1f2a3b4c5d")
 SIBLING_ID = UUID("1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d")
 SESSION_ID = UUID("11111111-1111-4111-8111-111111111111")
 SUPERSEDED_BY = UUID("9c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f")
+SUCCESSOR_ID = UUID("5f4e3d2c-1b0a-4f9e-8d7c-6b5a4f3e2d1c")
 
 CONDITION = "the user asks to book a table"
 ACTION = "ask for confirmation before booking"
@@ -198,6 +199,41 @@ class TestRulesShow:
         assert result.exit_code == 0, result.output
         replaced = result.output.split("replaced:", 1)[1]
         assert replaced.strip() == "(none)"
+
+    def test_a_replaced_rule_points_at_its_successor(self, fake_settings, fake_db):
+        """#174: a dictation that replaced this rule leaves the edge on this
+        side, so the archived predecessor prints `superseded by:`."""
+        _, conn = fake_db
+        conn.fetchrow.return_value = _rule_row(
+            state="archived", superseded_by=SUCCESSOR_ID, archived_at=NOW
+        )
+        conn.fetch.side_effect = [[], []]
+
+        result = runner.invoke(cli, ["rules:show", str(RULE_ID)])
+
+        assert result.exit_code == 0, result.output
+        assert f"superseded by: {SUCCESSOR_ID}" in result.output
+
+    def test_a_successor_lists_the_rule_it_replaced(self, fake_settings, fake_db):
+        """#174: from the successor's side the edge is the predecessor's
+        `superseded_by`, which the existing `replaced:` section already reads."""
+        _, conn = fake_db
+        conn.fetchrow.return_value = _rule_row(rule_id=SUCCESSOR_ID)
+        conn.fetch.side_effect = [
+            [_use_row()],
+            [
+                _rule_row(
+                    state="archived", superseded_by=SUCCESSOR_ID, archived_at=NOW
+                )
+            ],
+        ]
+
+        result = runner.invoke(cli, ["rules:show", str(SUCCESSOR_ID)])
+
+        assert result.exit_code == 0, result.output
+        replaced = result.output.split("replaced:", 1)[1]
+        assert str(RULE_ID) in replaced
+        assert "archived" in replaced
 
     def test_unknown_rule_exits_non_zero(self, fake_settings, fake_db):
         _, conn = fake_db

@@ -54,6 +54,7 @@ flowchart LR
   Bundle --> Classifier
   Bundle --> Render[render_rules into the prompt]
   Classifier -->|per applied Rule| Service[RuleService.record_use]
+  Run -->|a dictation supersedes a known Rule| Replace[Predecessor archived, superseded_by]
   Run -->|a scope correction was attributed| Split[Split proposer]
   Split -->|two children and one assignment| Service
   Service -->|staging -> definitive, after commit| Line[promotion_line]
@@ -134,6 +135,7 @@ stateDiagram-v2
 | 3 | `Rule` | + | #171 splits a rule through the service instead of penalising it: a scope correction archives the parent and creates two children, so the machine gains the transition that leaves a rule for a Split | https://github.com/salvatorebottiglieri/botti-agent/issues/171 |
 | 4 | `QueuedFeedback` | + | #172 wires the enqueue into both chat endpoints and the drain into the composition root, so the row is written by a real turn and the pending → attributed transition happens in the running system; the rules of the row are the active set read before the turn (design Decision 4, owner's answer "A" of 2026-11-23) | https://github.com/salvatorebottiglieri/botti-agent/issues/172 |
 | 5 | `PromotionNotices` / `Rule` | + | #173 publishes `rule.promoted` after the promotion commits and announces it as the next chat turn's first line; the `Rule` statechart is unchanged, the buffer is a bounded FIFO with no lifecycle of its own, and the line never enters the session history or the classifier's input (design Decision 5, owner's answer "A" of 2026-11-23) | https://github.com/salvatorebottiglieri/botti-agent/issues/173 |
+| 6 | `Rule` | + | #174 a dictated rule that supersedes a known one replaces it: the successor is created from its own dictation, the predecessor is archived with `superseded_by` pointing at it and keeps its uses (no new state — the archive transition already existed; the history edge gains a second meaning, visible in `rules:show` from both sides) | https://github.com/salvatorebottiglieri/botti-agent/issues/174 |
 
 ## Notes
 

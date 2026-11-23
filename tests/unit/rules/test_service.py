@@ -122,6 +122,118 @@ class TestCreateDictated:
         assert repository.uses == []
 
 
+class TestDictatedReplacement:
+    """A new dictation replaces the old Rule: the successor takes nothing from
+    the predecessor's history (docs/specs/rule-system.md § Lifecycle, Manual edit)."""
+
+    async def _predecessor_with_uses(
+        self,
+    ) -> tuple[RuleService, InMemoryRuleRepository, FakeClock, Rule]:
+        service, repository, clock = _service()
+        predecessor = await service.create_dictated(SESSION_A, SPEC)
+        for session, situation in (
+            (SESSION_B, "dinner for two"),
+            (SESSION_C, "dinner with friends"),
+        ):
+            await service.record_use(predecessor.id, session, situation, UseOutcome.APPROVAL)
+        stored = await repository.get(predecessor.id)
+        assert stored is not None
+        assert stored.confidence == pytest.approx(THREE_APPROVALS)
+        return service, repository, clock, stored
+
+    async def test_the_successor_is_created_from_its_dictation_alone(self):
+        """Witness: copying the predecessor's uses gives the successor
+        8000/8001; its own dictation alone gives 20/21."""
+        service, repository, _, predecessor = await self._predecessor_with_uses()
+        replacement = RuleSpec(condition="the user asks to book", action="confirm first")
+
+        successor = await service.create_dictated(
+            SESSION_B, replacement, replaces=predecessor.id
+        )
+
+        assert successor.id != predecessor.id
+        assert successor.state is RuleState.DEFINITIVE
+        assert successor.origin is RuleOrigin.DICTATED
+        assert successor.confidence == pytest.approx(ONE_APPROVAL)
+        uses = await _stored_uses(repository, successor.id)
+        assert [(use.session_id, use.situation, use.outcome) for use in uses] == [
+            (SESSION_B, replacement.condition, UseOutcome.APPROVAL)
+        ]
+
+    async def test_the_predecessor_is_archived_superseded_by_the_successor(self):
+        service, repository, clock, predecessor = await self._predecessor_with_uses()
+        predecessor_uses = await repository.list_uses(predecessor.id)
+
+        successor = await service.create_dictated(
+            SESSION_B, RuleSpec("the user asks to book", "confirm first"), replaces=predecessor.id
+        )
+
+        stored = await repository.get(predecessor.id)
+        assert stored is not None
+        assert stored.state is RuleState.ARCHIVED
+        assert stored.superseded_by == successor.id
+        assert stored.archived_at == clock.now
+        # The evidence was about a different text: it stays where it was made.
+        assert await repository.list_uses(predecessor.id) == predecessor_uses
+
+    async def test_the_successor_keeps_none_of_the_predecessors_uses(self):
+        service, repository, _, predecessor = await self._predecessor_with_uses()
+
+        successor = await service.create_dictated(
+            SESSION_B, RuleSpec("the user asks to book", "confirm first"), replaces=predecessor.id
+        )
+
+        predecessor_use_ids = {use.id for use in await repository.list_uses(predecessor.id)}
+        successor_use_ids = {use.id for use in await repository.list_uses(successor.id)}
+        assert predecessor_use_ids.isdisjoint(successor_use_ids)
+
+    async def test_a_dictation_with_no_replaces_leaves_the_other_rule_active(self):
+        """Witness: replacing by default would archive a rule the user did not
+        touch; without `replaces` this is exactly the old create."""
+        service, repository, _, predecessor = await self._predecessor_with_uses()
+
+        successor = await service.create_dictated(
+            SESSION_B, RuleSpec("the user asks to book", "confirm first"), replaces=None
+        )
+
+        stored = await repository.get(predecessor.id)
+        assert stored is not None
+        assert stored.state is RuleState.DEFINITIVE
+        assert stored.superseded_by is None
+        assert stored.archived_at is None
+        assert {rule.id for rule in await service.list_active()} == {
+            predecessor.id,
+            successor.id,
+        }
+
+    async def test_an_unknown_predecessor_raises_before_any_write(self):
+        """Witness: creating the successor first leaves a rule behind when the
+        predecessor turns out not to exist."""
+        service, repository, _ = _service()
+
+        with pytest.raises(RuleNotFoundError):
+            await service.create_dictated(SESSION_A, SPEC, replaces=uuid4())
+
+        assert repository.rules == {}
+        assert repository.uses == []
+
+    async def test_an_archived_predecessor_raises_before_any_write(self):
+        """Witness: an archived rule was already replaced; a second successor
+        would leave two rules claiming the same history edge."""
+        service, repository, clock, predecessor = await self._predecessor_with_uses()
+        await service.archive(predecessor.id)
+        before = {rule_id: dict(vars(rule)) for rule_id, rule in repository.rules.items()}
+        uses_before = list(repository.uses)
+
+        with pytest.raises(ValueError):
+            await service.create_dictated(
+                SESSION_B, RuleSpec("the user asks to book", "confirm first"), replaces=predecessor.id
+            )
+
+        assert {rule_id: dict(vars(rule)) for rule_id, rule in repository.rules.items()} == before
+        assert repository.uses == uses_before
+
+
 class TestCreateFromCorrection:
     async def test_correction_born_rule_starts_in_staging_with_no_use(self):
         """Witness: reusing the dictation path would birth it definitive at 20/21."""

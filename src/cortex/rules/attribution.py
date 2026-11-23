@@ -18,7 +18,13 @@ from uuid import UUID
 
 from cortex.rules.conflicts import ConflictCheck
 from cortex.rules.feedback import Feedback, FeedbackClassifier, RuleProposal
-from cortex.rules.models import Rule, RuleOrigin, RuleState, UseOutcome
+from cortex.rules.models import (
+    Rule,
+    RuleNotFoundError,
+    RuleOrigin,
+    RuleState,
+    UseOutcome,
+)
 from cortex.rules.service import RuleService
 from cortex.rules.splits import SplitProposer
 
@@ -121,6 +127,19 @@ class AttributionRun:
                 )
                 return None
             if proposal.origin is RuleOrigin.DICTATED:
+                # Only a dictation supersedes a rule; a correction creates one
+                # that was missing and never rewrites an existing one.
+                if proposal.replaces is not None:
+                    try:
+                        return await self._service.create_dictated(
+                            session_id, proposal.spec, replaces=proposal.replaces
+                        )
+                    except (ValueError, RuleNotFoundError):
+                        # A refused replacement costs a duplicate, never the user's rule.
+                        logger.warning(
+                            f"Could not replace rule {proposal.replaces}; "
+                            f"dictating {proposal.spec.condition!r} without it"
+                        )
                 return await self._service.create_dictated(session_id, proposal.spec)
             return await self._service.create_from_correction(proposal.spec)
         except Exception:

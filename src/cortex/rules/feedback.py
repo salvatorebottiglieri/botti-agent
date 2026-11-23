@@ -24,10 +24,12 @@ _SYSTEM_PROMPT = (
     "approval, implicit, correction, scope_correction or neutral. Omit a rule that was\n"
     "neither applied nor contradicted; never invent a rule_id.\n"
     "If the user's reply teaches a new rule, propose it with condition, action and rationale.\n"
+    "A dictated proposal that supersedes one of the listed rules carries "
+    '"replaces": "<rule_id>"; a correction proposal never does.\n'
     "Answer with JSON of the shape\n"
     '{"uses": [{"rule_id": "...", "outcome": "..."}],\n'
     ' "proposals": [{"condition": "...", "action": "...", "rationale": "...", '
-    '"origin": "dictated" | "correction"}]}\n'
+    '"origin": "dictated" | "correction", "replaces": "<rule_id>" | null}]}\n'
     'Return {"uses": [], "proposals": []} when nothing applies; no markdown.'
 )
 
@@ -50,6 +52,9 @@ class RuleProposal:
 
     spec: RuleSpec
     origin: RuleOrigin
+    # The rule the dictation supersedes; the parse keeps it only when it was a
+    # rule the classifier could see.
+    replaces: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -104,7 +109,7 @@ def _parse_spec(item: object) -> RuleSpec | None:
     )
 
 
-def _parse_proposal(item: object) -> RuleProposal | None:
+def _parse_proposal(item: object, known_rule_ids: set[UUID]) -> RuleProposal | None:
     if not isinstance(item, dict):
         return None
     spec = _parse_spec(item)
@@ -116,7 +121,13 @@ def _parse_proposal(item: object) -> RuleProposal | None:
         origin = RuleOrigin.CORRECTION
     if origin not in _PROPOSAL_ORIGINS:
         origin = RuleOrigin.CORRECTION
-    return RuleProposal(spec=spec, origin=origin)
+    try:
+        replaces = UUID(str(item.get("replaces")))
+    except ValueError:
+        replaces = None
+    if replaces not in known_rule_ids:
+        replaces = None
+    return RuleProposal(spec=spec, origin=origin, replaces=replaces)
 
 
 def _parse_feedback(content: str, known_rule_ids: set[UUID]) -> Feedback:
@@ -144,7 +155,7 @@ def _parse_feedback(content: str, known_rule_ids: set[UUID]) -> Feedback:
     proposals = [
         proposal
         for proposal in (
-            _parse_proposal(item)
+            _parse_proposal(item, known_rule_ids)
             for item in (raw_proposals if isinstance(raw_proposals, list) else [])
         )
         if proposal is not None
