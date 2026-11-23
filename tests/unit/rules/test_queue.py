@@ -92,11 +92,17 @@ def _run_returning_none() -> MagicMock:
 
 
 class SpyQueue(InMemoryFeedbackQueue):
-    """An in-memory queue that records the cutoffs its staleness sweep got."""
+    """An in-memory queue that records the cutoffs its staleness sweep got and
+    how many enqueue attempts reached it."""
 
     def __init__(self) -> None:
         super().__init__()
         self.cutoffs: list[datetime] = []
+        self.enqueue_calls = 0
+
+    async def enqueue(self, item: QueuedFeedback) -> QueuedFeedback:
+        self.enqueue_calls += 1
+        return await super().enqueue(item)
 
     async def drop_stale(self, cutoff: datetime) -> int:
         self.cutoffs.append(cutoff)
@@ -530,13 +536,14 @@ class TestEnqueueTurn:
 
     @pytest.mark.parametrize("reply", ["", "   ", "\n\t "])
     async def test_a_blank_reply_writes_nothing(self, reply: str):
-        queue = InMemoryFeedbackQueue()
+        queue = SpyQueue()
 
         row = await enqueue_turn(
             queue, [Rule(condition="when x", action="do y")], SESSION, "of course", reply
         )
 
         assert row is None
+        assert queue.enqueue_calls == 0
         assert queue.items == []
 
     async def test_a_store_failure_is_swallowed_and_logged(self, caplog):
