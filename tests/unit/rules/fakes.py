@@ -125,6 +125,13 @@ class InMemoryFeedbackQueue(FeedbackQueue):
         return dropped
 
 
+class RaisingQueue(InMemoryFeedbackQueue):
+    """A queue whose insert fails the way a dropped connection does."""
+
+    async def enqueue(self, item: QueuedFeedback) -> QueuedFeedback:
+        raise RuntimeError("connection lost")
+
+
 def llm_returning(content: str | None) -> MagicMock:
     """An LLM client stub whose ``chat()`` returns ``content``."""
     llm = MagicMock(spec=LLMClient)

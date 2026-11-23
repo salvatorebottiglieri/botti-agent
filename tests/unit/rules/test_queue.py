@@ -30,7 +30,11 @@ from cortex.rules.queue import (
 )
 from cortex.rules.repository import PostgresRuleRepository
 from cortex.rules.service import RuleService
-from tests.unit.rules.fakes import InMemoryFeedbackQueue, InMemoryRuleRepository
+from tests.unit.rules.fakes import (
+    InMemoryFeedbackQueue,
+    InMemoryRuleRepository,
+    RaisingQueue,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 MIGRATION_PATH = ROOT / "migrations" / "011_queued_feedback.sql"
@@ -495,13 +499,6 @@ class TestDrain:
         assert "already has a use from feedback" in caplog.text
 
 
-class FailingQueue(InMemoryFeedbackQueue):
-    """A queue whose insert fails the way a dropped connection does."""
-
-    async def enqueue(self, item: QueuedFeedback) -> QueuedFeedback:
-        raise RuntimeError("connection lost")
-
-
 class TestEnqueueTurn:
     """``enqueue_turn``: one pending row, or none, and never an exception."""
 
@@ -543,7 +540,7 @@ class TestEnqueueTurn:
         assert queue.items == []
 
     async def test_a_store_failure_is_swallowed_and_logged(self, caplog):
-        queue = FailingQueue()
+        queue = RaisingQueue()
         rule = Rule(condition="when x", action="do y")
 
         with caplog.at_level(logging.WARNING, logger="cortex.rules.queue"):

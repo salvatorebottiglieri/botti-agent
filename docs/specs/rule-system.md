@@ -12,16 +12,19 @@ tracker: #166
 > Rationale: `docs/adr/0020-learned-rules.md`. Vocabulary: `CONTEXT.md` (`## Rules`).
 > Work items: issue #130 (slice A, closed), #166 (slice B).
 >
-> **Status: implemented (slice A).** `migrations/008_rules.sql` holds the
-> `rules` and `rule_uses` tables, `src/cortex/rules/` holds the pure score, the
-> repository, the lifecycle service and the prompt rendering, rules are the
-> fourth dimension of the context bundle, and `cortex rules:list` /
-> `rules:show` / `rules:archive` manage them. Slice B is in progress: the
-> feedback classifier and its attribution run exist
-> (`cortex.rules.feedback`, `cortex.rules.attribution`, #168) but nothing
-> wires them into a turn yet — no caller in `src/` records a use at runtime, so
-> the set still changes only through the service API and the CLI. The queue,
-> proposals storage, the split path and the wiring are #169-#175.
+> **Status: slice A implemented, slice B in progress (tickets #168-#172 delivered).**
+> `migrations/008_rules.sql` holds the `rules` and `rule_uses` tables and
+> `migrations/011_queued_feedback.sql` the queue; `src/cortex/rules/` holds the
+> pure score, the repository, the lifecycle service, the prompt rendering, the
+> feedback classifier, the attribution run and the durable queue. Rules are the
+> fourth dimension of the context bundle, and `cortex rules:list` / `rules:show`
+> / `rules:archive` manage them. Since #172 the set changes from real turns: both
+> chat endpoints read the active set before the turn and enqueue one
+> `queued_feedback` row after the answer, and the composition root starts the
+> drain beside the evidence sweep, so `AttributionRun` scores the rules a turn
+> applied. There is no CLI chat turn, so the CLI inserts nothing. The eval runner
+> calls the loop directly and never enqueues. Remaining: proposals storage, the
+> promotion line and the eval Rule set (#173-#175).
 
 ## Phase plan
 

@@ -80,12 +80,9 @@ class AttributionRun:
                     f"Recording the use of rule {entry.rule_id} failed", exc_info=True
                 )
 
-        if self._conflicts is not None and feedback.proposals:
-            applied = await self._apply_proposal(
-                self._conflicts, feedback.proposals, session_id
-            )
-            if applied is not None:
-                refreshed.append(applied)
+        applied = await self._apply_proposal(feedback.proposals, session_id)
+        if applied is not None:
+            refreshed.append(applied)
 
         split_refreshed = await self._split_scope_corrections(feedback)
         if split_refreshed:
@@ -99,7 +96,7 @@ class AttributionRun:
         return refreshed or list(rules)
 
     async def _apply_proposal(
-        self, conflicts: ConflictCheck, proposals: list[RuleProposal], session_id: UUID
+        self, proposals: list[RuleProposal], session_id: UUID
     ) -> Rule | None:
         """Create the rule this turn proposed, after the conflict check.
 
@@ -107,6 +104,9 @@ class AttributionRun:
         than one proposal is a classifier bug, a contradiction is a conflict,
         and a failed check or write costs the proposal, never the uses.
         """
+        conflicts = self._conflicts
+        if conflicts is None or not proposals:
+            return None
         if len(proposals) > 1:
             logger.warning(
                 f"Classifier returned {len(proposals)} proposals; "

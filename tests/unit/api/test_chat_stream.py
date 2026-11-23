@@ -8,11 +8,9 @@ loop itself is never exercised.
 import asyncio
 import json
 from typing import Any
-from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi.testclient import TestClient
 
 from cortex.agentic.events import (
     AskUserEvent,
@@ -23,17 +21,10 @@ from cortex.agentic.events import (
     ToolResultEvent,
     ToolStartEvent,
 )
-from cortex.api.auth import get_api_key
-from cortex.api.dependencies import (
-    get_execution_module,
-    get_feedback_queue,
-    get_interaction_service,
-    get_rule_service,
-)
-from cortex.main import create_app
 from cortex.rules.models import Rule
 from cortex.sessions.models import Session, SessionState
-from tests.unit.rules.fakes import InMemoryFeedbackQueue
+from tests.unit.api.fakes import FakeInteractionService, FakeRuleService, build_client
+from tests.unit.rules.fakes import InMemoryFeedbackQueue, RaisingQueue
 
 AUTH_HEADERS = {"Authorization": "Bearer dummy-key"}
 
@@ -83,71 +74,6 @@ class FakeExecutionModule:
             raise self._exc
         for event in self._events:
             yield event
-
-
-class FakeRuleService:
-    """Serves a scripted active set, or raises, to the attribution seam."""
-
-    def __init__(self, rules: list[Rule] | None = None, exc: Exception | None = None):
-        self._rules = rules or []
-        self._exc = exc
-        self.calls = 0
-
-    async def list_active(self) -> list[Rule]:
-        self.calls += 1
-        if self._exc is not None:
-            raise self._exc
-        return list(self._rules)
-
-
-class RaisingQueue(InMemoryFeedbackQueue):
-    """A queue whose insert fails the way a dropped connection does."""
-
-    async def enqueue(self, item):
-        raise RuntimeError("connection lost")
-
-
-class FakeInteractionService:
-    """Records session lookups/creations; serves a scripted existing session."""
-
-    def __init__(self, existing_session: Session | None = None):
-        self._existing_session = existing_session
-        self.created_sessions: list[Session] = []
-
-    async def get_session(self, session_id: UUID) -> Session | None:
-        if self._existing_session is not None and self._existing_session.id == session_id:
-            return self._existing_session
-        return None
-
-    async def get_or_create_session(self, session_id: UUID | None) -> Session:
-        if session_id is not None:
-            existing = await self.get_session(session_id)
-            if existing is not None and existing.state != SessionState.ENDED:
-                return existing
-        session = Session()
-        self.created_sessions.append(session)
-        return session
-
-
-def build_client(
-    execution_module: FakeExecutionModule,
-    interaction_service: FakeInteractionService,
-    *,
-    rule_service: FakeRuleService | None = None,
-    feedback_queue: InMemoryFeedbackQueue | None = None,
-    raise_server_exceptions: bool = True,
-) -> TestClient:
-    """App with the chat dependencies overridden by fakes."""
-    settings = MagicMock()
-    settings.version = "0.1.0"
-    with patch("cortex.main.get_settings", return_value=settings):
-        app = create_app()
-    app.dependency_overrides[get_api_key] = lambda: "dummy-key"
-    app.dependency_overrides[get_execution_module] = lambda: execution_module
-    app.dependency_overrides[get_interaction_service] = lambda: interaction_service
-    app.dependency_overrides[get_rule_service] = lambda: rule_service or FakeRuleService()
-    app.dependency_overrides[get_feedback_queue] = lambda: feedback_queue or InMemoryFeedbackQueue()
-    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
 
 class TestChatStreamSSE:
@@ -688,8 +614,8 @@ class TestChatStreamAttribution:
         )
         return response, queue, session_id
 
-    def test_one_row_after_the_done_frame_carries_the_turn(self):
-        """The row is written once the answer is produced, naming the rules
+    def test_one_row_before_the_done_frame_carries_the_turn(self):
+        """The row is written before the done frame goes out, naming the rules
         read before the turn, the assistant text and the user's reply."""
         session_id = uuid4()
         rule = Rule(condition="the user asks to book", action="ask before booking")
@@ -713,7 +639,7 @@ class TestChatStreamAttribution:
                 },
             ),
         ]
-        assert rule_service.calls == 1
+        assert rule_service.calls == ["list_active"]
         assert len(queue.items) == 1
         row = queue.items[0]
         assert row.session_id == turn_session

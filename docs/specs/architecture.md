@@ -220,7 +220,7 @@ Event types (`EventTypes`):
 | Minions | `src/cortex/minions/` | `MinionGateway`, `MinionRegistry`, `MinionEventHandler`; `MinionMQTTClient`. See [minion-protocol.md](minion-protocol.md) |
 | Trace | `src/cortex/trace/` | `TraceRepository`, `TraceRecorder`, `Pseudonymizer`, `audit`. See [trace-system.md](trace-system.md) |
 | Eval | `src/cortex/eval/` | fixtures, runner, grader, judge, metrics, baseline, gate. See [eval-system.md](eval-system.md) |
-| Rules | `src/cortex/rules/` | `RuleRepository`, `RuleService` (create / record_use / sweep / archive / split / merge), the pure score in `scoring.py`, `render_rules`. See [rule-system.md](rule-system.md) |
+| Rules | `src/cortex/rules/` | `RuleRepository`, `RuleService` (create / record_use / sweep / archive / split / merge), the pure score in `scoring.py`, `render_rules`; the feedback queue (`FeedbackQueue`, `enqueue_turn`, `FeedbackDrain`) and the attribution seam the chat endpoints import (`AttributionRun`, #168-#172). See [rule-system.md](rule-system.md) |
 | Learning | `src/cortex/learning/` | Echo State Network (`reservoir.py`), per-target readouts, `encoding.py`, `module.py` (ADR-0001) |
 
 ### Layer 3 — services

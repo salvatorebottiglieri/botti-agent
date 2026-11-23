@@ -220,9 +220,7 @@ async def initialize_app() -> CortexApp:
     llm_factory = LLMClientFactory(settings.llm)
     cortex.llm_client = llm_factory.create()
 
-    # 5d''. Wire the attribution path (issue #172). It hangs off the LLM
-    # factory so the classifier owns its own circuit: the chat endpoints only
-    # enqueue, and the drain runs outside the request.
+    # 5c'''. Wire attribution (issue #172): its own LLM circuit, drained outside the request.
     from cortex.rules.attribution import AttributionRun
     from cortex.rules.conflicts import ConflictCheck
     from cortex.rules.feedback import FeedbackClassifier
@@ -397,8 +395,7 @@ async def initialize_app() -> CortexApp:
     cortex.evidence_sweep_task = asyncio.create_task(
         _evidence_sweep_loop(cortex.evidence_store)
     )
-    # A correction is learned "a moment later": the drain's own minute, not the
-    # sweep's hour.
+    # A correction is learned "a moment later": the drain's minute, not the sweep's hour.
     cortex.feedback_drain_task = asyncio.create_task(
         _feedback_drain_loop(cortex.feedback_drain)
     )

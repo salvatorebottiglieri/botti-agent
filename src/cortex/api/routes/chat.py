@@ -84,8 +84,7 @@ async def chat(
         session = await interaction_service.get_or_create_session(request.session_id)
         session_id = session.id
 
-        # The turn's rules, read before the turn: the same call the context
-        # bundle makes, so the queued row can only name rules the model saw.
+        # Read before the turn, as the context bundle does: the row names rules the model saw.
         rules = await _snapshot_rules(rule_service)
 
         # Run chat
@@ -97,8 +96,7 @@ async def chat(
             max_iterations=max_iterations,
         )
 
-        # Enqueued after the answer, so a slow or failing classifier never
-        # delays or breaks the response.
+        # After the answer: a slow or failing classifier never delays the reply.
         await enqueue_turn(
             feedback_queue, rules, session_id, response.message, request.message
         )
@@ -213,8 +211,7 @@ async def chat_stream(
                             },
                         )
                     case ResponseDoneEvent():
-                        # Before the terminal frame: once the client sees the
-                        # answer, the row for it already exists.
+                        # Before the done frame: the row exists before the client sees the answer.
                         await enqueue_turn(
                             feedback_queue,
                             rules,

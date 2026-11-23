@@ -400,6 +400,11 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     "note": "#172 the same, on the ResponseDoneEvent it already matches",
     "children": [
      {
+      "name": "cortex.rules.service.RuleService.list_active",
+      "note": "#172 the same snapshot the non-streaming route takes",
+      "children": []
+     },
+     {
       "name": "cortex.rules.queue.enqueue_turn",
       "note": "#172 unchanged",
       "children": []
@@ -563,6 +568,41 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "kind": "add",
    "path": "tests/e2e/test_rule_attribution.py",
    "note": "#172 a correction in chat moves a rule's confidence, end to end"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/attribution.py",
+   "note": "#172 advisory from #171: _apply_proposal extracted out of attribute, behaviour identical"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/feedback.py",
+   "note": "#172 advisory from #171: _parse_spec is the single spec parser, used by the proposal parser"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/splits.py",
+   "note": "#172 advisory from #171: _parse_child delegates to _parse_spec, refusal messages unchanged"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/fakes.py",
+   "note": "#172 advisory from #171: the LLM test stubs (llm_returning, sent_text) hoisted here"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/test_feedback.py",
+   "note": "#172 advisory from #171: uses the shared stub"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/test_conflicts.py",
+   "note": "#172 advisory from #171: uses the shared stub"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/test_splits.py",
+   "note": "#172 advisory from #171: uses the shared stub"
   }
  ],
  "signatures": [
@@ -853,6 +893,10 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    {
     "from": "cortex.api.routes.chat.chat",
     "to": "cortex.rules.queue.enqueue_turn"
+   },
+   {
+    "from": "cortex.api.routes.chat.chat_stream",
+    "to": "cortex.rules.service.RuleService.list_active"
    },
    {
     "from": "cortex.api.routes.chat.chat_stream",
@@ -1376,7 +1420,7 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     {
      "kind": "raises",
      "type": "the repository's error (database unreachable)",
-     "handled_at": "not caught: the turn itself is the user's answer and a rules outage must not refuse it — the snapshot stays empty and the row is simply not written"
+     "handled_at": "caught by `_snapshot_rules`, the helper both endpoints use: logged, the snapshot stays empty, the row is simply not written and the turn continues"
     },
     {
      "kind": "effect",
@@ -1407,6 +1451,32 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     {
      "kind": "effect",
      "type": "at most one INSERT, after the response text is complete",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.api.routes.chat.chat_stream",
+   "callee": "cortex.rules.service.RuleService.list_active",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the active rules when the stream starts — the snapshot the row carries",
+     "handled_at": "kept in the generator; passed to enqueue_turn on the done frame"
+    },
+    {
+     "kind": "absent",
+     "type": "an empty list",
+     "handled_at": "enqueue_turn writes nothing"
+    },
+    {
+     "kind": "raises",
+     "type": "the repository's error (database unreachable)",
+     "handled_at": "caught by `_snapshot_rules`: logged, empty snapshot, the stream is unaffected"
+    },
+    {
+     "kind": "effect",
+     "type": "one read plus the sweep it applies, once per stream",
      "handled_at": null
     }
    ]

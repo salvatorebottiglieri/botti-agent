@@ -9,22 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
-from fastapi.testclient import TestClient
-
-from cortex.api.auth import get_api_key
-from cortex.api.dependencies import (
-    get_execution_module,
-    get_feedback_queue,
-    get_interaction_service,
-    get_rule_service,
-)
-from cortex.main import create_app
 from cortex.rules.models import Rule
 from cortex.sessions.models import Session
-from tests.unit.rules.fakes import InMemoryFeedbackQueue
+from tests.unit.api.fakes import FakeInteractionService, FakeRuleService, build_client
+from tests.unit.rules.fakes import InMemoryFeedbackQueue, RaisingQueue
 
 AUTH_HEADERS = {"Authorization": "Bearer dummy-key"}
 
@@ -50,73 +40,6 @@ class FakeExecutionModule:
         if self._exc is not None:
             raise self._exc
         return SimpleNamespace(message=self._message, iterations=1, tools_used=[])
-
-
-class FakeRuleService:
-    """Serves a scripted active set, or raises, to the attribution seam."""
-
-    def __init__(
-        self,
-        rules: list[Rule] | None = None,
-        exc: Exception | None = None,
-        calls: list[str] | None = None,
-    ):
-        self._rules = rules or []
-        self._exc = exc
-        self._calls = calls
-
-    async def list_active(self) -> list[Rule]:
-        if self._calls is not None:
-            self._calls.append("list_active")
-        if self._exc is not None:
-            raise self._exc
-        return list(self._rules)
-
-
-class RaisingQueue(InMemoryFeedbackQueue):
-    """A queue whose insert fails the way a dropped connection does."""
-
-    async def enqueue(self, item):
-        raise RuntimeError("connection lost")
-
-
-class FakeInteractionService:
-    """Serves a scripted existing session; the route only needs its id."""
-
-    def __init__(self, existing_session: Session | None = None):
-        self._existing_session = existing_session
-
-    async def get_session(self, session_id: UUID) -> Session | None:
-        if self._existing_session is not None and self._existing_session.id == session_id:
-            return self._existing_session
-        return None
-
-    async def get_or_create_session(self, session_id: UUID | None) -> Session:
-        if session_id is not None:
-            existing = await self.get_session(session_id)
-            if existing is not None:
-                return existing
-        return Session()
-
-
-def build_client(
-    execution_module: FakeExecutionModule,
-    interaction_service: FakeInteractionService,
-    *,
-    rule_service: FakeRuleService | None = None,
-    feedback_queue: InMemoryFeedbackQueue | None = None,
-) -> TestClient:
-    """App with the chat dependencies overridden by fakes."""
-    settings = MagicMock()
-    settings.version = "0.1.0"
-    with patch("cortex.main.get_settings", return_value=settings):
-        app = create_app()
-    app.dependency_overrides[get_api_key] = lambda: "dummy-key"
-    app.dependency_overrides[get_execution_module] = lambda: execution_module
-    app.dependency_overrides[get_interaction_service] = lambda: interaction_service
-    app.dependency_overrides[get_rule_service] = lambda: rule_service or FakeRuleService()
-    app.dependency_overrides[get_feedback_queue] = lambda: feedback_queue or InMemoryFeedbackQueue()
-    return TestClient(app)
 
 
 @dataclass
