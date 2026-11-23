@@ -11,8 +11,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
+from cortex.llm.base import LLMClient
+from cortex.llm.models import ChatMessage, ChatResult, Role
 from cortex.rules.interfaces import FeedbackQueue, RuleRepository
 from cortex.rules.models import Rule, RuleState, RuleUse
 from cortex.rules.queue import QueuedFeedback, QueuedFeedbackStatus
@@ -120,3 +123,18 @@ class InMemoryFeedbackQueue(FeedbackQueue):
                 self.items[index] = replace(item, status=QueuedFeedbackStatus.DROPPED)
                 dropped += 1
         return dropped
+
+
+def llm_returning(content: str | None) -> MagicMock:
+    """An LLM client stub whose ``chat()`` returns ``content``."""
+    llm = MagicMock(spec=LLMClient)
+    llm.chat = AsyncMock(
+        return_value=ChatResult(message=ChatMessage(role=Role.ASSISTANT, content=content))
+    )
+    return llm
+
+
+def sent_text(llm: MagicMock) -> str:
+    """Everything the stub was sent, as one string, for prompt assertions."""
+    messages: list[ChatMessage] = llm.chat.call_args.args[0]
+    return "\n".join(m.content or "" for m in messages)

@@ -31,6 +31,8 @@ the Rules it applied. Spec: `docs/specs/rule-system.md`; design:
 | Attribution | symbol | src.cortex.rules.attribution.AttributionRun.attribute | `src/cortex/rules/attribution.py` |
 | Service | symbol | src.cortex.rules.service.RuleService.record_use | `src/cortex/rules/service.py:92` |
 | Split | symbol | src.cortex.rules.splits.SplitProposer.propose | `src/cortex/rules/splits.py` |
+| Enqueue | symbol | src.cortex.rules.queue.enqueue_turn | `src/cortex/rules/queue.py` |
+| Drain | symbol | src.cortex.rules.queue.FeedbackDrain.drain | `src/cortex/rules/queue.py` |
 | Render | symbol | render_rules | `src/cortex/rules/render.py:21` |
 | Provider | external | https://github.com/openai/openai-python | `src/cortex/llm/providers/openai.py` |
 
@@ -41,7 +43,10 @@ flowchart LR
   User[User replies] --> Loop[Loop answers the turn]
   Loop --> Bundle[Rules in the bundle]
   Loop --> Reply[Reply delivered]
-  Reply --> Run[Attribution run]
+  Reply --> Enqueue[enqueue_turn]
+  Enqueue -->|one pending row| Queue[(queued_feedback)]
+  Queue --> Drain[FeedbackDrain]
+  Drain --> Run[Attribution run]
   Run -->|had rules and a reply| Classifier[Feedback classifier]
   Bundle --> Classifier
   Bundle --> Render[render_rules into the prompt]
@@ -120,8 +125,10 @@ stateDiagram-v2
 | 1 | `QueuedFeedback` | - | The design lists the queue; #168 delivered the classifier and the run only | https://github.com/salvatorebottiglieri/botti-agent/issues/166#issuecomment-7038922357 |
 | 2 | `QueuedFeedback` | + | #169 builds the queue: the row moves pending → attributed, stays pending when the classifier is unavailable, and is dropped past the validity window | https://github.com/salvatorebottiglieri/botti-agent/issues/169 |
 | 3 | `Rule` | + | #171 splits a rule through the service instead of penalising it: a scope correction archives the parent and creates two children, so the machine gains the transition that leaves a rule for a Split | https://github.com/salvatorebottiglieri/botti-agent/issues/171 |
+| 4 | `QueuedFeedback` | + | #172 wires the enqueue into both chat endpoints and the drain into the composition root, so the row is written by a real turn and the pending → attributed transition happens in the running system; the rules of the row are the active set read before the turn (design Decision 4, owner's answer "A" of 2026-11-23) | https://github.com/salvatorebottiglieri/botti-agent/issues/172 |
 
 ## Notes
 
-Nothing in `src/` calls `AttributionRun` or `FeedbackDrain` yet: the wiring into a turn is #172, and
-until then the model describes the component, not the running system. The enqueue side of the queue (writing the row after a turn) is #172.
+Since #172 the model describes the running system: both chat endpoints read the active set before the
+turn and enqueue the row after the answer, and `main.py` starts the drain beside the evidence sweep.
+The eval runner calls `AgentLoop.stream_chat` directly and never enqueues, so an eval still learns nothing.

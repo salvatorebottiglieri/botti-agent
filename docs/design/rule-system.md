@@ -166,6 +166,95 @@ in `staging`.
   the classifier returns the split in its own call, B = a second call only on a
   scope correction).
 
+## Ticket #172 — the real chat turn is attributed
+
+_Design, 2026-11-23, before the code. Signatures and contracts are in the
+`json design` block._
+
+Everything up to #171 is a library nobody calls: `main.py` builds a
+`RuleService` and no `AttributionRun`, so no turn is ever enqueued and no rule
+is ever scored in the running system. #172 is the wiring, and nothing else —
+no new component, no new table, no change to the classifier, the queue, the run
+or `AgentLoop`.
+
+- **`cortex.rules.queue.enqueue_turn`** (new): one function the loop's callers
+  use — `queue`, the turn's `rules`, `session_id`, `assistant_turn`,
+  `user_reply` in, the row or `None` out. It writes nothing when the turn had
+  no rules or the reply is blank, and it swallows a storage failure with a log
+  line: the turn already happened, so a lost row costs one turn of evidence and
+  never a reply. The blank-reply `CHECK` and the guard in `FeedbackQueue.enqueue`
+  stay the last line of defence, not the only one.
+- **`cortex/api/routes/chat.py`** (modified): both endpoints read the turn's
+  rules before the turn and call `enqueue_turn` after the answer — the
+  non-streaming one after `run_chat` returns, the streaming one on the
+  `ResponseDoneEvent` it already matches (which a clarifying question also
+  emits), so a cancelled stream simply enqueues nothing. One `INSERT` is the
+  only added latency, and it never raises into the response.
+- **`cortex/api/dependencies.py`** (modified): `get_rule_service()` and
+  `get_feedback_queue()` beside the existing getters; both keys are added to the
+  state dict in `main.py`.
+- **`src/cortex/main.py`** (modified): the composition root builds
+  `FeedbackClassifier(llm_factory.create_for_module("rules"))`, `ConflictCheck`
+  and `SplitProposer` on that same client, `AttributionRun(..., conflicts, splits)`,
+  `PostgresFeedbackQueue()` and `FeedbackDrain(...)`, and starts
+  `_feedback_drain_loop` beside `_evidence_sweep_loop`. The drain is the only
+  place attribution runs: it never runs inside a request, so a slow or failing
+  classifier cannot reach a user.
+- **`FEEDBACK_DRAIN_INTERVAL_SECONDS = 60`** in `main.py`, next to
+  `EVIDENCE_SWEEP_INTERVAL_SECONDS`: the spec's "a correction is learned a
+  moment later" is a minute, not the evidence sweep's hour.
+- **Not changed, deliberately:** `AgentLoop` (P6), the eval runner (it calls
+  `AgentLoop.stream_chat` directly, so eval never enqueues — the "eval never
+  learns" invariant is untouched, which is #175's other half), and the CLI: it
+  has no chat command today (`src/cortex/cli.py` holds `rules:*`, `memory:*`,
+  `backup:*`, `undo`, `version`), so the spec's "the CLI enqueues" has no seat
+  until a CLI turn exists.
+
+### Exits for #172
+
+`tests/unit/rules/test_queue.py` — the helper: one row with the turn's rule ids
+when the turn had rules and a reply; nothing without rules; nothing for a blank
+reply; nothing and no exception when the store fails.
+
+`tests/unit/api/test_chat_stream.py` — the route: one row after the answer,
+carrying the rules read before the turn, the assistant text and the user
+message; nothing when the snapshot was empty; one row on a clarifying question;
+nothing on an error frame; the response unchanged when the enqueue fails.
+
+`tests/unit/api/test_chat_attribution.py` (new) — the same for the
+non-streaming endpoint.
+
+`tests/unit/test_main_wiring.py` (new) — the composition root builds the run
+and the drain and starts the drain task (the existing `main` wiring tests are
+the pattern); the drain loop survives a raising drain.
+
+`tests/e2e/test_rule_attribution.py` (new) — end to end with a scripted
+provider: a chat turn with a staged rule in context, then the drain, moves that
+rule's confidence and state, and `RuleService.list_active()` — what
+`cortex rules:list` prints — reflects it.
+
+## Decision 4 — the enqueue reads the active set at the turn's start
+
+- **Choice**: the caller snapshots `RuleService.list_active()` before the turn
+  and writes that snapshot as the row's `rule_ids` after the answer. That call
+  is the bundle's own source (`context_provider.py:94` → `list_active()` at
+  `:109`), so the row names the rules the model was about to see.
+- **Alternatives rejected**: (B) `ResponseDoneEvent` carries the turn's rules —
+  exact, but it changes `AgentLoop`, which the spec pins as unchanged (P6, "The
+  seam is the loop's caller"); (C) a callback parameter on `run_chat` /
+  `stream_chat` — the same change with a wider surface, since every caller
+  (endpoints, eval runner, tests) would have to supply it.
+- **Consequences**: a rule created or archived by a concurrent drain in the
+  milliseconds of a single turn can be missing from the row (under-attribution)
+  or present although the bundle was built without it (over-attribution). Both
+  are one turn wide, and the first is the direction the spec's Degradation
+  decision already prefers; the invariant "a use names a rule that was in that
+  turn's bundle" is still held by the classifier, which drops an id it was not
+  given.
+- **Owner sign-off**: 2026-11-23, owner in chat — "A" (to the two options: A =
+  read `list_active()` at the caller, before the turn; B = carry the rules on
+  the `ResponseDoneEvent`).
+
 ## Premises (design)
 
 Inherited: P1-P10 of the spec. New:
@@ -175,6 +264,11 @@ Inherited: P1-P10 of the spec. New:
 | P11 | `chat()` and `chat_stream()` share a helper for out-of-band reasoning, so normalising `chat()` is one call, not a second implementation | `rg -n "_reasoning_delta" src/cortex/llm/providers/openai.py` | `openai.py:30: def _reasoning_delta(delta)`, called at `:247` in the stream loop and nowhere else | confirmed |
 | P12 | `GenerationConfig` already carries the fields a deterministic classification needs, so no settings change is required | `rg -n "class GenerationConfig" -A20 src/cortex/llm/config.py` | `temperature`, `max_tokens`, `top_p`, `seed`, `response_format` and more, all optional | confirmed |
 | P13 | The rules tests already use an in-memory `RuleRepository` with the Postgres semantics (ids and ordering), so this ticket needs no database | `tests/unit/rules/fakes.py` | `InMemoryRuleRepository` — copies on read/write, ids assigned, ordering by confidence | confirmed |
+| P14 | Nothing in the composition root constructs the attribution path, so no turn is enqueued at runtime | `rg -n "AttributionRun\|FeedbackDrain\|PostgresFeedbackQueue" src/cortex/main.py` | no match |
+| P15 | No route enqueues a turn yet | `rg -n "enqueue" src/cortex/api src/cortex/execution src/cortex/main.py` | no match |
+| P16 | The composition root has exactly one periodic task to sit beside | `rg -n "create_task" src/cortex/main.py` | `main.py:364` — the evidence sweep |
+| P17 | The CLI has no chat turn to attribute, so the spec's "the CLI enqueues" has no seat today | `rg -cn "chat" src/cortex/cli.py` | `0` matches |
+| P18 | The per-module LLM client the classifier wants exists | `rg -n "create_for_module" src/cortex/llm/factory.py` | `:56` — the definition (no caller under `src/` yet, P2 of the spec) |
 
 ## External fixtures
 
@@ -278,6 +372,39 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     "name": "cortex.rules.conflicts.ConflictCheck.contradicts",
     "note": "#170 one provider call, only when the turn proposed something",
     "children": []
+   },
+   {
+    "name": "cortex.api.routes.chat.chat",
+    "note": "#172 reads the turn's rules before the turn, enqueues the row after run_chat returns",
+    "children": [
+     {
+      "name": "cortex.rules.service.RuleService.list_active",
+      "note": "#172 the snapshot; the bundle's own source",
+      "children": []
+     },
+     {
+      "name": "cortex.rules.queue.enqueue_turn",
+      "note": "#172 one row, or none when there is nothing to attribute",
+      "children": [
+       {
+        "name": "cortex.rules.queue.FeedbackQueue.enqueue",
+        "note": "#169 unchanged",
+        "children": []
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "name": "cortex.api.routes.chat.chat_stream",
+    "note": "#172 the same, on the ResponseDoneEvent it already matches",
+    "children": [
+     {
+      "name": "cortex.rules.queue.enqueue_turn",
+      "note": "#172 unchanged",
+      "children": []
+     }
+    ]
    }
   ]
  },
@@ -391,6 +518,51 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "kind": "mod",
    "path": "tests/unit/rules/test_service.py",
    "note": "#171 a split with no uses leaves both children in staging"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/queue.py",
+   "note": "#172 enqueue_turn: the turn's rules in, one pending row or none out, never an exception"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/api/routes/chat.py",
+   "note": "#172 both endpoints snapshot the rules before the turn and enqueue after the answer"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/api/dependencies.py",
+   "note": "#172 get_rule_service and get_feedback_queue"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/main.py",
+   "note": "#172 builds the run, the queue and the drain and starts the drain loop"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/test_queue.py",
+   "note": "#172 the helper's four exits"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/api/test_chat_stream.py",
+   "note": "#172 the streaming route enqueues one row"
+  },
+  {
+   "kind": "add",
+   "path": "tests/unit/api/test_chat_attribution.py",
+   "note": "#172 the non-streaming route"
+  },
+  {
+   "kind": "add",
+   "path": "tests/unit/test_main_wiring.py",
+   "note": "#172 the composition root and the drain loop"
+  },
+  {
+   "kind": "add",
+   "path": "tests/e2e/test_rule_attribution.py",
+   "note": "#172 a correction in chat moves a rule's confidence, end to end"
   }
  ],
  "signatures": [
@@ -458,6 +630,21 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "module": "src/cortex/rules/service.py",
    "language": "python",
    "code": "async def split(self, rule_id: UUID, children: Sequence[RuleSpec], assignments: Mapping[int, int]) -> list[Rule]: ..."
+  },
+  {
+   "module": "src/cortex/rules/queue.py",
+   "language": "python",
+   "code": "async def enqueue_turn(queue: FeedbackQueue, rules: Sequence[Rule], session_id: UUID, assistant_turn: str, user_reply: str) -> QueuedFeedback | None: ..."
+  },
+  {
+   "module": "src/cortex/api/routes/chat.py",
+   "language": "python",
+   "code": "async def chat(request: ChatRequest, key: str = Depends(get_api_key), interaction_service: InteractionService = Depends(get_interaction_service), execution_module: ExecutionModule = Depends(get_execution_module), rule_service: RuleService = Depends(get_rule_service), feedback_queue: FeedbackQueue = Depends(get_feedback_queue)) -> ChatResponse: ..."
+  },
+  {
+   "module": "src/cortex/api/routes/chat.py",
+   "language": "python",
+   "code": "async def chat_stream(request: ChatRequest, key: str = Depends(get_api_key), interaction_service: InteractionService = Depends(get_interaction_service), execution_module: ExecutionModule = Depends(get_execution_module), rule_service: RuleService = Depends(get_rule_service), feedback_queue: FeedbackQueue = Depends(get_feedback_queue)) -> StreamingResponse: ..."
   }
  ],
  "data_flow": {
@@ -556,6 +743,26 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     "id": "cortex.rules.service.RuleService.split",
     "module": "src/cortex/rules/service.py",
     "kind": "keep"
+   },
+   {
+    "id": "cortex.rules.queue.enqueue_turn",
+    "module": "src/cortex/rules/queue.py",
+    "kind": "add"
+   },
+   {
+    "id": "cortex.api.routes.chat.chat",
+    "module": "src/cortex/api/routes/chat.py",
+    "kind": "mod"
+   },
+   {
+    "id": "cortex.api.routes.chat.chat_stream",
+    "module": "src/cortex/api/routes/chat.py",
+    "kind": "mod"
+   },
+   {
+    "id": "cortex.rules.queue.FeedbackQueue.enqueue",
+    "module": "src/cortex/rules/queue.py",
+    "kind": "keep"
    }
   ],
   "edges": [
@@ -638,6 +845,22 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    {
     "from": "cortex.rules.attribution.AttributionRun.attribute",
     "to": "cortex.rules.service.RuleService.split"
+   },
+   {
+    "from": "cortex.api.routes.chat.chat",
+    "to": "cortex.rules.service.RuleService.list_active"
+   },
+   {
+    "from": "cortex.api.routes.chat.chat",
+    "to": "cortex.rules.queue.enqueue_turn"
+   },
+   {
+    "from": "cortex.api.routes.chat.chat_stream",
+    "to": "cortex.rules.queue.enqueue_turn"
+   },
+   {
+    "from": "cortex.rules.queue.enqueue_turn",
+    "to": "cortex.rules.queue.FeedbackQueue.enqueue"
    }
   ]
  },
@@ -1132,6 +1355,110 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     {
      "kind": "effect",
      "type": "two rules rows, one use reassignment per use, one refresh of the parent",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.api.routes.chat.chat",
+   "callee": "cortex.rules.service.RuleService.list_active",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the active rules at the turn's start — the snapshot the row carries",
+     "handled_at": "kept beside the turn; passed to enqueue_turn after the answer"
+    },
+    {
+     "kind": "absent",
+     "type": "an empty list",
+     "handled_at": "enqueue_turn writes nothing: a turn with no rule has nothing to attribute"
+    },
+    {
+     "kind": "raises",
+     "type": "the repository's error (database unreachable)",
+     "handled_at": "not caught: the turn itself is the user's answer and a rules outage must not refuse it — the snapshot stays empty and the row is simply not written"
+    },
+    {
+     "kind": "effect",
+     "type": "one read plus the sweep it applies",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.api.routes.chat.chat",
+   "callee": "cortex.rules.queue.enqueue_turn",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the pending row, after the answer",
+     "handled_at": "dropped: the response was already decided"
+    },
+    {
+     "kind": "absent",
+     "type": "None when the snapshot was empty, the reply blank, or the store failed",
+     "handled_at": "nothing to do; the turn is over"
+    },
+    {
+     "kind": "raises",
+     "type": "nothing: the helper logs and swallows",
+     "handled_at": "nothing to dispatch: the helper already handled it"
+    },
+    {
+     "kind": "effect",
+     "type": "at most one INSERT, after the response text is complete",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.api.routes.chat.chat_stream",
+   "callee": "cortex.rules.queue.enqueue_turn",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the pending row, on the ResponseDoneEvent frame",
+     "handled_at": "dropped: the done frame is already built"
+    },
+    {
+     "kind": "absent",
+     "type": "None on an empty snapshot, a blank reply or a store failure; never reached on an error frame or a cancelled stream",
+     "handled_at": "nothing to do"
+    },
+    {
+     "kind": "raises",
+     "type": "nothing: the helper logs and swallows",
+     "handled_at": "nothing to dispatch: the helper already handled it"
+    },
+    {
+     "kind": "effect",
+     "type": "at most one INSERT per completed turn",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.queue.enqueue_turn",
+   "callee": "cortex.rules.queue.FeedbackQueue.enqueue",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the stored row with its id",
+     "handled_at": "returned to the caller"
+    },
+    {
+     "kind": "absent",
+     "type": "none: enqueue always stores or raises",
+     "handled_at": "no such exit: the port stores or raises, so only the two above are dispatched"
+    },
+    {
+     "kind": "raises",
+     "type": "ValueError on a blank reply (the guard), the repository's error",
+     "handled_at": "caught by one handler, logged, returns None"
+    },
+    {
+     "kind": "effect",
+     "type": "one queued_feedback row",
      "handled_at": null
     }
    ]

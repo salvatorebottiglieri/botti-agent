@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
 
-from cortex.llm.base import LLMClient
-from cortex.llm.models import ChatMessage, ChatResult, Role
 from cortex.rules.feedback import (
     AttributedUse,
     Feedback,
@@ -18,6 +15,7 @@ from cortex.rules.feedback import (
     _parse_feedback,
 )
 from cortex.rules.models import Rule, RuleOrigin, RuleSpec, UseOutcome
+from tests.unit.rules.fakes import llm_returning, sent_text
 
 RULE_A = UUID("11111111-1111-1111-1111-111111111111")
 RULE_B = UUID("22222222-2222-2222-2222-222222222222")
@@ -28,23 +26,9 @@ def _rule(rule_id: UUID, condition: str, action: str) -> Rule:
     return Rule(id=rule_id, condition=condition, action=action, origin=RuleOrigin.DICTATED)
 
 
-def _llm_returning(content: str | None) -> MagicMock:
-    """An LLM client stub whose chat() returns ``content``."""
-    llm = MagicMock(spec=LLMClient)
-    llm.chat = AsyncMock(
-        return_value=ChatResult(message=ChatMessage(role=Role.ASSISTANT, content=content))
-    )
-    return llm
-
-
-def _sent_text(llm: MagicMock) -> str:
-    messages: list[ChatMessage] = llm.chat.call_args.args[0]
-    return "\n".join(m.content or "" for m in messages)
-
-
 @pytest.mark.parametrize("reply", ["", "   ", "\n\t "])
 async def test_blank_reply_makes_no_call(reply: str) -> None:
-    llm = _llm_returning("{}")
+    llm = llm_returning("{}")
 
     feedback = await FeedbackClassifier(llm).classify([_rule(RULE_A, "c", "a")], "turn", reply)
 
@@ -53,7 +37,7 @@ async def test_blank_reply_makes_no_call(reply: str) -> None:
 
 
 async def test_empty_rules_makes_no_call() -> None:
-    llm = _llm_returning("{}")
+    llm = llm_returning("{}")
 
     feedback = await FeedbackClassifier(llm).classify([], "turn", "a reply")
 
@@ -62,14 +46,14 @@ async def test_empty_rules_makes_no_call() -> None:
 
 
 async def test_a_reasoning_turn_is_what_the_classifier_sends() -> None:
-    llm = _llm_returning('{"uses": [], "proposals": []}')
+    llm = llm_returning('{"uses": [], "proposals": []}')
     turn = "<think>weighing the options</think>here is the answer"
 
     await FeedbackClassifier(llm).classify([_rule(RULE_A, "when x", "do y")], turn, "fine")
 
     assert len(llm.chat.call_args.args[0]) == 3
-    assert turn in _sent_text(llm)
-    assert str(RULE_A) in _sent_text(llm)
+    assert turn in sent_text(llm)
+    assert str(RULE_A) in sent_text(llm)
     assert llm.chat.call_args.kwargs["generation_config"].temperature == 0
     llm.chat.assert_awaited_once()
 
@@ -78,7 +62,7 @@ async def test_a_think_prefixed_reply_is_parsed() -> None:
     body = json.dumps(
         {"uses": [{"rule_id": str(RULE_A), "outcome": "approval"}], "proposals": []}
     )
-    llm = _llm_returning(f"<think>planning</think>{body}")
+    llm = llm_returning(f"<think>planning</think>{body}")
 
     feedback = await FeedbackClassifier(llm).classify(
         [_rule(RULE_A, "when x", "do y")], "turn", "ok"

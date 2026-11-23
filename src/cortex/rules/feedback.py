@@ -90,12 +90,25 @@ def _parse_use(item: object, known_rule_ids: set[UUID]) -> AttributedUse | None:
     return AttributedUse(rule_id=rule_id, outcome=outcome)
 
 
-def _parse_proposal(item: object) -> RuleProposal | None:
+def _parse_spec(item: object) -> RuleSpec | None:
+    """The condition, action and rationale of a candidate rule; None when it is
+    not an object or either field is blank."""
     if not isinstance(item, dict):
         return None
     condition = str(item.get("condition") or "").strip()
     action = str(item.get("action") or "").strip()
     if not condition or not action:
+        return None
+    return RuleSpec(
+        condition=condition, action=action, rationale=str(item.get("rationale") or "")
+    )
+
+
+def _parse_proposal(item: object) -> RuleProposal | None:
+    if not isinstance(item, dict):
+        return None
+    spec = _parse_spec(item)
+    if spec is None:
         return None
     try:
         origin = RuleOrigin(str(item.get("origin")))
@@ -103,10 +116,7 @@ def _parse_proposal(item: object) -> RuleProposal | None:
         origin = RuleOrigin.CORRECTION
     if origin not in _PROPOSAL_ORIGINS:
         origin = RuleOrigin.CORRECTION
-    return RuleProposal(
-        spec=RuleSpec(condition=condition, action=action, rationale=str(item.get("rationale") or "")),
-        origin=origin,
-    )
+    return RuleProposal(spec=spec, origin=origin)
 
 
 def _parse_feedback(content: str, known_rule_ids: set[UUID]) -> Feedback:

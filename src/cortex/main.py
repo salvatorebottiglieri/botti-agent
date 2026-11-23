@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 EVIDENCE_SWEEP_INTERVAL_SECONDS = 3600
+FEEDBACK_DRAIN_INTERVAL_SECONDS = 60
 
 
 @dataclass
@@ -51,6 +52,9 @@ class CortexApp:
     evidence_store: Any = field(default=None)
     evidence_sweep_task: Any = field(default=None)
     rule_service: Any = field(default=None)
+    feedback_queue: Any = field(default=None)
+    feedback_drain: Any = field(default=None)
+    feedback_drain_task: Any = field(default=None)
     minion_service: Any = field(default=None)
     llm_client: Any = field(default=None)
     concept_derivation_service: Any = field(default=None)
@@ -64,6 +68,11 @@ class CortexApp:
             self.evidence_sweep_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.evidence_sweep_task
+
+        if self.feedback_drain_task:
+            self.feedback_drain_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.feedback_drain_task
 
         if self.minion_service:
             try:
@@ -211,6 +220,28 @@ async def initialize_app() -> CortexApp:
     llm_factory = LLMClientFactory(settings.llm)
     cortex.llm_client = llm_factory.create()
 
+    # 5d''. Wire the attribution path (issue #172). It hangs off the LLM
+    # factory so the classifier owns its own circuit: the chat endpoints only
+    # enqueue, and the drain runs outside the request.
+    from cortex.rules.attribution import AttributionRun
+    from cortex.rules.conflicts import ConflictCheck
+    from cortex.rules.feedback import FeedbackClassifier
+    from cortex.rules.queue import FeedbackDrain, PostgresFeedbackQueue
+    from cortex.rules.splits import SplitProposer
+
+    rule_llm_client = llm_factory.create_for_module("rules")
+    cortex.feedback_queue = PostgresFeedbackQueue()
+    cortex.feedback_drain = FeedbackDrain(
+        cortex.feedback_queue,
+        AttributionRun(
+            FeedbackClassifier(rule_llm_client),
+            cortex.rule_service,
+            ConflictCheck(rule_llm_client),
+            SplitProposer(rule_llm_client),
+        ),
+        cortex.rule_service,
+    )
+
     # 5d'. Create fact extractor so sensory-event extraction is live rather
     # than a silent no-op.
     from cortex.memory.fact_extractor import FactExtractor
@@ -339,6 +370,8 @@ async def initialize_app() -> CortexApp:
         "minion_service": None,  # Will be initialized separately
         "llm_client": cortex.llm_client,
         "tool_registry": tool_registry,
+        "rule_service": cortex.rule_service,
+        "feedback_queue": cortex.feedback_queue,
     }
 
     # Create FastAPI app with wired dependencies
@@ -363,6 +396,11 @@ async def initialize_app() -> CortexApp:
     # expires between writes (docs/specs/evidence-system.md, ADR-0013).
     cortex.evidence_sweep_task = asyncio.create_task(
         _evidence_sweep_loop(cortex.evidence_store)
+    )
+    # A correction is learned "a moment later": the drain's own minute, not the
+    # sweep's hour.
+    cortex.feedback_drain_task = asyncio.create_task(
+        _feedback_drain_loop(cortex.feedback_drain)
     )
 
     logger.info("Cortex initialization complete")
@@ -419,6 +457,20 @@ async def _evidence_sweep_loop(evidence_store: Any) -> None:
         except Exception:
             logger.warning("Evidence sweep failed; retrying next interval", exc_info=True)
         await asyncio.sleep(EVIDENCE_SWEEP_INTERVAL_SECONDS)
+
+
+async def _feedback_drain_loop(drain: Any) -> None:
+    """Attribute the queued turns every minute, surviving provider and DB failures.
+
+    The drain runs here, never inside a request: a slow or failing classifier
+    can only delay the next pass.
+    """
+    while True:
+        try:
+            await drain.drain()
+        except Exception:
+            logger.warning("Feedback drain failed; retrying next interval", exc_info=True)
+        await asyncio.sleep(FEEDBACK_DRAIN_INTERVAL_SECONDS)
 
 
 async def _initialize_minion_service(cortex: CortexApp) -> None:

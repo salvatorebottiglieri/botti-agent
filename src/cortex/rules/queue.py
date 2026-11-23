@@ -9,7 +9,7 @@ delay, never evidence. The drain is a plain loop: the partial unique index on
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -197,3 +197,32 @@ class FeedbackDrain:
         except Exception:
             logger.warning("The queued-feedback drain failed", exc_info=True)
         return attributed
+
+
+async def enqueue_turn(
+    queue: FeedbackQueue,
+    rules: Sequence[Rule],
+    session_id: UUID,
+    assistant_turn: str,
+    user_reply: str,
+) -> QueuedFeedback | None:
+    """Queue one turn for attribution; None when there is nothing to attribute.
+
+    The rules are the turn's own bundle, so attribution can never name a rule
+    the model could not see. Never raises: the turn already happened, so a lost
+    row costs one turn of evidence, never a reply.
+    """
+    if not rules or not user_reply.strip():
+        return None
+    try:
+        return await queue.enqueue(
+            QueuedFeedback(
+                session_id=session_id,
+                rule_ids=tuple(rule.id for rule in rules),
+                assistant_turn=assistant_turn,
+                user_reply=user_reply,
+            )
+        )
+    except Exception:
+        logger.warning("Queueing the turn for attribution failed", exc_info=True)
+        return None

@@ -20,12 +20,13 @@ from cortex.db.session import DbSession
 from cortex.rules.attribution import AttributionRun
 from cortex.rules.constants import VALIDITY_WINDOW
 from cortex.rules.feedback import AttributedUse, Feedback
-from cortex.rules.models import RuleSpec, RuleUse, UseOutcome
+from cortex.rules.models import Rule, RuleSpec, RuleUse, UseOutcome
 from cortex.rules.queue import (
     FeedbackDrain,
     PostgresFeedbackQueue,
     QueuedFeedback,
     QueuedFeedbackStatus,
+    enqueue_turn,
 )
 from cortex.rules.repository import PostgresRuleRepository
 from cortex.rules.service import RuleService
@@ -492,3 +493,61 @@ class TestDrain:
         assert [use.rule_id for use in repository.uses] == [rule.id]
         assert repository.uses[0].feedback_id == stored.id
         assert "already has a use from feedback" in caplog.text
+
+
+class FailingQueue(InMemoryFeedbackQueue):
+    """A queue whose insert fails the way a dropped connection does."""
+
+    async def enqueue(self, item: QueuedFeedback) -> QueuedFeedback:
+        raise RuntimeError("connection lost")
+
+
+class TestEnqueueTurn:
+    """``enqueue_turn``: one pending row, or none, and never an exception."""
+
+    async def test_a_turn_with_rules_and_a_reply_writes_one_pending_row(self):
+        queue = InMemoryFeedbackQueue()
+        first = Rule(condition="when x", action="do y")
+        second = Rule(condition="when a", action="do b")
+
+        row = await enqueue_turn(
+            queue, [first, second], SESSION, "of course, doing it", "yes thanks"
+        )
+
+        assert row is not None
+        assert row.id is not None
+        assert queue.items == [row]
+        assert row.session_id == SESSION
+        assert row.rule_ids == (first.id, second.id)
+        assert row.assistant_turn == "of course, doing it"
+        assert row.user_reply == "yes thanks"
+        assert row.status is QueuedFeedbackStatus.PENDING
+
+    async def test_a_turn_with_no_rules_writes_nothing(self):
+        queue = InMemoryFeedbackQueue()
+
+        row = await enqueue_turn(queue, [], SESSION, "of course", "yes thanks")
+
+        assert row is None
+        assert queue.items == []
+
+    @pytest.mark.parametrize("reply", ["", "   ", "\n\t "])
+    async def test_a_blank_reply_writes_nothing(self, reply: str):
+        queue = InMemoryFeedbackQueue()
+
+        row = await enqueue_turn(
+            queue, [Rule(condition="when x", action="do y")], SESSION, "of course", reply
+        )
+
+        assert row is None
+        assert queue.items == []
+
+    async def test_a_store_failure_is_swallowed_and_logged(self, caplog):
+        queue = FailingQueue()
+        rule = Rule(condition="when x", action="do y")
+
+        with caplog.at_level(logging.WARNING, logger="cortex.rules.queue"):
+            row = await enqueue_turn(queue, [rule], SESSION, "of course", "yes thanks")
+
+        assert row is None
+        assert "connection lost" in caplog.text

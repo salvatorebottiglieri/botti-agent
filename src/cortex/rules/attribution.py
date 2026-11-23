@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from cortex.rules.conflicts import ConflictCheck
-from cortex.rules.feedback import Feedback, FeedbackClassifier
+from cortex.rules.feedback import Feedback, FeedbackClassifier, RuleProposal
 from cortex.rules.models import Rule, RuleOrigin, RuleState, UseOutcome
 from cortex.rules.service import RuleService
 from cortex.rules.splits import SplitProposer
@@ -81,29 +81,11 @@ class AttributionRun:
                 )
 
         if self._conflicts is not None and feedback.proposals:
-            if len(feedback.proposals) > 1:
-                logger.warning(
-                    f"Classifier returned {len(feedback.proposals)} proposals; "
-                    f"acting on the first, dropping {len(feedback.proposals) - 1}"
-                )
-            proposal = feedback.proposals[0]
-            try:
-                active = await self._service.list_active()
-                if await self._conflicts.contradicts(proposal.spec, active):
-                    logger.info(
-                        f"Proposed rule {proposal.spec.condition!r} contradicts the active set"
-                    )
-                elif proposal.origin is RuleOrigin.DICTATED:
-                    refreshed.append(
-                        await self._service.create_dictated(session_id, proposal.spec)
-                    )
-                else:
-                    refreshed.append(await self._service.create_from_correction(proposal.spec))
-            except Exception:
-                logger.warning(
-                    f"Applying the proposed rule {proposal.spec.condition!r} failed",
-                    exc_info=True,
-                )
+            applied = await self._apply_proposal(
+                self._conflicts, feedback.proposals, session_id
+            )
+            if applied is not None:
+                refreshed.append(applied)
 
         split_refreshed = await self._split_scope_corrections(feedback)
         if split_refreshed:
@@ -115,6 +97,38 @@ class AttributionRun:
             ]
         refreshed.extend(split_refreshed)
         return refreshed or list(rules)
+
+    async def _apply_proposal(
+        self, conflicts: ConflictCheck, proposals: list[RuleProposal], session_id: UUID
+    ) -> Rule | None:
+        """Create the rule this turn proposed, after the conflict check.
+
+        Returns the created rule, or None when the proposal was dropped: more
+        than one proposal is a classifier bug, a contradiction is a conflict,
+        and a failed check or write costs the proposal, never the uses.
+        """
+        if len(proposals) > 1:
+            logger.warning(
+                f"Classifier returned {len(proposals)} proposals; "
+                f"acting on the first, dropping {len(proposals) - 1}"
+            )
+        proposal = proposals[0]
+        try:
+            active = await self._service.list_active()
+            if await conflicts.contradicts(proposal.spec, active):
+                logger.info(
+                    f"Proposed rule {proposal.spec.condition!r} contradicts the active set"
+                )
+                return None
+            if proposal.origin is RuleOrigin.DICTATED:
+                return await self._service.create_dictated(session_id, proposal.spec)
+            return await self._service.create_from_correction(proposal.spec)
+        except Exception:
+            logger.warning(
+                f"Applying the proposed rule {proposal.spec.condition!r} failed",
+                exc_info=True,
+            )
+            return None
 
     async def _split_scope_corrections(self, feedback: Feedback) -> list[Rule]:
         """Split each rule whose scope correction this turn attributed.

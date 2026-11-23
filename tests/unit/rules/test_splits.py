@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
 
-from cortex.llm.base import LLMClient
-from cortex.llm.models import ChatMessage, ChatResult, Role
 from cortex.rules.models import Rule, RuleOrigin, RuleSpec, RuleUse, UseOutcome
 from cortex.rules.splits import SplitProposal, SplitProposer, _parse_split
+from tests.unit.rules.fakes import llm_returning, sent_text
 
 RULE = Rule(
     id=UUID("44444444-4444-4444-8444-444444444444"),
@@ -51,20 +49,6 @@ ANSWER = {
 }
 
 
-def _llm_returning(content: str | None) -> MagicMock:
-    """An LLM client stub whose chat() returns ``content``."""
-    llm = MagicMock(spec=LLMClient)
-    llm.chat = AsyncMock(
-        return_value=ChatResult(message=ChatMessage(role=Role.ASSISTANT, content=content))
-    )
-    return llm
-
-
-def _sent_text(llm: MagicMock) -> str:
-    messages: list[ChatMessage] = llm.chat.call_args.args[0]
-    return "\n".join(m.content or "" for m in messages)
-
-
 def test_two_children_and_a_positional_assignment_are_parsed() -> None:
     proposal = _parse_split(json.dumps(ANSWER), use_count=2)
 
@@ -82,11 +66,11 @@ def test_two_children_and_a_positional_assignment_are_parsed() -> None:
 
 
 async def test_the_request_lists_every_use_with_its_index_and_situation() -> None:
-    llm = _llm_returning(json.dumps(ANSWER))
+    llm = llm_returning(json.dumps(ANSWER))
 
     proposal = await SplitProposer(llm).propose(RULE, USES)
 
-    sent = _sent_text(llm)
+    sent = sent_text(llm)
     assert RULE.condition in sent
     assert RULE.action in sent
     assert "0 | a dinner for two → approval" in sent
@@ -99,11 +83,11 @@ async def test_the_request_lists_every_use_with_its_index_and_situation() -> Non
 async def test_no_rule_or_use_id_reaches_the_request() -> None:
     """Witness: an id-keyed prompt asks the model to echo an id it never saw;
     the assignment is positional precisely so no id has to round-trip."""
-    llm = _llm_returning(json.dumps(ANSWER))
+    llm = llm_returning(json.dumps(ANSWER))
 
     await SplitProposer(llm).propose(RULE, USES)
 
-    sent = _sent_text(llm)
+    sent = sent_text(llm)
     assert str(RULE.id) not in sent
     assert "4711" not in sent
     assert "4712" not in sent
@@ -171,11 +155,11 @@ def test_a_fenced_or_think_prefixed_answer_is_parsed() -> None:
 
 
 async def test_the_prompt_asks_for_disjoint_children_and_names_the_keeping_child_first() -> None:
-    llm = _llm_returning(json.dumps(ANSWER))
+    llm = llm_returning(json.dumps(ANSWER))
 
     await SplitProposer(llm).propose(RULE, USES)
 
-    sent = _sent_text(llm)
+    sent = sent_text(llm)
     assert "disjoint" in sent
     assert (
         "List first the child that keeps the current behaviour, and second the new, "

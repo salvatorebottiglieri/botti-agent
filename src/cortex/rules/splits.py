@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from cortex.llm.base import LLMClient
 from cortex.llm.config import GenerationConfig
 from cortex.llm.models import ChatMessage, Role
-from cortex.rules.feedback import strip_json_wrapping
+from cortex.rules.feedback import _parse_spec, strip_json_wrapping
 from cortex.rules.models import Rule, RuleSpec, RuleUse
 
 _SYSTEM_PROMPT = (
@@ -41,13 +41,10 @@ class SplitProposal:
 def _parse_child(item: object) -> RuleSpec:
     if not isinstance(item, dict):
         raise ValueError("a split child must be an object")
-    condition = str(item.get("condition") or "").strip()
-    action = str(item.get("action") or "").strip()
-    if not condition or not action:
+    spec = _parse_spec(item)
+    if spec is None:
         raise ValueError("a split child needs a condition and an action")
-    return RuleSpec(
-        condition=condition, action=action, rationale=str(item.get("rationale") or "")
-    )
+    return spec
 
 
 def _parse_split(content: str, use_count: int) -> SplitProposal:

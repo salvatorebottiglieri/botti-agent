@@ -22,13 +22,19 @@ from cortex.agentic.events import (
 from cortex.api.auth import get_api_key
 from cortex.api.dependencies import (
     get_execution_module,
+    get_feedback_queue,
     get_interaction_service,
+    get_rule_service,
 )
 from cortex.api.schemas import ChatRequest, ChatResponse, ErrorResponse
+from cortex.rules.queue import enqueue_turn
 
 if TYPE_CHECKING:
     from cortex.execution.module import ExecutionModule
     from cortex.interaction.service import InteractionService
+    from cortex.rules.interfaces import FeedbackQueue
+    from cortex.rules.models import Rule
+    from cortex.rules.service import RuleService
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +57,8 @@ async def chat(
     key: str = Depends(get_api_key),
     interaction_service: InteractionService = Depends(get_interaction_service),
     execution_module: ExecutionModule = Depends(get_execution_module),
+    rule_service: RuleService = Depends(get_rule_service),
+    feedback_queue: FeedbackQueue = Depends(get_feedback_queue),
 ) -> ChatResponse:
     """
     Non-streaming chat endpoint.
@@ -76,6 +84,10 @@ async def chat(
         session = await interaction_service.get_or_create_session(request.session_id)
         session_id = session.id
 
+        # The turn's rules, read before the turn: the same call the context
+        # bundle makes, so the queued row can only name rules the model saw.
+        rules = await _snapshot_rules(rule_service)
+
         # Run chat
         max_iterations = request.max_iterations or 20
 
@@ -83,6 +95,12 @@ async def chat(
             session_id=session_id,
             user_message=request.message,
             max_iterations=max_iterations,
+        )
+
+        # Enqueued after the answer, so a slow or failing classifier never
+        # delays or breaks the response.
+        await enqueue_turn(
+            feedback_queue, rules, session_id, response.message, request.message
         )
 
         return ChatResponse(
@@ -111,6 +129,8 @@ async def chat_stream(
     key: str = Depends(get_api_key),
     interaction_service: InteractionService = Depends(get_interaction_service),
     execution_module: ExecutionModule = Depends(get_execution_module),
+    rule_service: RuleService = Depends(get_rule_service),
+    feedback_queue: FeedbackQueue = Depends(get_feedback_queue),
 ) -> StreamingResponse:
     """
     Streaming chat endpoint using Server-Sent Events.
@@ -145,6 +165,7 @@ async def chat_stream(
     max_iterations = request.max_iterations or 20
 
     async def event_generator() -> AsyncGenerator[str, None]:
+        rules = await _snapshot_rules(rule_service)
         try:
             async for event in execution_module.stream_chat(
                 session_id=session_id,
@@ -192,6 +213,15 @@ async def chat_stream(
                             },
                         )
                     case ResponseDoneEvent():
+                        # Before the terminal frame: once the client sees the
+                        # answer, the row for it already exists.
+                        await enqueue_turn(
+                            feedback_queue,
+                            rules,
+                            session_id,
+                            event.message,
+                            request.message,
+                        )
                         yield _sse_event(
                             "done",
                             {
@@ -229,3 +259,12 @@ async def chat_stream(
 def _sse_event(event_type: str, data: dict[str, Any]) -> str:
     """Format data as an SSE event."""
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+
+async def _snapshot_rules(rule_service: RuleService) -> list[Rule]:
+    """The turn's rules before the turn; a failure costs attribution, not the turn."""
+    try:
+        return await rule_service.list_active()
+    except Exception:
+        logger.warning("Reading the active rules failed; not attributing this turn", exc_info=True)
+        return []
