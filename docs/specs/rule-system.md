@@ -1,7 +1,7 @@
 ---
 feature: rule-system
 repo: salvatorebottiglieri/botti-agent
-branch: feat-173-promotion-line
+branch: feat-174-dictation-replaces
 tracker: #166
 ---
 
