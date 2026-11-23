@@ -255,6 +255,89 @@ rule's confidence and state, and `RuleService.list_active()` — what
   read `list_active()` at the caller, before the turn; B = carry the rules on
   the `ResponseDoneEvent`).
 
+## Ticket #173 — a promotion announces itself
+
+_Design, 2026-11-23, before the code. Signatures and contracts are in the
+`json design` block._
+
+The sweep promotes silently: `RuleService` recomputes the posterior, `next_state`
+returns `definitive`, the row is refreshed, and nobody hears about it (the spec
+files this as "Not in slice A"). #173 is the one line the user reads.
+
+- **`cortex.events.types.EventTypes.RULE_PROMOTED`** (`rule.promoted`): the
+  name the spec's module map already draws as the only new edge
+  (`rules -. rule.promoted .-> agentic`).
+- **`cortex.rules.promotion.promotion_line(rule)`** (new, pure): the sentence,
+  `Rule confirmed: <condition> → <action>` — the same `condition → action` shape
+  `render_rules` gives the model, fixed copy and no provider call, so the
+  announcement cannot hallucinate and costs nothing.
+- **`RuleService(repository, *, clock=..., emitter=None)`**: after a refresh
+  that took the state from `staging` to `definitive`, emit `rule.promoted` with
+  the refreshed rule's id, condition, action and the line. Both writers that can
+  promote go through one helper — `record_use` and the sweep inside
+  `list_active`. A demotion or an archive emits nothing (AC 4), and no emitter
+  means no event, so the CLI and every existing test keep working.
+- **`cortex.agentic.notices.PromotionNotices`** (new): the agentic side of the
+  edge. `handle(event)` appends the line carried by a `rule.promoted` event and
+  ignores anything else; `take()` pops one line, FIFO. Bounded (20 lines, the
+  oldest dropped): a line nobody read for weeks is noise, and dropping it is
+  the same loss a failed delivery already accepts.
+- **`AgentLoop(notices=None)`**: at the start of a chat turn it takes at most
+  one line and yields it as the turn's **first** `TextDeltaEvent`, prepending it
+  to the response text. One prefix, one place: `run_chat` accumulates the same
+  delta, the streamed path already emitted it before the answer, and the `done`
+  frame's message carries it too. No notices → the loop is exactly what it was.
+- **`main.py`**: `PromotionNotices()` built with the loop, subscribed to
+  `EventTypes.RULE_PROMOTED` after the bus starts, `RuleService` given
+  `EventEmitter(cortex.event_bus, "rules")`. The event is published after the
+  refresh returns — after commit — and `EventEmitter.emit` already turns a bus
+  failure into a log line, so a lost line never costs the promotion (AC 3).
+- **Not changed, deliberately**: the goal path (`run_goal` assembles its own
+  text and has no user turn to prefix); the eval runner (it calls the loop but
+  must never learn — #175); the CLI (no chat turn). The promotion is still
+  silent for those callers, which is what "the next response that has one"
+  means for a chat product.
+
+### Exits for #173
+
+`tests/unit/rules/test_promotion.py` (new) — the line: the condition and the
+action in the `→` shape; no rationale, no id, no confidence in the sentence.
+
+`tests/unit/rules/test_service.py` — the emission: a `record_use` crossing the
+threshold emits exactly one `rule.promoted`, after the refresh, carrying the
+refreshed rule and the line; the sweep in `list_active` emits one for the rule
+it promotes; a demotion emits none; an archive emits none; a service built
+without an emitter emits nothing and still promotes; a bus that raises leaves
+the promotion stored.
+
+`tests/unit/agentic/test_notices.py` (new) — the buffer: a `rule.promoted` event
+enqueues its line; `take()` returns the lines FIFO and `None` when empty; the
+cap drops the oldest; an event of another type or without a line is ignored.
+
+`tests/unit/agentic/test_loop.py` — the turn: a pending line is the first
+`TextDeltaEvent` and the `done` message starts with it; the turn after it has
+none; with no notices the stream is byte-identical to today.
+
+`tests/unit/test_main_wiring.py` — the root: the service gets an emitter and the
+loop gets the notices; the handler is subscribed to `rule.promoted`.
+
+## Decision 5 — one line per response, FIFO
+
+- **Choice**: the loop takes **one** pending line per chat turn, oldest first.
+  `Rule confirmed: <condition> → <action>` is fixed copy, prepended to the
+  answer.
+- **Alternatives rejected**: (B) take every pending line into the next
+  response — a burst of promotions turns one answer into a wall of system
+  lines, and a turn that fails loses all of them at once.
+- **Consequences**: a second promotion is announced in the response after its
+  own; a turn that ends in an error, or a stream the client cancels before the
+  first frame, loses its line — the cost the AC already accepts. The wording is
+  not the model's, so the line is identical in every language and costs no
+  provider call.
+- **Owner sign-off**: 2026-11-23, owner in chat — "A" (to the two options: A =
+  one line per response, FIFO; B = every pending line in the next response),
+  with the proposed wording accepted.
+
 ## Premises (design)
 
 Inherited: P1-P10 of the spec. New:
@@ -268,6 +351,10 @@ Inherited: P1-P10 of the spec. New:
 | P15 | No route enqueues a turn yet | `rg -n "enqueue" src/cortex/api src/cortex/execution src/cortex/main.py` | no match |
 | P16 | The composition root has exactly one periodic task to sit beside | `rg -n "create_task" src/cortex/main.py` | `main.py:364` — the evidence sweep |
 | P17 | The CLI has no chat turn to attribute, so the spec's "the CLI enqueues" has no seat today | `rg -cn "chat" src/cortex/cli.py` | `0` matches |
+| P19 | The promotion is decided in exactly two places, both inside `RuleService` | `rg -n "next_state" src/cortex/rules/service.py` | `:120` (record_use) and `:149` (the sweep in list_active) | confirmed |
+| P20 | The house publish seam already swallows a bus failure, which is AC 3 | `sed -n '20,45p' src/cortex/events/emitter.py` | `emit` logs a warning and returns; it never raises | confirmed |
+| P21 | The event names are a closed registry | `rg -n "class EventTypes" -A6 src/cortex/events/types.py` | a `StrEnum`; `validation` already emits its own through `EventTypes` | confirmed |
+| P22 | The loop's text reaches both callers through the delta stream, so one prefix delta is enough | `sed -n '113,132p;262,270p' src/cortex/agentic/loop.py` | `run_chat` accumulates `TextDeltaEvent.delta`; the RESPOND branch emits the whole text as one delta when it did not stream | confirmed |
 | P18 | The per-module LLM client the classifier wants exists | `rg -n "create_for_module" src/cortex/llm/factory.py` | `:56` — the definition (no caller under `src/` yet, P2 of the spec) |
 
 ## External fixtures
@@ -392,6 +479,33 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
         "children": []
        }
       ]
+     }
+    ]
+   },
+   {
+    "name": "cortex.rules.service.RuleService.record_use",
+    "note": "#173 emits rule.promoted after the refresh that took the rule to definitive",
+    "children": [
+     {
+      "name": "cortex.rules.promotion.promotion_line",
+      "note": "#173 the fixed sentence, no provider call",
+      "children": []
+     },
+     {
+      "name": "cortex.events.emitter.EventEmitter.emit",
+      "note": "#173 the house seam: a bus failure is a log line, never a lost promotion",
+      "children": []
+     }
+    ]
+   },
+   {
+    "name": "cortex.agentic.loop.AgentLoop.stream_chat",
+    "note": "#173 takes one pending line and yields it as the turn's first text delta",
+    "children": [
+     {
+      "name": "cortex.agentic.notices.PromotionNotices.take",
+      "note": "#173 FIFO, one per turn, None when nothing is pending",
+      "children": []
      }
     ]
    },
@@ -570,6 +684,61 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "note": "#172 a correction in chat moves a rule's confidence, end to end"
   },
   {
+   "kind": "add",
+   "path": "src/cortex/rules/promotion.py",
+   "note": "#173 promotion_line: the one sentence the user reads"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/service.py",
+   "note": "#173 an optional EventEmitter; one helper emits rule.promoted after a staging -> definitive refresh"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/events/types.py",
+   "note": "#173 RULE_PROMOTED = rule.promoted"
+  },
+  {
+   "kind": "add",
+   "path": "src/cortex/agentic/notices.py",
+   "note": "#173 PromotionNotices: the agentic side of the edge, bounded FIFO"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/agentic/loop.py",
+   "note": "#173 AgentLoop takes one line per chat turn and yields it as the first text delta"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/main.py",
+   "note": "#173 builds and subscribes the notices, gives the service its emitter"
+  },
+  {
+   "kind": "add",
+   "path": "tests/unit/rules/test_promotion.py",
+   "note": "#173 the sentence"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/test_service.py",
+   "note": "#173 the emission: one after commit, none for a demotion or an archive"
+  },
+  {
+   "kind": "add",
+   "path": "tests/unit/agentic/test_notices.py",
+   "note": "#173 the FIFO buffer and its cap"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/agentic/test_loop.py",
+   "note": "#173 the line as the turn's first delta, once"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/test_main_wiring.py",
+   "note": "#173 the root wires the emitter and the notices"
+  },
+  {
    "kind": "mod",
    "path": "src/cortex/rules/attribution.py",
    "note": "#172 advisory from #171: _apply_proposal extracted out of attribute, behaviour identical"
@@ -680,6 +849,21 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "module": "src/cortex/api/routes/chat.py",
    "language": "python",
    "code": "async def chat(request: ChatRequest, key: str = Depends(get_api_key), interaction_service: InteractionService = Depends(get_interaction_service), execution_module: ExecutionModule = Depends(get_execution_module), rule_service: RuleService = Depends(get_rule_service), feedback_queue: FeedbackQueue = Depends(get_feedback_queue)) -> ChatResponse: ..."
+  },
+  {
+   "module": "src/cortex/rules/promotion.py",
+   "language": "python",
+   "code": "def promotion_line(rule: Rule) -> str: ..."
+  },
+  {
+   "module": "src/cortex/rules/service.py",
+   "language": "python",
+   "code": "class RuleService:\n    def __init__(self, repository: RuleRepository, *, clock: Callable[[], datetime] = _utcnow, emitter: EventEmitter | None = None) -> None: ..."
+  },
+  {
+   "module": "src/cortex/agentic/notices.py",
+   "language": "python",
+   "code": "class PromotionNotices:\n    def __init__(self, capacity: int = 20) -> None: ...\n    async def handle(self, event: BaseEvent) -> None: ...\n    def take(self) -> str | None: ..."
   },
   {
    "module": "src/cortex/api/routes/chat.py",

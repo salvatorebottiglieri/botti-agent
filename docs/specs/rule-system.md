@@ -1,7 +1,7 @@
 ---
 feature: rule-system
 repo: salvatorebottiglieri/botti-agent
-branch: feat-166-rule-feedback
+branch: feat-173-promotion-line
 tracker: #166
 ---
 
