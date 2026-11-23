@@ -113,6 +113,7 @@ class AgentLoop:
         iterations = 0
         usage: UsageStats | None = None
         latency_ms: float | None = None
+        notice: str | None = None
         async for event in self.stream_chat(
             session_id=session_id,
             user_message=user_message,
@@ -128,6 +129,7 @@ class AgentLoop:
                 case ResponseDoneEvent(tools_used=used, iterations=iters):
                     tools_used, iterations = used, iters
                     usage, latency_ms = event.usage, event.latency_ms
+                    notice = event.notice
                 # Ignore progress events; stream_chat re-raises the original exception
                 case _:
                     pass
@@ -138,6 +140,7 @@ class AgentLoop:
             session_id=session_id,
             usage=usage,
             latency_ms=latency_ms,
+            notice=notice,
         )
 
     async def stream_chat(
@@ -277,6 +280,7 @@ class AgentLoop:
                             iterations,
                             total_usage=total_usage,
                             started_at=started_at,
+                            notice=notice,
                         )
                         return
 
@@ -333,6 +337,7 @@ class AgentLoop:
                                 iterations,
                                 total_usage=total_usage,
                                 started_at=started_at,
+                                notice=notice,
                             )
                             return
 
@@ -439,6 +444,7 @@ class AgentLoop:
                                 iterations,
                                 total_usage=total_usage,
                                 started_at=started_at,
+                                notice=notice,
                             )
                             return
 
@@ -611,6 +617,7 @@ class AgentLoop:
         *,
         total_usage: UsageStats | None,
         started_at: float,
+        notice: str | None = None,
     ) -> ResponseDoneEvent:
         """Build the final done event, computing usage and latency once."""
         return ResponseDoneEvent(
@@ -620,4 +627,5 @@ class AgentLoop:
             iterations=iterations,
             usage=total_usage,
             latency_ms=(self._now() - started_at) * 1000.0,
+            notice=notice,
         )

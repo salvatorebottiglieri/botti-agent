@@ -1401,6 +1401,7 @@ class TestPromotionNotices:
         response = await loop.run_chat(session_id, "Hi")
 
         assert response.message == f"{self.LINE}\nHello!"
+        assert response.notice == self.LINE
 
     @pytest.mark.asyncio
     async def test_the_turn_after_the_only_line_has_none(

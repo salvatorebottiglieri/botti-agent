@@ -16,10 +16,10 @@ from cortex.events.types import EventTypes
 class PromotionNotices:
     """A bounded FIFO of promotion lines, fed by the bus, drained by the loop."""
 
-    def __init__(self, capacity: int = 20) -> None:
+    def __init__(self) -> None:
         # A bounded deque drops the oldest line on overflow, which is exactly
         # the line the next turn would have read first anyway.
-        self._lines: deque[str] = deque(maxlen=capacity)
+        self._lines: deque[str] = deque(maxlen=20)
 
     async def handle(self, event: BaseEvent) -> None:
         """Enqueue the line of a `rule.promoted` event; ignore anything else."""

@@ -1,11 +1,11 @@
-"""The promotion sentence (#173, docs/design/rule-system.md ## Decision 5).
+"""promotion_line — the one sentence the user reads when a rule is promoted.
 
 Fixed copy, no provider call: only the condition and the action may reach the
 user — never the rationale, the id or the score.
 """
 
 from cortex.rules.models import Rule
-from cortex.rules.promotion import promotion_line
+from cortex.rules.render import promotion_line
 
 
 def test_the_line_is_the_condition_and_the_action_in_the_render_shape():

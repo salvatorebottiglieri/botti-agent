@@ -26,7 +26,7 @@ from cortex.rules.models import (
     RuleUse,
     UseOutcome,
 )
-from cortex.rules.promotion import promotion_line
+from cortex.rules.render import promotion_line
 from cortex.rules.scoring import next_state, posterior
 
 logger = logging.getLogger(__name__)

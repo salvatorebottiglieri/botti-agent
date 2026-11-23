@@ -40,7 +40,9 @@ class FakeExecutionModule:
     async def run_chat(
         self, session_id: UUID, user_message: str, *, max_iterations: int = 20
     ) -> SimpleNamespace:
-        return SimpleNamespace(message=ASSISTANT_TURN, iterations=1, tools_used=[])
+        return SimpleNamespace(
+            message=ASSISTANT_TURN, iterations=1, tools_used=[], notice=None
+        )
 
 
 class FakeInteractionService:

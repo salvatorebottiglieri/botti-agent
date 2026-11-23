@@ -149,6 +149,7 @@ class ChatResponse:
     session_id: UUID | None = None
     usage: UsageStats | None = None
     latency_ms: float | None = None
+    notice: str | None = None
 
     @property
     def tool_names(self) -> list[str]:

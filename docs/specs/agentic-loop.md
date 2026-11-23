@@ -47,6 +47,7 @@ RECEIVE ─► CONTEXT ─► THINK ─► ACT ─► OBSERVE ─┐
 | `ContextBuilder` | `context_builder.py` | `build(session_id, user_message, mode, *, goal_id, fact_types) -> Context` |
 | `Reasoner` | `reasoner.py` | `reason(context) -> Decision`; `reason_stream(context) -> AsyncIterator[str \| Decision]` |
 | `LoopExecutor` | `executor.py` | `execute_single(call)`, `execute_tools(calls, *, timeout, parallel)`; `max_parallel=5` |
+| `PromotionNotices` | `notices.py` | `handle(event)` for `rule.promoted` (ignores any other event); `take()` pops one line, FIFO, bounded at 20 (#173) |
 
 `Decision` types (`models.py`): `RESPOND`, `EXECUTE_TOOLS`. Clarification is **not**
 a decision type — the model asks by calling the `ask_user` tool, handled as an
@@ -73,7 +74,10 @@ Ordering: a `thinking` event per iteration; `tool_start`/`tool_done` per call;
 `text` deltas; then `done`. Errors yield one `error` event and then re-raise the
 original exception out of the generator. In stream mode the response deltas
 arrive *before* the iteration's `thinking` event; consumers must tolerate both
-orders.
+orders. A turn that has a pending promotion line begins with one `text` delta
+carrying it (`Rule confirmed: …\n`) before any `thinking`, and the `done`
+frame's message carries the same line; the line is never written to the session
+history and never reaches the text the classifier reads (#173).
 
 ## Modes
 

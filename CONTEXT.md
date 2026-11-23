@@ -141,6 +141,12 @@ category) and at most one Rule proposal. Distinct from an Outcome, which is the 
 category of one use.
 _Avoid_: signal, score, judgement
 
+**Promotion line**:
+The one fixed sentence a promotion produces — `Rule confirmed: <condition> → <action>` —
+carried as the first line of the next chat response. It is not the model's text: it
+never enters the session history and never reaches the classifier.
+_Avoid_: announcement, notice, notification banner
+
 **Feedback queue**:
 The persisted set of turns that had Rules in context, got a user reply and are not
 attributed yet. It is what lets attribution survive a provider outage or a restart; an

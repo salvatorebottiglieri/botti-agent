@@ -98,7 +98,11 @@ async def chat(
 
         # After the answer: a slow or failing classifier never delays the reply.
         await enqueue_turn(
-            feedback_queue, rules, session_id, response.message, request.message
+            feedback_queue,
+            rules,
+            session_id,
+            _model_text(response.message, response.notice),
+            request.message,
         )
 
         return ChatResponse(
@@ -216,7 +220,7 @@ async def chat_stream(
                             feedback_queue,
                             rules,
                             session_id,
-                            event.message,
+                            _model_text(event.message, event.notice),
                             request.message,
                         )
                         yield _sse_event(
@@ -265,3 +269,8 @@ async def _snapshot_rules(rule_service: RuleService) -> list[Rule]:
     except Exception:
         logger.warning("Reading the active rules failed; not attributing this turn", exc_info=True)
         return []
+
+
+def _model_text(message: str, notice: str | None) -> str:
+    """The assistant turn as the model produced it: the promotion line dropped."""
+    return message.removeprefix(f"{notice}\n") if notice else message

@@ -40,20 +40,6 @@ async def test_take_returns_the_lines_fifo_and_none_when_empty():
     ]
 
 
-async def test_the_cap_drops_the_oldest():
-    """Witness: an unbounded buffer keeps a line nobody read for weeks."""
-    notices = PromotionNotices(capacity=2)
-
-    for index in range(3):
-        await notices.handle(_promotion(f"Rule confirmed: c{index} → a{index}"))
-
-    assert [notices.take(), notices.take(), notices.take()] == [
-        "Rule confirmed: c1 → a1",
-        "Rule confirmed: c2 → a2",
-        None,
-    ]
-
-
 async def test_the_default_buffer_holds_twenty_lines():
     notices = PromotionNotices()
 

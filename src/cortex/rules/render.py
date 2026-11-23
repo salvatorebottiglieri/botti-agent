@@ -39,3 +39,8 @@ def render_rules(rules: Sequence[Rule]) -> str | None:
     if any(rule.declares_itself() for rule in applicable):
         lines.append(_DECLARATION_INSTRUCTION)
     return "\n".join(lines)
+
+
+def promotion_line(rule: Rule) -> str:
+    """The announcement of one promotion, in the shape the rules render in."""
+    return f"Rule confirmed: {rule.condition} → {rule.action}"

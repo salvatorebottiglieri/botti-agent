@@ -647,6 +647,28 @@ class TestChatStreamAttribution:
         assert row.assistant_turn == "of course, booking it"
         assert row.user_reply == "no, don't book without asking"
 
+    def test_a_promotion_line_is_not_classified_as_the_assistant_turn(self):
+        """The line is fixed copy, not the model's words: the classifier reads the
+        assistant turn as the model produced it, yet the done frame still carries
+        the line the user sees."""
+        notice = "Rule confirmed: the user asks to book → ask before booking"
+        rule = Rule(condition="the user asks to book", action="ask before booking")
+        done = ResponseDoneEvent(
+            session_id=uuid4(),
+            message=f"{notice}\nof course, booking it",
+            tools_used=[],
+            iterations=1,
+            notice=notice,
+        )
+
+        response, queue, _ = self._drive([done], rule_service=FakeRuleService([rule]))
+
+        assert parse_sse(response.text)[-1][1]["final_message"] == done.message
+        row = queue.items[0]
+        assert row.assistant_turn == "of course, booking it"
+        assert "Rule confirmed:" not in row.assistant_turn
+        assert row.user_reply == "no, don't book without asking"
+
     def test_no_row_when_the_snapshot_was_empty(self):
         response, queue, _ = self._drive(
             [ResponseDoneEvent(session_id=uuid4(), message="ok", tools_used=[], iterations=0)],

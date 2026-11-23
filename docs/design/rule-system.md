@@ -267,7 +267,8 @@ files this as "Not in slice A"). #173 is the one line the user reads.
 - **`cortex.events.types.EventTypes.RULE_PROMOTED`** (`rule.promoted`): the
   name the spec's module map already draws as the only new edge
   (`rules -. rule.promoted .-> agentic`).
-- **`cortex.rules.promotion.promotion_line(rule)`** (new, pure): the sentence,
+- **`cortex.rules.render.promotion_line(rule)`** (new, pure, beside `render_rules`
+  which owns the same shape): the sentence,
   `Rule confirmed: <condition> → <action>` — the same `condition → action` shape
   `render_rules` gives the model, fixed copy and no provider call, so the
   announcement cannot hallucinate and costs nothing.
@@ -277,11 +278,11 @@ files this as "Not in slice A"). #173 is the one line the user reads.
   promote go through one helper — `record_use` and the sweep inside
   `list_active`. A demotion or an archive emits nothing (AC 4), and no emitter
   means no event, so the CLI and every existing test keep working.
-- **`cortex.agentic.notices.PromotionNotices`** (new): the agentic side of the
-  edge. `handle(event)` appends the line carried by a `rule.promoted` event and
-  ignores anything else; `take()` pops one line, FIFO. Bounded (20 lines, the
-  oldest dropped): a line nobody read for weeks is noise, and dropping it is
-  the same loss a failed delivery already accepts.
+- **`cortex.agentic.notices.PromotionNotices`** (new, no options): the agentic
+  side of the edge. `handle(event)` appends the line carried by a `rule.promoted`
+  event and ignores anything else; `take()` pops one line, FIFO. Bounded at 20
+  lines, hardcoded, the oldest dropped: a line nobody read for weeks is noise,
+  and dropping it is the same loss a failed delivery already accepts.
 - **`AgentLoop(notices=None)`**: at the start of a chat turn it takes at most
   one line and yields it as the turn's **first** `TextDeltaEvent`, `line + "\n"`
   (the sentence on its own line, never glued to the answer). One prefix, one
@@ -305,7 +306,7 @@ files this as "Not in slice A"). #173 is the one line the user reads.
 
 ### Exits for #173
 
-`tests/unit/rules/test_promotion.py` (new) — the line: the condition and the
+`tests/unit/rules/test_render.py` (new) — the line: the condition and the
 action in the `→` shape; no rationale, no id, no confidence in the sentence.
 
 `tests/unit/rules/test_service.py` — the emission: a `record_use` crossing the
@@ -495,7 +496,7 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     "note": "#173 emits rule.promoted after the refresh that took the rule to definitive",
     "children": [
      {
-      "name": "cortex.rules.promotion.promotion_line",
+      "name": "cortex.rules.render.promotion_line",
       "note": "#173 the fixed sentence, no provider call",
       "children": []
      },
@@ -692,9 +693,9 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "note": "#172 a correction in chat moves a rule's confidence, end to end"
   },
   {
-   "kind": "add",
-   "path": "src/cortex/rules/promotion.py",
-   "note": "#173 promotion_line: the one sentence the user reads"
+   "kind": "mod",
+   "path": "src/cortex/rules/render.py",
+   "note": "#173 promotion_line lives beside render_rules: the sentence the user reads"
   },
   {
    "kind": "mod",
@@ -859,9 +860,19 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "code": "async def chat(request: ChatRequest, key: str = Depends(get_api_key), interaction_service: InteractionService = Depends(get_interaction_service), execution_module: ExecutionModule = Depends(get_execution_module), rule_service: RuleService = Depends(get_rule_service), feedback_queue: FeedbackQueue = Depends(get_feedback_queue)) -> ChatResponse: ..."
   },
   {
-   "module": "src/cortex/rules/promotion.py",
+   "module": "src/cortex/rules/render.py",
    "language": "python",
    "code": "def promotion_line(rule: Rule) -> str: ..."
+  },
+  {
+   "module": "src/cortex/agentic/loop.py",
+   "language": "python",
+   "code": "class AgentLoop:\n    def __init__(self, context_builder: ContextBuilder, reasoner: Reasoner, executor: LoopExecutor, event_bus: EventBus | None = None, session_repository: SessionRepository | None = None, max_chat_iterations: int = 20, max_goal_iterations: int = 100, now: Callable[[], float] = time.monotonic, notices: PromotionNotices | None = None): ...\n    async def stream_chat(self, session_id: UUID, user_message: str, *, max_iterations: int | None = None, stream: bool = False) -> AsyncGenerator[LoopEvent, None]: ..."
+  },
+  {
+   "module": "src/cortex/events/emitter.py",
+   "language": "python",
+   "code": "async def emit(self, event_type: str, payload: dict[str, Any] | None = None, *, session_id: UUID | None = None, trace_id: str | None = None, salience: float = 0.5) -> None: ..."
   },
   {
    "module": "src/cortex/rules/service.py",
@@ -871,7 +882,7 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
   {
    "module": "src/cortex/agentic/notices.py",
    "language": "python",
-   "code": "class PromotionNotices:\n    def __init__(self, capacity: int = 20) -> None: ...\n    async def handle(self, event: BaseEvent) -> None: ...\n    def take(self) -> str | None: ..."
+   "code": "class PromotionNotices:\n    async def handle(self, event: BaseEvent) -> None: ...\n    def take(self) -> str | None: ..."
   },
   {
    "module": "src/cortex/api/routes/chat.py",
@@ -995,6 +1006,26 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     "id": "cortex.rules.queue.FeedbackQueue.enqueue",
     "module": "src/cortex/rules/queue.py",
     "kind": "keep"
+   },
+   {
+    "id": "cortex.rules.service.RuleService.record_use",
+    "module": "src/cortex/rules/service.py",
+    "kind": "keep"
+   },
+   {
+    "id": "cortex.events.emitter.EventEmitter.emit",
+    "module": "src/cortex/events/emitter.py",
+    "kind": "keep"
+   },
+   {
+    "id": "cortex.agentic.notices.PromotionNotices.take",
+    "module": "src/cortex/agentic/notices.py",
+    "kind": "add"
+   },
+   {
+    "id": "cortex.agentic.loop.AgentLoop.stream_chat",
+    "module": "src/cortex/agentic/loop.py",
+    "kind": "mod"
    }
   ],
   "edges": [
@@ -1097,6 +1128,14 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    {
     "from": "cortex.rules.queue.enqueue_turn",
     "to": "cortex.rules.queue.FeedbackQueue.enqueue"
+   },
+   {
+    "from": "cortex.rules.service.RuleService.record_use",
+    "to": "cortex.events.emitter.EventEmitter.emit"
+   },
+   {
+    "from": "cortex.agentic.loop.AgentLoop.stream_chat",
+    "to": "cortex.agentic.notices.PromotionNotices.take"
    }
   ]
  },
@@ -1721,6 +1760,58 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     {
      "kind": "effect",
      "type": "one queued_feedback row",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.service.RuleService.record_use",
+   "callee": "cortex.events.emitter.EventEmitter.emit",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "None once the bus accepted the event, after the refresh committed",
+     "handled_at": "the caller ignores it: the promotion is already stored"
+    },
+    {
+     "kind": "absent",
+     "type": "None when the service has no emitter (the CLI, every caller that builds the service without one)",
+     "handled_at": "_announce_promotion returns before the call; the rule is still promoted"
+    },
+    {
+     "kind": "raises",
+     "type": "nothing: EventEmitter catches the bus error, logs a warning and returns",
+     "handled_at": "the emitter itself; a lost line never costs the promotion (AC 3)"
+    },
+    {
+     "kind": "effect",
+     "type": "one `rule.promoted` event on the bus, only for staging -> definitive",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.agentic.loop.AgentLoop.stream_chat",
+   "callee": "cortex.agentic.notices.PromotionNotices.take",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "one line, oldest first",
+     "handled_at": "yielded as the turn's first text delta and carried into every terminal done message"
+    },
+    {
+     "kind": "absent",
+     "type": "None when nothing is pending, or when the loop was built without notices",
+     "handled_at": "no prefix: the stream is exactly what it was before #173"
+    },
+    {
+     "kind": "raises",
+     "type": "nothing: the buffer is a deque operation",
+     "handled_at": "nothing to dispatch: the call cannot fail"
+    },
+    {
+     "kind": "effect",
+     "type": "the line is consumed: a turn that later fails loses it, which the AC accepts",
      "handled_at": null
     }
    ]
