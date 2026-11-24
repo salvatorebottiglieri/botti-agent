@@ -16,8 +16,9 @@
 
 ## System overview
 
-One diagram, all subsystems. Nodes are grouped by layer (see the module map
-below); external systems and data stores are outside the `Cortex` layers.
+One diagram, all subsystems. Nodes are grouped by the enforced order (see the
+module map below); external systems and data stores are outside the `Cortex`
+groups.
 Solid arrows are runtime calls; `-.` arrows are protocol/MQTT paths.
 
 ```mermaid
@@ -33,48 +34,58 @@ flowchart TB
         Sidecar[[rizzo-pii<br/>pseudonymizer]]
     end
 
-    subgraph L6["Layer 6 - integration"]
+    subgraph G1["G1 integration"]
         Protocol[cortex_protocol]
         Laptop[laptop-minion]
         Root[main.py<br/>composition root]
     end
 
-    subgraph L5["Layer 5 - orchestration"]
+    subgraph G2["G2 orchestration"]
         API[api routes]
         Execution[ExecutionModule]
         Interaction[InteractionService]
     end
 
-    subgraph L4["Layer 4 - agentic core"]
+    subgraph G3["G3 consumers"]
+        Eval[eval]
+        Trace[trace]
+    end
+
+    subgraph G4["G4 agentic core"]
         Loop[AgentLoop]
         CtxBuilder[ContextBuilder]
         Reasoner[Reasoner]
         LoopExec[LoopExecutor]
     end
 
-    subgraph L3["Layer 3 - services"]
+    subgraph G5["G5 services"]
         ToolSvc[ToolExecutorService]
         MinionSvc[MinionService]
     end
 
-    subgraph L2["Layer 2 - modules"]
+    subgraph G6["G6 modules"]
         Sessions[sessions]
         Memory[memory<br/>FactStore / EvidenceStore / ContextProvider / FactExtractor]
         Goals[goals]
         MinionsMod[minions gateway]
-        Trace[trace]
-        Eval[eval]
         Learning[learning<br/>ESN reservoir]
         Rules[rules<br/>RuleService]
     end
 
-    subgraph L1["Layer 1 - primitives"]
+    subgraph G7["G7 primitives"]
         River[(events - The River)]
         LLM[llm]
         Tools[tools]
         DB[db]
+    end
+
+    subgraph G8["G8 foundation"]
         Config[config]
         Logging[logging]
+    end
+
+    subgraph G9["G9 shared"]
+        Shared[shared<br/>bundle / loop events]
     end
 
     PG[(Postgres)]
@@ -89,13 +100,22 @@ flowchart TB
     API --> Execution
     API --> Interaction
     API --> MinionSvc
+    API --> Shared
     Execution --> Loop
     Interaction --> Sessions
+
+    Eval --> Loop
+    Eval --> Rules
+    Eval --> Shared
+    Trace --> DB
+    Trace --> Sidecar
+    Trace --> Shared
 
     Loop --> CtxBuilder
     Loop --> Reasoner
     Loop --> LoopExec
     Loop --> River
+    Loop --> Shared
     CtxBuilder --> Memory
     CtxBuilder --> Sessions
     CtxBuilder --> Tools
@@ -108,18 +128,15 @@ flowchart TB
     MinionSvc --> Memory
     MinionSvc --> River
     Learning --> River
-    Eval --> Loop
-    Eval --> Rules
-    Trace --> DB
-    Trace --> Sidecar
     Laptop --> Protocol
 
+    Memory --> Shared
     Memory --> Rules
     Memory --> DB
     Rules --> DB
     Sessions --> DB
     Goals --> DB
-    MinionsMod --> DB
+    MinionsMod --> River
     DB --> PG
 ```
 
@@ -195,49 +212,98 @@ Event types (`EventTypes`):
 
 ## Module map
 
-### Layer 0 — foundation
+### The enforced order
+
+The order below is not a convention: `[tool.importlinter]` in `pyproject.toml`
+holds it (ADR-0022). A module may import a group **below** it; a same-group
+import is legal only if it closes no cycle (`acyclic_siblings`). Top to bottom
+in the table, bottom-up in the sections that follow it:
+
+| # | Group | Members |
+|---|---|---|
+| 1 | integration | `main`, `cli` |
+| 2 | orchestration | `api`, `execution`, `interaction` |
+| 3 | consumers | `eval`, `trace` |
+| 4 | agentic core | `agentic` |
+| 5 | services | `services` |
+| 6 | modules | `sessions`, `memory`, `validation`, `goals`, `minions`, `rules`, `learning` |
+| 7 | primitives | `events`, `llm`, `tools`, `db` |
+| 8 | foundation | `config`, `logging`, `safety` |
+| 9 | shared | `shared` |
+
+The scale follows **who drives whom**, not the folder names. The one place
+where this inverts the older L0–L6 numbering this document used is `eval` and
+`trace`: the old table filed both under Layer 2 (standalone modules) while
+`agentic` was Layer 4, and the check puts them *above* it. They belong above
+because they consume the loop — the eval harness builds a real `AgentLoop`
+(`eval/runner.py`) and the trace recorder consumes the `LoopEvent` stream it
+emits — and a consumer below what it drives would have to be imported by it.
+The diagram at the top already drew `Eval --> Loop`; the numbers said the
+inverse.
+
+### Group 9 — shared
+
+| Piece | Path | Role |
+|---|---|---|
+| The bundle | `src/cortex/shared/bundle.py` | `MemoryContext` (facts, personality, ambient, rules, `degraded_dimensions`), `PersonalityContext`, `AmbientContext` — what the Memory Module contributes to a reasoning step |
+| The loop's events | `src/cortex/shared/loop_events.py` | `LoopEvent` and its seven subclasses (`thinking`, `text`, `tool_start`, `tool_done`, `done`, `ask_user`, `error`); `event_type` is the wire name, `to_dict()` the JSON form |
+
+`shared` imports nothing from `cortex` at runtime: its only `cortex` imports
+are `Fact`, `Rule` and `UsageStats` under `if TYPE_CHECKING:`. A type it needs
+at runtime would have to move down with it.
+
+### Group 8 — foundation
 
 | Component | Path | Role |
 |---|---|---|
 | Config | `src/cortex/config/` | YAML + env settings (Pydantic); per-module settings models |
 | Logging | `src/cortex/logging/` | structlog setup, `trace_id` propagation |
-| DB | `src/cortex/db/` | asyncpg pool, `DbSession` context manager, migration runner |
+| Safety | `src/cortex/safety/` | `backup.py` (PostgreSQL dumps, the external store), `journal.py` (snapshots, journal, undo), `shell_guard.py` (deny-list). See [safety-net.md](safety-net.md), ADR-0021 |
 
-### Layer 1 — primitives
+### Group 7 — primitives
 
 | Component | Path | Role |
 |---|---|---|
 | Event bus | `src/cortex/events/` | The River (above) |
 | LLM | `src/cortex/llm/` | Provider-agnostic `LLMClient`; `LLMClientFactory`; `CircuitBreaker` wrapper (ADR-0009) |
 | Tools | `src/cortex/tools/` | `ToolRegistry` / `ToolExecutor` interfaces, `InMemoryToolRegistry`; meta tools `file_read`, `file_write`, `grep`, `shell`, `ask_user`, registered deny-by-default from the `ToolsSettings` allow-list (`TOOLS_ALLOW`) |
+| DB | `src/cortex/db/` | asyncpg pool, `DbSession` context manager, migration runner |
 
-### Layer 2 — standalone modules
+### Group 6 — modules
 
 | Module | Path | Public seam |
 |---|---|---|
 | Sessions | `src/cortex/sessions/` | `SessionRepository`; lifecycle free functions in `policy.py` (`create_session`, `resume_session`, `add_user_message`, `end_session`, `get_or_create_session`, ADR-0011) |
-| Memory | `src/cortex/memory/` | `FactStore` (CRUD + dedup; records each observation through `PostgresEvidenceStore`, which owns `facts.confidence`, ADR-0013), `EvidenceStore` (synchronous in-memory E1 contract), `ContextProvider` (bundle seam, personality/ambient), `FactExtractor` (ingestion); split from `MemoryService` per ADR-0003 |
+| Memory | `src/cortex/memory/` | `FactStore` (CRUD + dedup; records each observation through `PostgresEvidenceStore`, which owns `facts.confidence`, ADR-0013), `EvidenceStore` (synchronous in-memory E1 contract), `ContextProvider` (the bundle seam, personality/ambient; the bundle types it returns live in `shared`), `FactExtractor` (ingestion); split from `MemoryService` per ADR-0003 |
 | Validation | `src/cortex/validation/` | LogicEngine (strict Datalog parser + PyDatalog), ConceptValidationService (ADR-0007) and ConceptDerivationService (LLM revision loop, `concept.validated`/`concept.rejected` events, #28/#29); `ContextProvider.store_concept` stores only validated concepts |
-| Goals | `src/cortex/goals/` | `GoalRepository`, persistent/resumable goals (ADR-0004) |
+| Goals | `src/cortex/goals/` | `Goal`, `GoalStep`, `GoalStatus` (`models.py`), `GoalRepository`, persistent/resumable goals (ADR-0004) |
 | Minions | `src/cortex/minions/` | `MinionGateway`, `MinionRegistry`, `MinionEventHandler`; `MinionMQTTClient`. See [minion-protocol.md](minion-protocol.md) |
-| Trace | `src/cortex/trace/` | `TraceRepository`, `TraceRecorder`, `Pseudonymizer`, `audit`. See [trace-system.md](trace-system.md) |
-| Eval | `src/cortex/eval/` | fixtures, runner, grader, judge, metrics, baseline, gate. See [eval-system.md](eval-system.md) |
 | Rules | `src/cortex/rules/` | `RuleRepository`, `RuleService` (create / record_use / sweep / archive / split / merge), the pure score in `scoring.py`, `render_rules`; the feedback queue (`FeedbackQueue`, `enqueue_turn`, `FeedbackDrain`) and the attribution seam the chat endpoints import (`AttributionRun`, #168-#172). See [rule-system.md](rule-system.md) |
 | Learning | `src/cortex/learning/` | Echo State Network (`reservoir.py`), per-target readouts, `encoding.py`, `module.py` (ADR-0001) |
 
-### Layer 3 — services
+### Group 5 — services
 
 | Service | Path | Role |
 |---|---|---|
 | `ToolExecutorService` | `src/cortex/services/tool_executor.py` | Tool execution with circuit breaker, event emission, metrics |
 | `MinionService` | `src/cortex/services/minion_service.py` | MQTT gateway → facts/events on the bus |
 
-### Layer 4 — agentic core
+### Group 4 — agentic core
 
-`src/cortex/agentic/` — `ContextBuilder`, `Reasoner`, `LoopExecutor`, `AgentLoop`, `PromotionNotices` (the `rule.promoted` buffer, #173).
+`src/cortex/agentic/` — `ContextBuilder`, `Reasoner`, `LoopExecutor`, `AgentLoop`, `PromotionNotices` (the `rule.promoted` buffer, #173), and in `models.py` the loop's own vocabulary: `Decision`, `DecisionType`, `Mode`, `Context`, `GoalContext`, `ChatResponse`, `GoalResult`, `MaxIterationsError`.
+It no longer owns the system's shared vocabulary: the context bundle is
+`shared/bundle.py` and the loop's events are `shared/loop_events.py` (#181), so
+`memory`, `api`, `trace` and `eval` import those without importing the loop.
 Full contract in [agentic-loop.md](agentic-loop.md).
 
-### Layer 5 — orchestration
+### Group 3 — consumers
+
+| Module | Path | Public seam |
+|---|---|---|
+| Eval | `src/cortex/eval/` | fixtures, runner, grader, judge, metrics, baseline, gate; the runner builds a real `AgentLoop` per task inside a sandbox. See [eval-system.md](eval-system.md) |
+| Trace | `src/cortex/trace/` | `TraceRepository`, `TraceRecorder` (consumes the `LoopEvent` stream), `Pseudonymizer`, `audit`. See [trace-system.md](trace-system.md) |
+
+### Group 2 — orchestration
 
 | Component | Path | Role |
 |---|---|---|
@@ -245,84 +311,141 @@ Full contract in [agentic-loop.md](agentic-loop.md).
 | `InteractionService` | `src/cortex/interaction/service.py` | Thin I/O facade over session policy |
 | API | `src/cortex/api/` | FastAPI app, auth, routes |
 
-### Layer 6 — integration
+### Group 1 — integration
 
 | Component | Path | Role |
 |---|---|---|
-| `cortex-protocol` | `src/cortex_protocol/` | Shared, language-agnostic minion schemas + MQTT topics; separate distributable package |
-| `laptop-minion` | `laptop-minion/` | Standalone laptop sensor agent (own `pyproject.toml`, tests) |
+| `cortex-protocol` | `src/cortex_protocol/` | Shared, language-agnostic minion schemas + MQTT topics; separate distributable package, outside the `cortex` package and its contracts |
+| `laptop-minion` | `laptop-minion/` | Standalone laptop sensor agent (own `pyproject.toml`, tests), outside the contracts |
 | Composition root | `src/cortex/main.py` | `initialize_app()` wires everything |
+| CLI | `src/cortex/cli.py` | `cortex <command>`; the operator's entry points into `rules`, `memory`, `safety` |
 
 ## Dependency direction
 
 ```mermaid
 flowchart TB
-    subgraph L6[Layer 6 - integration]
+    subgraph G1[G1 integration]
         Protocol[cortex_protocol]
         Laptop[laptop-minion]
-        Root[main.py composition root]
+        Root[main]
+        Cli[cli]
     end
 
-    subgraph L5[Layer 5 - orchestration]
+    subgraph G2[G2 orchestration]
         API[api]
         Exec[execution]
         Inter[interaction]
     end
 
-    subgraph L4[Layer 4 - agentic core]
+    subgraph G3[G3 consumers]
+        Ev[eval]
+        Tr[trace]
+    end
+
+    subgraph G4[G4 agentic core]
         Loop[agentic]
     end
 
-    subgraph L2[Layer 2 - standalone modules]
+    subgraph G5[G5 services]
+        Sv[services]
+    end
+
+    subgraph G6[G6 modules]
         Mem[memory]
         Val[validation]
         Sess[sessions]
         Goals[goals]
         Min[minions]
-        Tr[trace]
-        Ev[eval]
-        Learn[learning]
         Rul[rules]
+        Learn[learning]
     end
 
-    subgraph L1[Layer 1 - primitives]
+    subgraph G7[G7 primitives]
         Events[events]
         LLM[llm]
         Tools[tools]
         DB[db]
+    end
+
+    subgraph G8[G8 foundation]
         Conf[config]
         Log[logging]
+        Safe[safety]
+    end
+
+    subgraph G9[G9 shared]
+        Shared[shared]
     end
 
     API --> Exec
     API --> Inter
+    API --> Rul
+    API --> Sess
+    API --> Shared
+    Cli --> Conf
+    Cli --> LLM
+    Cli --> Mem
+    Cli --> Rul
+    Cli --> Safe
     Exec --> Loop
+    Exec --> Goals
+    Exec --> Events
     Inter --> Sess
-    Loop --> Mem
-    Loop --> Sess
-    Loop --> Tools
-    Loop --> LLM
+    Ev --> Loop
+    Ev --> Conf
+    Ev --> LLM
+    Ev --> Mem
+    Ev --> Rul
+    Ev --> Sess
+    Ev --> Shared
+    Ev --> Tools
+    Tr --> Conf
+    Tr --> DB
+    Tr --> Ev
+    Tr --> LLM
+    Tr --> Sess
+    Tr --> Shared
     Loop --> Events
+    Loop --> LLM
+    Loop --> Mem
+    Loop --> Rul
+    Loop --> Sess
+    Loop --> Shared
+    Loop --> Tools
+    Sv --> Events
+    Sv --> Mem
+    Sv --> Min
+    Sv --> Tools
     Mem --> DB
     Mem --> Events
-    Val --> Mem
+    Mem --> LLM
+    Mem --> Rul
+    Mem --> Shared
     Val --> Events
+    Val --> LLM
+    Val --> Mem
     Sess --> DB
     Goals --> DB
     Min --> Events
-    Min --> DB
-    Tr --> DB
-    Ev --> Loop
-    Learn --> Events
-    Mem --> LLM
-    Mem --> Rul
     Rul --> DB
-    Tr --> LLM
+    Rul --> Events
+    Rul --> LLM
+    Learn --> Conf
+    Learn --> Events
+    DB --> Conf
+    LLM --> Conf
+    LLM --> Tools
+    Tools --> Conf
+    Tools --> Safe
+    Log --> Conf
 ```
 
-`memory` does not import `agentic`. Consumers reach Memory through the
-`ContextProvider` bundle seam, never through raw SQL or `MemoryService`
-(the class no longer exists — ADR-0003).
+Every arrow points down the nine groups and there is no cycle between two
+modules (ADR-0022). `memory` and `agentic` both take the bundle and the loop's
+events from `shared` instead of from each other, so the only edge between them
+is `agentic → memory` (the loop renders the bundle). Consumers reach Memory
+through the `ContextProvider` bundle seam, never through raw SQL or
+`MemoryService` (the class no longer exists — ADR-0003).
 
 ## Composition root
 
@@ -426,5 +549,25 @@ placeholder drop.
 ## Testing and CI
 
 `tests/` mirrors `src/` plus `tests/eval/` (the eval suites) and `tests/integration/`.
-CI: `.github/workflows/ci.yml` (lint + unit), `.github/workflows/eval.yml`
-(eval gate, see [eval-system.md](eval-system.md)).
+CI: `.github/workflows/ci.yml` (lint + unit + boundaries),
+`.github/workflows/eval.yml` (eval gate, see [eval-system.md](eval-system.md)).
+
+### Module boundaries
+
+`[tool.importlinter]` in `pyproject.toml` is the fitness function for the
+module map above (ADR-0022, issue #167):
+
+- a `layers` contract over the nine groups, in the order of the table;
+- an `acyclic_siblings` contract over the same groups, so a same-group import
+  is legal only while it closes no cycle;
+- `exclude_type_checking_imports = true`, set once under `[tool.importlinter]`
+  as a session option, so a `TYPE_CHECKING` alias is not a runtime edge;
+- **zero `ignore_imports`.** An exception list would turn design debt into a
+  passing check; `tests/unit/test_module_boundaries.py` asserts neither
+  whole-map contract grows one.
+
+The `Boundaries` job in `.github/workflows/ci.yml` runs `uv run lint-imports`:
+four contracts kept (the two whole-map ones plus the two `protected` ones that
+keep `cortex.rules.repository` and `cortex.rules.scoring` private to `rules`),
+none broken. An upward runtime import or a two-module cycle fails the job; the
+pair of documents moves together — `pyproject.toml` and this file.
