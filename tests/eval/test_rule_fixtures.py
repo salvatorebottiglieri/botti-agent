@@ -26,6 +26,7 @@ import pytest
 
 from cortex.eval.fixtures import EvalSuite, EvalTask, GoalState, load_suite
 from cortex.eval.runner import SuiteResult, run_suite
+from cortex.rules import queue
 from cortex.rules.models import Rule, RuleOrigin, RuleState
 from cortex.rules.service import RuleService
 from tests.eval.fakes import ScriptedLLMClient
@@ -80,19 +81,15 @@ def _load(tmp_path: Path, body: str) -> EvalSuite:
     return load_suite(path)
 
 
-def _script_sum_task(client: ScriptedLLMClient, turn: str = "Done") -> None:
+def _script_sum_task(client: ScriptedLLMClient) -> None:
     """The golden two-step behavior for the write-answer task."""
     client.queue_tool_call("file_write", {"path": "answer.txt", "content": "42"})
-    client.queue_text(turn)
+    client.queue_text("Done")
 
 
 def _prompts(calls: list[list[object]]) -> list[str]:
     """The message contents of one chat call, in order."""
     return [str(getattr(message, "content", "")) for message in calls]
-
-
-def _rule_lines(contents: list[str]) -> list[str]:
-    return [line for text in contents for line in text.splitlines() if line.startswith("- ")]
 
 
 class TestRuleField:
@@ -207,7 +204,9 @@ class TestRulesInContext:
         await run_suite(suite, client)
 
         contents = _prompts(client.calls[0])
-        assert _rule_lines(contents) == [
+        assert [
+            line for text in contents for line in text.splitlines() if line.startswith("- ")
+        ] == [
             f"- {RULE_CONDITION} → {RULE_ACTION}",
             f"- {SECOND_CONDITION} → {SECOND_ACTION}",
         ]
@@ -259,8 +258,13 @@ class TestEvalNeverLearns:
 
             return _forbidden
 
+        async def _forbidden_enqueue(*args, **kwargs):
+            calls.append("enqueue_turn")
+            raise AssertionError("the eval run called enqueue_turn")
+
         for name in ("record_use", "create_dictated", "create_from_correction"):
             monkeypatch.setattr(RuleService, name, _spy(name))
+        monkeypatch.setattr(queue, "enqueue_turn", _forbidden_enqueue)
         return calls
 
     async def test_a_rules_carrying_run_learns_nothing(

@@ -29,7 +29,7 @@ A fixture file is a YAML document with a ``suite`` header and a non-empty
                             # or a list of accepted strings matched
                             # case/whitespace-insensitively (normalized)
         rules:              # optional Rule set the task measures with (#175);
-          - condition: the user asks for a sum   # loaded as given, never learned
+          - condition: the user asks for a sum   # the task's own Rule: loaded per task, never learned
             action: write the result to answer.txt
 
 The goal state is graded deterministically against the sandbox directory

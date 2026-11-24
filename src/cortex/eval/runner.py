@@ -158,7 +158,7 @@ class _FixtureContextProvider:
     can measure behaviour with rules without ever writing one.
     """
 
-    def __init__(self, rules: Sequence[Rule] = ()) -> None:
+    def __init__(self, rules: Sequence[Rule]) -> None:
         self._rules = rules
 
     async def get_memory_context(
@@ -348,7 +348,7 @@ def _build_loop(
     sandbox: TaskSandbox,
     *,
     max_iterations: int,
-    rules: Sequence[Rule] = (),
+    rules: Sequence[Rule],
 ) -> AgentLoop:
     """Wire the real loop components against the sandbox (no new seams)."""
     registry = InMemoryToolRegistry()
