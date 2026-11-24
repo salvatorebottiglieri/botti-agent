@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 
-from cortex.agentic.models import Goal, GoalStatus
+from cortex.goals.models import Goal, GoalStatus
 from cortex.goals.repository import PostgresGoalRepository
 
 

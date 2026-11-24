@@ -6,8 +6,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from cortex.agentic.models import ChatResponse, GoalResult, GoalStatus, MaxIterationsError
+from cortex.agentic.models import ChatResponse, GoalResult, MaxIterationsError
 from cortex.execution.module import ExecutionModule
+from cortex.goals.models import GoalStatus
 from cortex.shared.loop_events import (
     ErrorEvent,
     ResponseDoneEvent,

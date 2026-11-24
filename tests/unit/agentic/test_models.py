@@ -9,13 +9,11 @@ from cortex.agentic.models import (
     Context,
     Decision,
     DecisionType,
-    Goal,
     GoalContext,
-    GoalStatus,
-    GoalStep,
     MaxIterationsError,
     Mode,
 )
+from cortex.goals.models import Goal, GoalStatus, GoalStep
 
 
 class TestMode:

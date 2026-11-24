@@ -11,11 +11,8 @@ from cortex.agentic.models import (
     Context,
     Decision,
     DecisionType,
-    Goal,
     GoalContext,
     GoalResult,
-    GoalStatus,
-    GoalStep,
     MaxIterationsError,
     Mode,
 )
@@ -25,14 +22,11 @@ __all__ = [
     # Enums
     "Mode",
     "DecisionType",
-    "GoalStatus",
     # Models
     "Decision",
     "Context",
     "GoalContext",
     "ChatResponse",
-    "Goal",
-    "GoalStep",
     "GoalResult",
     "MaxIterationsError",
     # Core

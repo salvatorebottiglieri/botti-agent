@@ -10,15 +10,10 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from cortex.agentic.loop import AgentLoop
-from cortex.agentic.models import (
-    ChatResponse,
-    Goal,
-    GoalResult,
-    GoalStatus,
-    MaxIterationsError,
-)
+from cortex.agentic.models import ChatResponse, GoalResult, MaxIterationsError
 from cortex.events import EventEmitter
 from cortex.goals.interfaces import GoalRepository
+from cortex.goals.models import Goal, GoalStatus
 
 if TYPE_CHECKING:
     from cortex.events import EventBus
