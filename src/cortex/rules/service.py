@@ -13,6 +13,8 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
+from cortex.events.emitter import EventEmitter
+from cortex.events.types import EventTypes
 from cortex.rules.constants import CONTEXT_BUDGET, PRIOR
 from cortex.rules.interfaces import RuleRepository
 from cortex.rules.models import (
@@ -24,6 +26,7 @@ from cortex.rules.models import (
     RuleUse,
     UseOutcome,
 )
+from cortex.rules.render import promotion_line
 from cortex.rules.scoring import next_state, posterior
 
 logger = logging.getLogger(__name__)
@@ -41,10 +44,15 @@ class RuleService:
     """
 
     def __init__(
-        self, repository: RuleRepository, *, clock: Callable[[], datetime] = _utcnow
+        self,
+        repository: RuleRepository,
+        *,
+        clock: Callable[[], datetime] = _utcnow,
+        emitter: EventEmitter | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock
+        self._emitter = emitter
 
     async def create_dictated(self, session_id: UUID, spec: RuleSpec) -> Rule:
         """Create a rule the user dictated: definitive, with the dictation as
@@ -116,12 +124,14 @@ class RuleService:
         # Recomputed from the whole active set, never from the previous score:
         # that is what makes an expired use stop contributing.
         uses = await self._repository.list_uses(rule_id)
+        previous_state = rule.state
         rule.confidence = posterior(PRIOR, uses, now)
         rule.state = next_state(rule.state, rule.confidence, uses, now)
         _stamp_archive(rule, now)
         refreshed = await self._repository.refresh(rule)
         if refreshed is None:
             raise RuleNotFoundError(str(rule_id))
+        await self._announce_promotion(previous_state, refreshed)
         return refreshed
 
     async def list_active(self) -> list[Rule]:
@@ -149,6 +159,7 @@ class RuleService:
             state = next_state(candidate.state, confidence, uses, now)
             rule = candidate
             if state is not candidate.state or confidence != candidate.confidence:
+                previous_state = candidate.state
                 candidate.confidence = confidence
                 candidate.state = state
                 _stamp_archive(candidate, now)
@@ -156,6 +167,7 @@ class RuleService:
                 if refreshed is None:
                     logger.warning(f"Rule {candidate.id} vanished during the sweep")
                     continue
+                await self._announce_promotion(previous_state, refreshed)
                 rule = refreshed
             if rule.state is RuleState.ARCHIVED:
                 continue
@@ -321,6 +333,28 @@ class RuleService:
             parent.superseded_by = fused.id
             await self._repository.refresh(parent)
         return fused
+
+    async def _announce_promotion(self, previous_state: RuleState, rule: Rule) -> None:
+        """Publish `rule.promoted` when the refresh took the rule to definitive.
+
+        Called after the refresh returns, so the row a reader reacts to is
+        already stored. A demotion and an archive are silent, and no emitter
+        (the CLI, every existing caller) means no event. EventEmitter turns a
+        bus failure into a log line, so a lost line never costs the promotion.
+        """
+        if self._emitter is None:
+            return
+        if previous_state is not RuleState.STAGING or rule.state is not RuleState.DEFINITIVE:
+            return
+        await self._emitter.emit(
+            EventTypes.RULE_PROMOTED,
+            {
+                "rule_id": str(rule.id),
+                "condition": rule.condition,
+                "action": rule.action,
+                "line": promotion_line(rule),
+            },
+        )
 
 
 def _require_text(spec: RuleSpec) -> None:

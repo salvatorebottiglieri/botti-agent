@@ -91,7 +91,8 @@ class ResponseDoneEvent(LoopEvent):
     """The loop produced its final response.
 
     `tools_used` carries tool *names* (same semantic as
-    ``ChatResponse.tools_used``), not call ids.
+    ``ChatResponse.tools_used``), not call ids. `message` is what the user
+    sees; `notice` is the promotion line `message` was prefixed with, or None.
     """
 
     event_type: ClassVar[str] = "done"
@@ -100,6 +101,7 @@ class ResponseDoneEvent(LoopEvent):
     iterations: int = 0
     usage: UsageStats | None = None
     latency_ms: float | None = None
+    notice: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-ready dict; usage is a plain dict so payloads stay serializable."""

@@ -1,7 +1,7 @@
 ---
 feature: rule-system
 repo: salvatorebottiglieri/botti-agent
-branch: feat-166-rule-feedback
+branch: feat-173-promotion-line
 tracker: #166
 ---
 
@@ -23,8 +23,12 @@ tracker: #166
 > `queued_feedback` row after the answer, and the composition root starts the
 > drain beside the evidence sweep, so `AttributionRun` scores the rules a turn
 > applied. There is no CLI chat turn, so the CLI inserts nothing. The eval runner
-> calls the loop directly and never enqueues. Remaining: proposals storage, the
-> promotion line and the eval Rule set (#173-#175).
+> calls the loop directly and never enqueues. Since #173 a promotion announces
+> itself: `RuleService` publishes `rule.promoted` after the refresh commits, a
+> bounded buffer in `cortex.agentic.notices` holds the line, and the next chat
+> turn opens with it (fixed copy, never the model's, never in the session
+> history). Remaining: the eval Rule set and a new dictation replacing the old
+> Rule (#174, #175).
 
 ## Phase plan
 
@@ -181,12 +185,13 @@ Slice A's laws are in `## Invariants` below and stay the contract there; these a
 | It must always be true that a turn with no user reply is never enqueued | a `queued_feedback` row with a blank `user_reply` (the `CHECK` refuses it) | `tests/unit/rules/test_queue.py` (the guard in `enqueue` and the `CHECK` in the migration) |
 | It must always be true that an unusable classifier answer writes nothing | a use or a rule exists for a turn whose classification raised, or a queued row consumed by it | `tests/unit/rules/test_attribution.py`, `tests/unit/rules/test_queue.py` |
 | It must always be true that pending feedback is not dropped inside the validity window | a `dropped` row whose `occurred_at` is younger than the window | `tests/unit/rules/test_queue.py` |
+| It must always be true that one promotion produces one line, once, and never in the text the model is judged on | a second line for the same promotion, or a `Rule confirmed:` line inside `queued_feedback.assistant_turn` / the session history | `tests/unit/agentic/test_loop.py` (`TestPromotionNotices`: once, then none), `tests/unit/agentic/test_notices.py`, `tests/unit/api/test_chat_attribution.py` (the row carries the model's text) |
 | It must always be true that no rule is created or scored during an eval | a `rule_uses` row or a `rules` row written while the runner is in eval mode | `tests/eval/test_rule_fixtures.py` |
 | It must always be true that `rules`, `rule_uses` and `queued_feedback` are written only by `cortex.rules` | a write to those tables from another module — mechanically, an import of `cortex.rules.repository` outside `cortex.rules`, `cortex.main` and `cortex.cli` (every write goes through it) | `pyproject.toml` contract *rules: the repository is private to the rules module*, run by `uv run lint-imports` in the CI job `Boundaries`; `cortex.rules.scoring` likewise |
 
 ### Architecture notes
 
-- **The seam is the loop's caller.** `AgentLoop` gains nothing (P6). The chat endpoint and the CLI insert the queue row after the answer is produced, so attribution can never delay or fail a response; a single `INSERT` is the only added latency.
+- **The seam is the loop's caller.** For attribution `AgentLoop` gains nothing (P6): the chat endpoints insert the queue row after the answer is produced, so attribution can never delay or fail a response; a single `INSERT` is the only added latency. Since #173 the loop carries exactly one new optional dependency, `notices`, which turns a promotion into the turn's first text delta — the same line in the delta stream, the `done` message and the reply, and never in the text the classifier reads.
 - **Enqueue after the answer, drain outside the request.** The row is written when the turn is complete (rules, assistant turn and reply are all known) and is attributed by the drain, which runs on the next request or on the existing periodic task loop — no new scheduler.
 - **Idempotency without a cross-module transaction.** `rule_uses(feedback_id, rule_id)` is unique, so a retry after a partial write fills the gaps and cannot double-score.
 - **Finding, resolved by the owner's decision (B):** the repo was a modular monolith by document (`docs/specs/architecture.md` § Module map) but not by check. Two contracts landed (issue #167): `cortex.rules.repository` is private to `cortex.rules` (the composition root and the CLI may reach it — they build it) and `cortex.rules.scoring` likewise; each proven red by a control violation before being kept, and run by `uv run lint-imports` in the `Boundaries` CI job.
@@ -214,6 +219,7 @@ Published on the tracker in dependency order. Work the frontier: a ticket can st
 - #170 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-170-mutation
 - #171 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-171-mutation-r2
 - #172 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-172-mutation-r3
+- #173 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/177 · Model: docs/models/rule-system.md · Mutation: rule-system-173-mutation-r2
 
 ## Model
 
@@ -459,8 +465,8 @@ Slice A implements the mechanics of the rows above; these rows are contract,
 not code, and are deferred to slice B of issue #130 (the feedback classifier
 and the loop that consumes it):
 
-- **Promotion notification line** ("Cortex notifies with one line"): the sweep
-  promotes silently; the notification needs the turn loop.
+- **Promotion notification line** — *delivered in #173* (the sweep still
+  promotes silently; the line rides the next chat turn, see § Lifecycle).
 - **Manual edit** (a new dictated rule replaces and archives the old one): no
   code path archives the predecessor yet.
 - **Conflict check at creation** (the "active rules never contradict each

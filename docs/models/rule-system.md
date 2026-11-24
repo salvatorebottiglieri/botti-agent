@@ -20,6 +20,7 @@ the Rules it applied. Spec: `docs/specs/rule-system.md`; design:
 | `RuleUse` | no — an immutable record of one application | — |
 | `Feedback` | no — it exists only inside one attribution run | — |
 | `SplitProposal` | no — it exists only inside one split, handed straight to the service | — |
+| `PromotionNotices` | no — a bounded buffer (20 lines) that fills from the bus and empties one line per chat turn; it has no state anyone transitions between | — |
 
 ## Elements
 
@@ -31,6 +32,8 @@ the Rules it applied. Spec: `docs/specs/rule-system.md`; design:
 | Attribution | symbol | src.cortex.rules.attribution.AttributionRun.attribute | `src/cortex/rules/attribution.py` |
 | Service | symbol | src.cortex.rules.service.RuleService.record_use | `src/cortex/rules/service.py:92` |
 | Split | symbol | src.cortex.rules.splits.SplitProposer.propose | `src/cortex/rules/splits.py` |
+| Notices | symbol | src.cortex.agentic.notices.PromotionNotices.take | `src/cortex/agentic/notices.py` |
+| Line | symbol | src.cortex.rules.render.promotion_line | `src/cortex/rules/render.py` |
 | Enqueue | symbol | src.cortex.rules.queue.enqueue_turn | `src/cortex/rules/queue.py` |
 | Drain | symbol | src.cortex.rules.queue.FeedbackDrain.drain | `src/cortex/rules/queue.py` |
 | Render | symbol | render_rules | `src/cortex/rules/render.py:21` |
@@ -53,6 +56,10 @@ flowchart LR
   Classifier -->|per applied Rule| Service[RuleService.record_use]
   Run -->|a scope correction was attributed| Split[Split proposer]
   Split -->|two children and one assignment| Service
+  Service -->|staging -> definitive, after commit| Line[promotion_line]
+  Line --> Event[rule.promoted]
+  Event --> Notices[PromotionNotices]
+  Notices -->|one line, next chat turn| Reply
   Service --> Score[Recomputed confidence and state]
   Run -->|classifier or storage failed| Nothing[Nothing written, caller unaffected]
 ```
@@ -126,9 +133,10 @@ stateDiagram-v2
 | 2 | `QueuedFeedback` | + | #169 builds the queue: the row moves pending → attributed, stays pending when the classifier is unavailable, and is dropped past the validity window | https://github.com/salvatorebottiglieri/botti-agent/issues/169 |
 | 3 | `Rule` | + | #171 splits a rule through the service instead of penalising it: a scope correction archives the parent and creates two children, so the machine gains the transition that leaves a rule for a Split | https://github.com/salvatorebottiglieri/botti-agent/issues/171 |
 | 4 | `QueuedFeedback` | + | #172 wires the enqueue into both chat endpoints and the drain into the composition root, so the row is written by a real turn and the pending → attributed transition happens in the running system; the rules of the row are the active set read before the turn (design Decision 4, owner's answer "A" of 2026-11-23) | https://github.com/salvatorebottiglieri/botti-agent/issues/172 |
+| 5 | `PromotionNotices` / `Rule` | + | #173 publishes `rule.promoted` after the promotion commits and announces it as the next chat turn's first line; the `Rule` statechart is unchanged, the buffer is a bounded FIFO with no lifecycle of its own, and the line never enters the session history or the classifier's input (design Decision 5, owner's answer "A" of 2026-11-23) | https://github.com/salvatorebottiglieri/botti-agent/issues/173 |
 
 ## Notes
 
 Since #172 the model describes the running system: both chat endpoints read the active set before the
 turn and enqueue the row after the answer, and `main.py` starts the drain beside the evidence sweep.
-The eval runner calls `AgentLoop.stream_chat` directly and never enqueues, so an eval still learns nothing.
+The eval runner calls `AgentLoop.stream_chat` directly and never enqueues, so an eval still learns nothing. Since #173 a promotion is announced to the user as the next chat turn's first line, and the line is kept out of both the session history and the assistant text the classifier reads.

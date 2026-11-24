@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from cortex.config.loader import get_settings
 from cortex.config.models import Settings
 from cortex.events.base import BaseEvent
+from cortex.events.types import EventTypes
 from cortex.logging.setup import configure_logging
 from cortex.services.tool_executor import ToolExecutorService
 from cortex.tools.interfaces import ToolExecutor
@@ -52,6 +53,7 @@ class CortexApp:
     evidence_store: Any = field(default=None)
     evidence_sweep_task: Any = field(default=None)
     rule_service: Any = field(default=None)
+    promotion_notices: Any = field(default=None)
     feedback_queue: Any = field(default=None)
     feedback_drain: Any = field(default=None)
     feedback_drain_task: Any = field(default=None)
@@ -210,10 +212,15 @@ async def initialize_app() -> CortexApp:
     # 5c'. Create the rule service (issue #130). Learning is wired here, not in
     # the agentic core: the reasoner only reads the rendered rules off the
     # context bundle.
+    from cortex.events.emitter import EventEmitter
     from cortex.rules.repository import PostgresRuleRepository
     from cortex.rules.service import RuleService
 
-    cortex.rule_service = RuleService(PostgresRuleRepository())
+    # The emitter is what lets a promotion announce itself (#173): the event is
+    # published after the refresh commits, and a dead bus costs a line only.
+    cortex.rule_service = RuleService(
+        PostgresRuleRepository(), emitter=EventEmitter(cortex.event_bus, "rules")
+    )
 
     # 5d. Create LLM client
     from cortex.llm.factory import LLMClientFactory
@@ -281,6 +288,7 @@ async def initialize_app() -> CortexApp:
     from cortex.agentic.context_builder import ContextBuilder
     from cortex.agentic.executor import LoopExecutor
     from cortex.agentic.loop import AgentLoop
+    from cortex.agentic.notices import PromotionNotices
     from cortex.agentic.reasoner import Reasoner
     from cortex.execution.module import ExecutionModule
 
@@ -328,12 +336,16 @@ async def initialize_app() -> CortexApp:
         event_bus=cortex.event_bus,
     )
 
+    # A promotion waits here until the next chat turn reads it (#173).
+    cortex.promotion_notices = PromotionNotices()
+
     agent_loop = AgentLoop(
         context_builder=context_builder,
         reasoner=reasoner,
         executor=loop_executor,
         event_bus=cortex.event_bus,
         session_repository=cortex.session_repository,
+        notices=cortex.promotion_notices,
     )
 
     # Create execution module
@@ -442,6 +454,12 @@ async def _subscribe_services(cortex: CortexApp) -> None:
         await cortex.event_bus.subscribe("location", handle_sensory_event)
         await cortex.event_bus.subscribe("activity", handle_sensory_event)
         await cortex.event_bus.subscribe("calendar", handle_sensory_event)
+
+    # A promotion announces itself in the next chat response (issue #173).
+    if cortex.promotion_notices is not None:
+        await cortex.event_bus.subscribe(
+            EventTypes.RULE_PROMOTED, cortex.promotion_notices.handle
+        )
 
     logger.debug("Services subscribed to event bus")
 

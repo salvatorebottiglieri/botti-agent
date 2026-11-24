@@ -185,6 +185,7 @@ Event types (`EventTypes`):
 | Learning | `pattern.detected`, `preference.learned`, `recommendation.generated`, `recommendation.executed` |
 | Tools / goals | `tool.request`, `tool.result`, `goal.created`, `goal.status`, `goal.completed`, `goal.failed`, `goal.resumed` |
 | Validation | `concept.validated`, `concept.rejected` |
+| Rules | `rule.promoted` (published after the rule's commit; the line the next chat turn opens with, #173) |
 | Lifecycle | `module.spawn`, `module.terminate` |
 | Wildcard | `*` |
 
@@ -232,7 +233,7 @@ Event types (`EventTypes`):
 
 ### Layer 4 — agentic core
 
-`src/cortex/agentic/` — `ContextBuilder`, `Reasoner`, `LoopExecutor`, `AgentLoop`.
+`src/cortex/agentic/` — `ContextBuilder`, `Reasoner`, `LoopExecutor`, `AgentLoop`, `PromotionNotices` (the `rule.promoted` buffer, #173).
 Full contract in [agentic-loop.md](agentic-loop.md).
 
 ### Layer 5 — orchestration

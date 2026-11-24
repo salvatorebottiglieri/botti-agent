@@ -33,6 +33,7 @@ from cortex.tools.meta.ask_user import ASK_USER_CONTROL, ASK_USER_TOOL_NAME
 if TYPE_CHECKING:
     from cortex.agentic.context_builder import ContextBuilder
     from cortex.agentic.executor import LoopExecutor
+    from cortex.agentic.notices import PromotionNotices
     from cortex.agentic.reasoner import Reasoner
     from cortex.events import EventBus
     from cortex.llm.models import UsageStats
@@ -67,6 +68,7 @@ class AgentLoop:
         max_chat_iterations: int = 20,
         max_goal_iterations: int = 100,
         now: Callable[[], float] = time.monotonic,
+        notices: PromotionNotices | None = None,
     ):
         self._context_builder = context_builder
         self._reasoner = reasoner
@@ -76,6 +78,7 @@ class AgentLoop:
         self._max_chat_iterations = max_chat_iterations
         self._max_goal_iterations = max_goal_iterations
         self._now = now
+        self._notices = notices
 
     async def run_chat(
         self,
@@ -110,6 +113,7 @@ class AgentLoop:
         iterations = 0
         usage: UsageStats | None = None
         latency_ms: float | None = None
+        notice: str | None = None
         async for event in self.stream_chat(
             session_id=session_id,
             user_message=user_message,
@@ -125,6 +129,7 @@ class AgentLoop:
                 case ResponseDoneEvent(tools_used=used, iterations=iters):
                     tools_used, iterations = used, iters
                     usage, latency_ms = event.usage, event.latency_ms
+                    notice = event.notice
                 # Ignore progress events; stream_chat re-raises the original exception
                 case _:
                     pass
@@ -135,6 +140,7 @@ class AgentLoop:
             session_id=session_id,
             usage=usage,
             latency_ms=latency_ms,
+            notice=notice,
         )
 
     async def stream_chat(
@@ -174,6 +180,14 @@ class AgentLoop:
         messages: list[Message] = []
         started_at = self._now()
         total_usage: UsageStats | None = None
+
+        # A pending promotion opens the turn: fixed copy, not the model's
+        # words, so it is its own delta and never enters the response `text`.
+        # With nothing pending the loop emits exactly what it did before.
+        notice = self._notices.take() if self._notices is not None else None
+        prefix = f"{notice}\n" if notice else ""
+        if prefix:
+            yield TextDeltaEvent(session_id, delta=prefix)
 
         # Seed history from the repository so multi-turn context works. The
         # limit mirrors the context builder's window (max_messages - 1) so
@@ -261,11 +275,12 @@ class AgentLoop:
                             yield TextDeltaEvent(session_id, delta=text)
                         yield self._done_event(
                             session_id,
-                            text,
+                            prefix + text,
                             tools_used,
                             iterations,
                             total_usage=total_usage,
                             started_at=started_at,
+                            notice=notice,
                         )
                         return
 
@@ -317,11 +332,12 @@ class AgentLoop:
                                 yield TextDeltaEvent(session_id, delta=question)
                             yield self._done_event(
                                 session_id,
-                                question,
+                                prefix + question,
                                 tools_used,
                                 iterations,
                                 total_usage=total_usage,
                                 started_at=started_at,
+                                notice=notice,
                             )
                             return
 
@@ -423,11 +439,12 @@ class AgentLoop:
                             yield TextDeltaEvent(session_id, delta=fallback)
                             yield self._done_event(
                                 session_id,
-                                fallback,
+                                prefix + fallback,
                                 tools_used,
                                 iterations,
                                 total_usage=total_usage,
                                 started_at=started_at,
+                                notice=notice,
                             )
                             return
 
@@ -600,6 +617,7 @@ class AgentLoop:
         *,
         total_usage: UsageStats | None,
         started_at: float,
+        notice: str | None = None,
     ) -> ResponseDoneEvent:
         """Build the final done event, computing usage and latency once."""
         return ResponseDoneEvent(
@@ -609,4 +627,5 @@ class AgentLoop:
             iterations=iterations,
             usage=total_usage,
             latency_ms=(self._now() - started_at) * 1000.0,
+            notice=notice,
         )

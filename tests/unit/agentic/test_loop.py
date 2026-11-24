@@ -22,6 +22,9 @@ from cortex.agentic.models import (
     Decision,
     MaxIterationsError,
 )
+from cortex.agentic.notices import PromotionNotices
+from cortex.events.base import BaseEvent
+from cortex.events.types import EventTypes
 from cortex.sessions.models import Message, MessageRole
 from cortex.tools.interfaces import ToolCall, ToolResult
 
@@ -1274,3 +1277,280 @@ class TestStreamChatPersistence:
         assert calls[1].args[2] == "A or B?"
         # No persisted message carries tool_calls (no dangling assistant call).
         assert all(c.kwargs.get("tool_calls") is None for c in calls)
+
+
+class TestPromotionNotices:
+    """#173: a pending promotion line opens the next chat turn.
+
+    The line is fixed copy, so it must not reach the session history the model
+    reads next turn — the user sees it and `run_chat` returns it, nothing else.
+    """
+
+    LINE = "Rule confirmed: book a table → confirm first"
+
+    @pytest.fixture
+    def mock_context_builder(self):
+        builder = MagicMock()
+        builder.max_messages = 20
+        builder.build = AsyncMock()
+        return builder
+
+    @pytest.fixture
+    def mock_reasoner(self):
+        reasoner = MagicMock()
+        reasoner.reason = AsyncMock()
+        return reasoner
+
+    @pytest.fixture
+    def mock_executor(self):
+        executor = MagicMock()
+        executor.execute_single = AsyncMock()
+        return executor
+
+    @pytest.fixture
+    def mock_event_bus(self):
+        bus = MagicMock()
+        bus.publish = AsyncMock()
+        return bus
+
+    @pytest.fixture
+    def repo(self):
+        repository = MagicMock()
+        repository.add_message = AsyncMock(return_value=MagicMock())
+        repository.get_messages = AsyncMock(return_value=[])
+        return repository
+
+    def make_loop(
+        self,
+        mock_context_builder,
+        mock_reasoner,
+        mock_executor,
+        mock_event_bus,
+        notices=None,
+        repo=None,
+    ) -> AgentLoop:
+        return AgentLoop(
+            context_builder=mock_context_builder,
+            reasoner=mock_reasoner,
+            executor=mock_executor,
+            event_bus=mock_event_bus,
+            session_repository=repo,
+            notices=notices,
+            now=lambda: 0.0,
+        )
+
+    async def _notices_with(self, *lines: str):
+        notices = PromotionNotices()
+        for line in lines:
+            await notices.handle(
+                BaseEvent.create(
+                    event_type=EventTypes.RULE_PROMOTED,
+                    payload={"line": line},
+                    source_module="rules",
+                )
+            )
+        return notices
+
+    async def _greeting(self, mock_context_builder, mock_reasoner, session_id) -> None:
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.respond("Hello!"))
+
+    @pytest.mark.asyncio
+    async def test_a_pending_line_opens_the_turn_and_the_done_message_carries_it(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus
+    ) -> None:
+        """Witness: a line prepended after the answer (or only in the done
+        message) is not "the first text delta" the client reads."""
+        session_id = uuid4()
+        await self._greeting(mock_context_builder, mock_reasoner, session_id)
+        loop = self.make_loop(
+            mock_context_builder,
+            mock_reasoner,
+            mock_executor,
+            mock_event_bus,
+            notices=await self._notices_with(self.LINE),
+        )
+
+        events = [e async for e in loop.stream_chat(session_id, "Hi")]
+
+        assert [e.event_type for e in events] == ["text", "thinking", "text", "done"]
+        assert isinstance(events[0], TextDeltaEvent)
+        assert events[0].delta == f"{self.LINE}\n"
+        assert isinstance(events[1], ThinkingEvent)
+        assert events[2].delta == "Hello!"
+        done = events[3]
+        assert isinstance(done, ResponseDoneEvent)
+        assert done.message == f"{self.LINE}\nHello!"
+
+    @pytest.mark.asyncio
+    async def test_run_chat_returns_the_line_and_the_answer(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus
+    ) -> None:
+        """Witness: the drain accumulates the same delta, so its message must
+        equal the done frame's — one prefix, not two code paths."""
+        session_id = uuid4()
+        await self._greeting(mock_context_builder, mock_reasoner, session_id)
+        loop = self.make_loop(
+            mock_context_builder,
+            mock_reasoner,
+            mock_executor,
+            mock_event_bus,
+            notices=await self._notices_with(self.LINE),
+        )
+
+        response = await loop.run_chat(session_id, "Hi")
+
+        assert response.message == f"{self.LINE}\nHello!"
+        assert response.notice == self.LINE
+
+    @pytest.mark.asyncio
+    async def test_the_turn_after_the_only_line_has_none(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus
+    ) -> None:
+        """Witness: AC 5 — the line appears once, not on every later turn."""
+        session_id = uuid4()
+        await self._greeting(mock_context_builder, mock_reasoner, session_id)
+        notices = await self._notices_with(self.LINE)
+        loop = self.make_loop(
+            mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, notices=notices
+        )
+
+        first = [e async for e in loop.stream_chat(session_id, "Hi")]
+        events = [e async for e in loop.stream_chat(session_id, "Hi")]
+
+        assert [e.event_type for e in first] == ["text", "thinking", "text", "done"]
+        assert [e.event_type for e in events] == ["thinking", "text", "done"]
+        assert events[-1].message == "Hello!"
+
+    @pytest.mark.asyncio
+    async def test_a_second_promotion_gets_its_own_line(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus
+    ) -> None:
+        """Witness: Decision 5 — one line per turn, oldest first; the second
+        promotion is announced in the turn after its own."""
+        session_id = uuid4()
+        await self._greeting(mock_context_builder, mock_reasoner, session_id)
+        loop = self.make_loop(
+            mock_context_builder,
+            mock_reasoner,
+            mock_executor,
+            mock_event_bus,
+            notices=await self._notices_with(self.LINE, "Rule confirmed: d → e"),
+        )
+
+        [e async for e in loop.stream_chat(session_id, "Hi")]
+        events = [e async for e in loop.stream_chat(session_id, "Hi")]
+
+        assert [e.event_type for e in events] == ["text", "thinking", "text", "done"]
+        assert events[0].delta == "Rule confirmed: d → e\n"
+        assert events[-1].message == "Rule confirmed: d → e\nHello!"
+
+    @pytest.mark.asyncio
+    async def test_with_no_notices_the_stream_is_unchanged(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus
+    ) -> None:
+        """Witness: a loop built as before, and a loop with an empty buffer,
+        emit the very same frames — no notices means the loop is what it was."""
+        session_id = uuid4()
+        await self._greeting(mock_context_builder, mock_reasoner, session_id)
+        without = self.make_loop(
+            mock_context_builder, mock_reasoner, mock_executor, mock_event_bus
+        )
+        empty = self.make_loop(
+            mock_context_builder,
+            mock_reasoner,
+            mock_executor,
+            mock_event_bus,
+            notices=PromotionNotices(),
+        )
+
+        before = [e.to_dict() for e in [e async for e in without.stream_chat(session_id, "Hi")]]
+        after = [e.to_dict() for e in [e async for e in empty.stream_chat(session_id, "Hi")]]
+
+        assert after == before
+        assert [e["event_type"] for e in after] == ["thinking", "text", "done"]
+        assert after[-1]["message"] == "Hello!"
+
+    @pytest.mark.asyncio
+    async def test_a_clarifying_question_carries_the_line(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus
+    ) -> None:
+        """Witness: a clarifying question is a response too; `run_chat` picks
+        the line up from the delta, so the done frame must agree with it."""
+        session_id = uuid4()
+        ask_call = ToolCall(id="call_1", name="ask_user", arguments={"question": "A or B?"})
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(return_value=Decision.execute_tools(
+            [ask_call], reasoning="need info",
+        ))
+        mock_executor.execute_single = AsyncMock(return_value=ToolResult(
+            tool_call_id="call_1", tool_name="ask_user", success=True,
+            output="A or B?", control="ask_user", metadata={"options": []},
+        ))
+        loop = self.make_loop(
+            mock_context_builder,
+            mock_reasoner,
+            mock_executor,
+            mock_event_bus,
+            notices=await self._notices_with(self.LINE),
+        )
+
+        events = [e async for e in loop.stream_chat(session_id, "Open the file")]
+
+        assert [e.event_type for e in events] == ["text", "thinking", "ask_user", "done"]
+        assert isinstance(events[2], AskUserEvent)
+        assert events[2].question == "A or B?"
+        assert events[3].message == f"{self.LINE}\nA or B?"
+
+    @pytest.mark.asyncio
+    async def test_the_fallback_carries_the_line(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus
+    ) -> None:
+        """Witness: the no-tools fallback is a terminal text too — a prefix
+        applied only to the RESPOND branch leaves the two callers disagreeing."""
+        session_id = uuid4()
+        mock_context_builder.build = AsyncMock(return_value=Context(session_id=session_id))
+        mock_reasoner.reason = AsyncMock(
+            return_value=Decision.execute_tools([], reasoning="no tools available")
+        )
+        loop = self.make_loop(
+            mock_context_builder,
+            mock_reasoner,
+            mock_executor,
+            mock_event_bus,
+            notices=await self._notices_with(self.LINE),
+        )
+
+        events = [e async for e in loop.stream_chat(session_id, "Do something")]
+
+        assert [e.event_type for e in events] == ["text", "thinking", "text", "done"]
+        assert events[-1].message == (
+            f"{self.LINE}\nI couldn't determine what tools to use."
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_line_is_never_persisted_as_assistant_history(
+        self, mock_context_builder, mock_reasoner, mock_executor, mock_event_bus, repo
+    ) -> None:
+        """Witness: history is what the model reads next turn; persisting the
+        line teaches it to announce its own promotions."""
+        session_id = uuid4()
+        await self._greeting(mock_context_builder, mock_reasoner, session_id)
+        loop = self.make_loop(
+            mock_context_builder,
+            mock_reasoner,
+            mock_executor,
+            mock_event_bus,
+            notices=await self._notices_with(self.LINE),
+            repo=repo,
+        )
+
+        events = [e async for e in loop.stream_chat(session_id, "Hi")]
+
+        assert [e.event_type for e in events] == ["text", "thinking", "text", "done"]
+        assistant = [
+            call.args[2]
+            for call in repo.add_message.await_args_list
+            if call.args[1] is MessageRole.ASSISTANT
+        ]
+        assert assistant == ["Hello!"]
