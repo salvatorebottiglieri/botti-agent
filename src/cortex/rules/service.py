@@ -21,6 +21,7 @@ from cortex.rules.models import (
     Rule,
     RuleNotFoundError,
     RuleOrigin,
+    RuleReplacementRefusedError,
     RuleSpec,
     RuleState,
     RuleUse,
@@ -54,10 +55,29 @@ class RuleService:
         self._clock = clock
         self._emitter = emitter
 
-    async def create_dictated(self, session_id: UUID, spec: RuleSpec) -> Rule:
+    async def create_dictated(
+        self, session_id: UUID, spec: RuleSpec, *, replaces: UUID | None = None
+    ) -> Rule:
         """Create a rule the user dictated: definitive, with the dictation as
-        its first `approval` use (sigmoid(ln 20) ~= 0.952)."""
+        its first `approval` use (sigmoid(ln 20) ~= 0.952).
+
+        With ``replaces`` the dictation supersedes that rule: the predecessor is
+        archived pointing at its successor and keeps its uses, because the
+        evidence was about a different text.
+        """
         _require_text(spec)
+        # Validated before the first write, as split() and merge() do: a refused
+        # replacement creates no successor and archives nothing.
+        predecessor: Rule | None = None
+        if replaces is not None:
+            predecessor = await self._repository.get(replaces)
+            if predecessor is None:
+                raise RuleNotFoundError(str(replaces))
+            # shortcut: two concurrent replacements can both archive the same
+            # predecessor, last write wins; upgrade to a state-predicated UPDATE
+            # if that ever matters
+            if predecessor.state is RuleState.ARCHIVED:
+                raise RuleReplacementRefusedError(f"rule {replaces} is already archived")
         now = self._clock()
         rule = Rule(
             condition=spec.condition,
@@ -78,6 +98,12 @@ class RuleService:
         rule.confidence = posterior(PRIOR, [dictation], now)
         stored = await self._repository.create(rule)
         await self._repository.add_use(dictation)
+        if predecessor is not None:
+            predecessor.state = RuleState.ARCHIVED
+            predecessor.archived_at = now
+            predecessor.superseded_by = stored.id
+            if await self._repository.refresh(predecessor) is None:
+                logger.warning(f"Rule {predecessor.id} vanished during the replacement")
         return stored
 
     async def create_from_correction(self, spec: RuleSpec) -> Rule:

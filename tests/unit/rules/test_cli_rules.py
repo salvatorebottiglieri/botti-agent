@@ -155,7 +155,7 @@ class TestRulesShow:
         assert CONDITION in result.output
         assert ACTION in result.output
         assert RATIONALE in result.output
-        assert str(SUPERSEDED_BY) in result.output
+        assert f"superseded by: {SUPERSEDED_BY}" in result.output
         assert "correction" in result.output
         assert "book a table for two" in result.output
 

@@ -323,6 +323,154 @@ async def test_a_correction_proposal_is_stored_in_staging() -> None:
     assert created[0].id in [stored.id for stored in returned]
 
 
+async def test_a_dictated_proposal_replaces_the_rule_it_names() -> None:
+    """Witness: dropping `replaces` creates a second active rule beside the one
+    the user superseded, instead of archiving it; returning the snapshot taken
+    before the replacement reports the archived rule as active."""
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    predecessor = await service.create_dictated(SESSION, SPEC)
+    classifier = StubClassifier(
+        Feedback(
+            proposals=[
+                RuleProposal(
+                    spec=PROPOSAL, origin=RuleOrigin.DICTATED, replaces=predecessor.id
+                )
+            ]
+        )
+    )
+
+    returned = await AttributionRun(classifier, service, StubConflictCheck()).attribute(
+        [predecessor], SESSION, "turn", "a reply", SITUATION
+    )
+
+    superseded = await repository.get(predecessor.id)
+    assert superseded is not None
+    assert superseded.state is RuleState.ARCHIVED
+    created = [stored for stored in repository.rules.values() if stored.id != predecessor.id]
+    assert len(created) == 1
+    assert created[0].state is RuleState.DEFINITIVE
+    assert superseded.superseded_by == created[0].id
+    # The list the run returns carries the post-replacement predecessor.
+    reported = [stored for stored in returned if stored.id == predecessor.id]
+    assert [(stored.state, stored.superseded_by) for stored in reported] == [
+        (RuleState.ARCHIVED, created[0].id)
+    ]
+
+
+async def test_a_dictation_naming_an_archived_rule_still_creates_its_rule(caplog) -> None:
+    """Witness: a refused replacement costs a duplicate, never the user's rule."""
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    predecessor = await service.create_dictated(SESSION, SPEC)
+    archived = await service.archive(predecessor.id)
+    assert archived is not None and archived.state is RuleState.ARCHIVED
+    classifier = StubClassifier(
+        Feedback(
+            proposals=[
+                RuleProposal(
+                    spec=PROPOSAL, origin=RuleOrigin.DICTATED, replaces=predecessor.id
+                )
+            ]
+        )
+    )
+
+    with caplog.at_level(logging.WARNING):
+        returned = await AttributionRun(classifier, service, StubConflictCheck()).attribute(
+            [archived], SESSION, "turn", "a reply", SITUATION
+        )
+
+    retained = await repository.get(predecessor.id)
+    assert retained is not None
+    assert retained.state is RuleState.ARCHIVED
+    assert retained.superseded_by is None
+    created = [stored for stored in repository.rules.values() if stored.id != predecessor.id]
+    assert len(created) == 1
+    assert created[0].state is RuleState.DEFINITIVE
+    assert created[0].id in [stored.id for stored in returned]
+    assert str(predecessor.id) in caplog.text
+
+
+async def test_a_dictation_naming_a_rule_that_does_not_exist_still_creates_its_rule(caplog) -> None:
+    """Witness: the same for a replacement that vanished before the write."""
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    existing = await service.create_from_correction(SPEC)
+    ghost = uuid4()
+    classifier = StubClassifier(
+        Feedback(
+            proposals=[RuleProposal(spec=PROPOSAL, origin=RuleOrigin.DICTATED, replaces=ghost)]
+        )
+    )
+
+    with caplog.at_level(logging.WARNING):
+        returned = await AttributionRun(classifier, service, StubConflictCheck()).attribute(
+            [existing], SESSION, "turn", "a reply", SITUATION
+        )
+
+    retained = await repository.get(existing.id)
+    assert retained is not None
+    assert retained.superseded_by is None
+    created = [stored for stored in repository.rules.values() if stored.id != existing.id]
+    assert len(created) == 1
+    assert created[0].state is RuleState.DEFINITIVE
+    assert created[0].id in [stored.id for stored in returned]
+    assert str(ghost) in caplog.text
+
+
+async def test_a_blank_dictation_is_not_reported_as_a_refused_replacement(caplog) -> None:
+    """Witness: catching every ``ValueError`` logs 'Could not replace rule …'
+    for a spec that was never a replacement at all."""
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    predecessor = await service.create_dictated(SESSION, SPEC)
+    classifier = StubClassifier(
+        Feedback(
+            proposals=[
+                RuleProposal(
+                    spec=RuleSpec(condition="  ", action=""),
+                    origin=RuleOrigin.DICTATED,
+                    replaces=predecessor.id,
+                )
+            ]
+        )
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await AttributionRun(classifier, service, StubConflictCheck()).attribute(
+            [predecessor], SESSION, "turn", "a reply", SITUATION
+        )
+
+    assert "Could not replace rule" not in caplog.text
+    assert list(repository.rules) == [predecessor.id]
+
+
+async def test_a_correction_proposal_ignores_the_replaces_it_carries() -> None:
+    """Witness: a correction creates a rule that was missing; it never rewrites
+    one, so the predecessor must stay active."""
+    repository = InMemoryRuleRepository()
+    service = _service(repository)
+    predecessor = await service.create_dictated(SESSION, SPEC)
+    classifier = StubClassifier(
+        Feedback(
+            proposals=[
+                RuleProposal(
+                    spec=PROPOSAL, origin=RuleOrigin.CORRECTION, replaces=predecessor.id
+                )
+            ]
+        )
+    )
+
+    await AttributionRun(classifier, service, StubConflictCheck()).attribute(
+        [predecessor], SESSION, "turn", "a reply", SITUATION
+    )
+
+    retained = await repository.get(predecessor.id)
+    assert retained is not None
+    assert retained.state is RuleState.DEFINITIVE
+    assert retained.superseded_by is None
+
+
 async def test_a_contradicting_proposal_is_not_stored_and_the_uses_stand(caplog) -> None:
     repository = InMemoryRuleRepository()
     service = _service(repository)

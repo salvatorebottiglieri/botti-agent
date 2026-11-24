@@ -40,6 +40,10 @@ class RuleNotFoundError(LookupError):
     """A rule id that no row matches."""
 
 
+class RuleReplacementRefusedError(ValueError):
+    """A replacement the lifecycle refuses: the predecessor is already archived."""
+
+
 @dataclass(frozen=True)
 class RuleSpec:
     """The text of a rule, as dictated or proposed (no score, no state)."""

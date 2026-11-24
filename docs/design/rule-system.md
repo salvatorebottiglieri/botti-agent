@@ -347,6 +347,88 @@ loop gets the notices; the handler is subscribed to `rule.promoted`.
   one line per response, FIFO; B = every pending line in the next response),
   with the proposed wording accepted.
 
+## Ticket #174 — a new dictation replaces the old Rule
+
+_Design, 2026-11-23, before the code. Signatures and contracts are in the
+`json design` block._
+
+The spec's Manual edit row has been contract, not code, since slice A: dictating a
+rule that supersedes one already known creates a second rule beside the first, and
+`rules:show` has no edge to show. #174 is the recognition and the archive.
+
+- **The classifier names the rule it replaces.** `RuleProposal` gains
+  `replaces: UUID | None`. The prompt already lists every rule in context as
+  `<rule_id> | <condition> → <action>`, so the field costs no extra call and no
+  extra listing: it is the same evidence answering one more question. The parse
+  drops a `replaces` that is not one of the listed ids, exactly as it drops an
+  invented `rule_id` in a use — a proposal may only replace a rule the model could
+  see.
+- **`RuleService.create_dictated(session_id, spec, *, replaces: UUID | None = None)`**:
+  with no `replaces`, nothing changes. With one: the predecessor must exist and must
+  not already be archived (validated **before** the first write, as `split` and
+  `merge` do), then the new rule is created from the dictation alone (definitive, its
+  own `approval` use, no use of the predecessor), then the predecessor is archived
+  with `superseded_by = new.id` and refreshed. The predecessor **keeps its uses**: the
+  evidence was about a different text, and carrying it over would score the new
+  wording on the old record.
+- **`AttributionRun._apply_proposal`** passes `proposal.replaces` through for a
+  dictated proposal only; a correction proposal ignores it (a correction creates a
+  rule that was missing, it does not rewrite one).
+- **`rules:show`** needs no change: the predecessor prints `superseded by: <new id>`,
+  and from the new rule's side the existing `replaced:` section reads
+  `list_children`, which covers `superseded_by` as well as `parent_id`. The edge is
+  therefore visible in both directions with the code that exists.
+- **Degradation**: a `replaces` naming an unknown id is dropped in the parse, and one
+  naming an archived rule is refused by the service with `RuleReplacementRefusedError`
+  — a `ValueError` subclass, so a caller that already treats a refusal as a `ValueError`
+  keeps working — and the run retries once without `replaces`: losing the replacement
+  costs a duplicate, never the user's rule. A predecessor that vanishes between the
+  check and the archive is logged and costs the edge, not the successor.
+- **The returned list is the post-replacement state.** `_apply_proposal` returns every
+  rule the proposal moved (the successor and, for a replacement, the archived
+  predecessor) and `_reflect` swaps them into the list `attribute` returns, the same
+  way the split path already patched its archived parent.
+- **Accepted race (shortcut)**: two replacements racing on one predecessor both pass an
+  archived check that reads before it writes, so the second overwrites `superseded_by`
+  and two definitive successors keep one edge. It needs a state-predicated `UPDATE`
+  that the repository does not have; the code carries the `shortcut:` comment.
+
+### Exits for #174
+
+`tests/unit/rules/test_feedback.py` — the parse: a proposal carrying `replaces` keeps
+it; an unknown id is dropped to `None`; a malformed id is dropped; a proposal without
+the field is `None` (today's behaviour).
+
+`tests/unit/rules/test_service.py` — the replacement: a dictation with `replaces`
+creates the successor with no use of the predecessor, archives the predecessor with
+`superseded_by` pointing at the successor, and leaves the predecessor's uses
+untouched; a dictation with no `replaces` creates a second active rule exactly as
+before; an unknown predecessor raises before anything is written; an already archived
+predecessor raises before anything is written; the successor's confidence is its own
+dictation (sigmoid(ln 20) ≈ 0.952), not the predecessor's posterior.
+
+`tests/unit/rules/test_attribution.py` — the run: a dictated proposal with `replaces`
+reaches the service with it; a correction proposal ignores it.
+
+`tests/unit/rules/test_cli_rules.py` — `rules:show`: the predecessor lists
+`superseded by:` and the successor lists the predecessor under `replaced:`.
+
+## Decision 6 — the classifier names the rule a dictation replaces
+
+- **Choice**: a dictated proposal carries `replaces: <rule_id>`, validated against
+  the ids the classifier was given; the service archives the predecessor and links
+  the edge.
+- **Alternatives rejected**: (B) matching the dictation's `condition` text against
+  the active set — no LLM change, but a reworded dictation creates a duplicate
+  instead of a replacement, and an accidentally identical phrasing archives a rule
+  the user did not mean to touch.
+- **Consequences**: one more field in the proposal JSON and one prompt line; a
+  reworded dictation still replaces (the classifier judges intent); the archive is
+  what the spec's Manual edit row always asked for, and the uses stay with the text
+  they were about.
+- **Owner sign-off**: 2026-11-23, owner in chat — "A" (to the two options: A = the
+  classifier names the rule it replaces; B = the service matches the condition text).
+
 ## Premises (design)
 
 Inherited: P1-P10 of the spec. New:
@@ -364,6 +446,9 @@ Inherited: P1-P10 of the spec. New:
 | P20 | The house publish seam already swallows a bus failure, which is AC 3 | `sed -n '20,45p' src/cortex/events/emitter.py` | `emit` logs a warning and returns; it never raises | confirmed |
 | P21 | The event names are a closed registry | `rg -n "class EventTypes" -A6 src/cortex/events/types.py` | a `StrEnum`; `validation` already emits its own through `EventTypes` | confirmed |
 | P22 | The loop's text reaches both callers through the delta stream, so one prefix delta is enough | `sed -n '113,132p;262,270p' src/cortex/agentic/loop.py` | `run_chat` accumulates `TextDeltaEvent.delta`; the RESPOND branch emits the whole text as one delta when it did not stream | confirmed |
+| P23 | The classifier's prompt already lists every rule as `<rule_id> | <condition> → <action>`, so a `replaces` field needs no extra call or listing | `sed -n '19,45p' src/cortex/rules/feedback.py` | the system prompt's first lines and the JSON shape, which names `origin` and would name `replaces` | confirmed |
+| P24 | `rules:show` already prints both directions of the history edge | `sed -n '225,240p' src/cortex/cli.py` and `src/cortex/rules/service.py:170-177` | `list_children` is `superseded_by = $1 OR parent_id = $1`; the CLI prints `superseded by:` and the `replaced:` section | confirmed |
+| P25 | `create_dictated` has exactly one caller, so the new argument has one site to reach | `rg -n "create_dictated" src/` | `service.py:49` (definition) and `attribution.py:124` (the proposal path); the CLI never calls it | confirmed |
 | P18 | The per-module LLM client the classifier wants exists | `rg -n "create_for_module" src/cortex/llm/factory.py` | `:56` — the definition (no caller under `src/` yet, P2 of the spec) |
 
 ## External fixtures
@@ -749,6 +834,41 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
   },
   {
    "kind": "mod",
+   "path": "src/cortex/rules/feedback.py",
+   "note": "#174 a proposal may name the rule it replaces; the prompt asks for it and the parse drops an unknown id"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/service.py",
+   "note": "#174 create_dictated replaces: validate the predecessor, create the successor, archive with superseded_by"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/rules/attribution.py",
+   "note": "#174 a dictated proposal hands its replaces to the service"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/test_feedback.py",
+   "note": "#174 the replaces parse"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/test_service.py",
+   "note": "#174 the replacement: no inherited uses, the predecessor archived and linked"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/test_attribution.py",
+   "note": "#174 the run passes replaces for a dictation only"
+  },
+  {
+   "kind": "mod",
+   "path": "tests/unit/rules/test_cli_rules.py",
+   "note": "#174 rules:show lists both directions"
+  },
+  {
+   "kind": "mod",
    "path": "src/cortex/rules/attribution.py",
    "note": "#172 advisory from #171: _apply_proposal extracted out of attribute, behaviour identical"
   },
@@ -863,6 +983,21 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "module": "src/cortex/rules/render.py",
    "language": "python",
    "code": "def promotion_line(rule: Rule) -> str: ..."
+  },
+  {
+   "module": "src/cortex/rules/feedback.py",
+   "language": "python",
+   "code": "@dataclass(frozen=True)\nclass RuleProposal:\n    spec: RuleSpec\n    origin: RuleOrigin\n    replaces: UUID | None = None"
+  },
+  {
+   "module": "src/cortex/rules/service.py",
+   "language": "python",
+   "code": "async def create_dictated(self, session_id: UUID, spec: RuleSpec, *, replaces: UUID | None = None) -> Rule: ..."
+  },
+  {
+   "module": "src/cortex/rules/attribution.py",
+   "language": "python",
+   "code": "async def _apply_proposal(self, proposals: list[RuleProposal], session_id: UUID) -> list[Rule]: ..."
   },
   {
    "module": "src/cortex/agentic/loop.py",
@@ -1023,6 +1158,16 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     "kind": "add"
    },
    {
+    "id": "cortex.rules.attribution.AttributionRun._apply_proposal",
+    "module": "src/cortex/rules/attribution.py",
+    "kind": "mod"
+   },
+   {
+    "id": "cortex.rules.service.RuleService.create_dictated",
+    "module": "src/cortex/rules/service.py",
+    "kind": "mod"
+   },
+   {
     "id": "cortex.agentic.loop.AgentLoop.stream_chat",
     "module": "src/cortex/agentic/loop.py",
     "kind": "mod"
@@ -1136,6 +1281,10 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    {
     "from": "cortex.agentic.loop.AgentLoop.stream_chat",
     "to": "cortex.agentic.notices.PromotionNotices.take"
+   },
+   {
+    "from": "cortex.rules.attribution.AttributionRun._apply_proposal",
+    "to": "cortex.rules.service.RuleService.create_dictated"
    }
   ]
  },
@@ -1812,6 +1961,32 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     {
      "kind": "effect",
      "type": "the line is consumed: a turn that later fails loses it, which the AC accepts",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.attribution.AttributionRun._apply_proposal",
+   "callee": "cortex.rules.service.RuleService.create_dictated",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the successor, definitive, with its own dictation as one approval use",
+     "handled_at": "collected into the rules attribute returns; _reflect swaps it into the list"
+    },
+    {
+     "kind": "absent",
+     "type": "RuleReplacementRefusedError (the predecessor is archived) or RuleNotFoundError (it is gone)",
+     "handled_at": "one handler here: a warning naming the rule, then the same call without `replaces`, so the dictation still creates its rule"
+    },
+    {
+     "kind": "raises",
+     "type": "ValueError on a blank condition or action (before any write), the repository's error",
+     "handled_at": "not caught as a refusal: it falls to this method's single outer handler, which logs and drops the proposal"
+    },
+    {
+     "kind": "effect",
+     "type": "one rules row, one rule_uses row, and on a replacement one archive write with superseded_by",
      "handled_at": null
     }
    ]

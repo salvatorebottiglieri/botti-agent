@@ -18,7 +18,14 @@ from uuid import UUID
 
 from cortex.rules.conflicts import ConflictCheck
 from cortex.rules.feedback import Feedback, FeedbackClassifier, RuleProposal
-from cortex.rules.models import Rule, RuleOrigin, RuleState, UseOutcome
+from cortex.rules.models import (
+    Rule,
+    RuleNotFoundError,
+    RuleOrigin,
+    RuleReplacementRefusedError,
+    RuleState,
+    UseOutcome,
+)
 from cortex.rules.service import RuleService
 from cortex.rules.splits import SplitProposer
 
@@ -81,32 +88,24 @@ class AttributionRun:
                 )
 
         applied = await self._apply_proposal(feedback.proposals, session_id)
-        if applied is not None:
-            refreshed.append(applied)
-
-        split_refreshed = await self._split_scope_corrections(feedback)
-        if split_refreshed:
-            # record_use put the pre-split parent in refreshed; replace it
-            # with the archived parent the split returned.
-            split_ids = {stored.id for stored in split_refreshed}
-            refreshed[:] = [
-                touched for touched in refreshed if touched.id not in split_ids
-            ]
-        refreshed.extend(split_refreshed)
+        refreshed = _reflect(refreshed, applied)
+        refreshed = _reflect(refreshed, await self._split_scope_corrections(feedback))
         return refreshed or list(rules)
 
     async def _apply_proposal(
         self, proposals: list[RuleProposal], session_id: UUID
-    ) -> Rule | None:
+    ) -> list[Rule]:
         """Create the rule this turn proposed, after the conflict check.
 
-        Returns the created rule, or None when the proposal was dropped: more
+        Returns the rules the proposal moved — the successor and, for a
+        replacement, the archived predecessor — so ``attribute`` can drop the
+        snapshots it recorded before. Empty when the proposal was dropped: more
         than one proposal is a classifier bug, a contradiction is a conflict,
         and a failed check or write costs the proposal, never the uses.
         """
         conflicts = self._conflicts
         if conflicts is None or not proposals:
-            return None
+            return []
         if len(proposals) > 1:
             logger.warning(
                 f"Classifier returned {len(proposals)} proposals; "
@@ -119,16 +118,32 @@ class AttributionRun:
                 logger.info(
                     f"Proposed rule {proposal.spec.condition!r} contradicts the active set"
                 )
-                return None
+                return []
             if proposal.origin is RuleOrigin.DICTATED:
-                return await self._service.create_dictated(session_id, proposal.spec)
-            return await self._service.create_from_correction(proposal.spec)
+                # Only a dictation supersedes a rule; a correction creates one
+                # that was missing and never rewrites an existing one.
+                try:
+                    created = await self._service.create_dictated(
+                        session_id, proposal.spec, replaces=proposal.replaces
+                    )
+                except (RuleReplacementRefusedError, RuleNotFoundError):
+                    # A refused replacement costs a duplicate, never the user's rule.
+                    logger.warning(
+                        f"Could not replace rule {proposal.replaces}; "
+                        f"dictating {proposal.spec.condition!r} without it"
+                    )
+                    return [await self._service.create_dictated(session_id, proposal.spec)]
+                if proposal.replaces is None:
+                    return [created]
+                archived = await self._service.get(proposal.replaces)
+                return [created] if archived is None else [created, archived]
+            return [await self._service.create_from_correction(proposal.spec)]
         except Exception:
             logger.warning(
                 f"Applying the proposed rule {proposal.spec.condition!r} failed",
                 exc_info=True,
             )
-            return None
+            return []
 
     async def _split_scope_corrections(self, feedback: Feedback) -> list[Rule]:
         """Split each rule whose scope correction this turn attributed.
@@ -172,3 +187,12 @@ class AttributionRun:
                     exc_info=True,
                 )
         return refreshed
+
+
+def _reflect(entries: list[Rule], updated: Sequence[Rule]) -> list[Rule]:
+    """Swap each entry for its post-mutation snapshot and append the rules a
+    mutation created: ``record_use`` recorded the pre-mutation copy."""
+    by_id = {rule.id: rule for rule in updated}
+    kept = [by_id.get(entry.id, entry) for entry in entries]
+    recorded = {entry.id for entry in entries}
+    return kept + [rule for rule in updated if rule.id not in recorded]

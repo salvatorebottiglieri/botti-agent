@@ -1,7 +1,7 @@
 ---
 feature: rule-system
 repo: salvatorebottiglieri/botti-agent
-branch: feat-173-promotion-line
+branch: feat-174-dictation-replaces
 tracker: #166
 ---
 
@@ -27,8 +27,9 @@ tracker: #166
 > itself: `RuleService` publishes `rule.promoted` after the refresh commits, a
 > bounded buffer in `cortex.agentic.notices` holds the line, and the next chat
 > turn opens with it (fixed copy, never the model's, never in the session
-> history). Remaining: the eval Rule set and a new dictation replacing the old
-> Rule (#174, #175).
+> history). Since #174 a dictated Rule that supersedes a known one replaces it:
+> the classifier names the rule in `replaces`, the service archives the
+> predecessor and links the edge. Remaining: the eval Rule set (#175).
 
 ## Phase plan
 
@@ -185,6 +186,7 @@ Slice A's laws are in `## Invariants` below and stay the contract there; these a
 | It must always be true that a turn with no user reply is never enqueued | a `queued_feedback` row with a blank `user_reply` (the `CHECK` refuses it) | `tests/unit/rules/test_queue.py` (the guard in `enqueue` and the `CHECK` in the migration) |
 | It must always be true that an unusable classifier answer writes nothing | a use or a rule exists for a turn whose classification raised, or a queued row consumed by it | `tests/unit/rules/test_attribution.py`, `tests/unit/rules/test_queue.py` |
 | It must always be true that pending feedback is not dropped inside the validity window | a `dropped` row whose `occurred_at` is younger than the window | `tests/unit/rules/test_queue.py` |
+| It must always be true that a replacement moves no evidence: the predecessor keeps every use and the successor starts from its own dictation alone | a `rule_uses` row of the predecessor moved or copied to the successor, or a successor whose confidence reflects the predecessor's history | `tests/unit/rules/test_service.py` (`TestDictatedReplacement`), `tests/unit/rules/test_attribution.py` |
 | It must always be true that one promotion produces one line, once, and never in the text the model is judged on | a second line for the same promotion, or a `Rule confirmed:` line inside `queued_feedback.assistant_turn` / the session history | `tests/unit/agentic/test_loop.py` (`TestPromotionNotices`: once, then none), `tests/unit/agentic/test_notices.py`, `tests/unit/api/test_chat_attribution.py` (the row carries the model's text) |
 | It must always be true that no rule is created or scored during an eval | a `rule_uses` row or a `rules` row written while the runner is in eval mode | `tests/eval/test_rule_fixtures.py` |
 | It must always be true that `rules`, `rule_uses` and `queued_feedback` are written only by `cortex.rules` | a write to those tables from another module — mechanically, an import of `cortex.rules.repository` outside `cortex.rules`, `cortex.main` and `cortex.cli` (every write goes through it) | `pyproject.toml` contract *rules: the repository is private to the rules module*, run by `uv run lint-imports` in the CI job `Boundaries`; `cortex.rules.scoring` likewise |
@@ -220,6 +222,7 @@ Published on the tracker in dependency order. Work the frontier: a ticket can st
 - #171 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-171-mutation-r2
 - #172 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-172-mutation-r3
 - #173 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/177 · Model: docs/models/rule-system.md · Mutation: rule-system-173-mutation-r2
+- #174 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/178 · Model: docs/models/rule-system.md · Mutation: rule-system-174-mutation-r3
 
 ## Model
 
@@ -467,8 +470,9 @@ and the loop that consumes it):
 
 - **Promotion notification line** — *delivered in #173* (the sweep still
   promotes silently; the line rides the next chat turn, see § Lifecycle).
-- **Manual edit** (a new dictated rule replaces and archives the old one): no
-  code path archives the predecessor yet.
+- **Manual edit** — *delivered in #174* (a dictated proposal carrying `replaces`
+  archives the predecessor and points it at its successor; the predecessor keeps
+  its uses, see § Lifecycle).
 - **Conflict check at creation** (the "active rules never contradict each
   other" invariant): it compares a new rule with the active set through the
   LLM, which is the classifier's call.

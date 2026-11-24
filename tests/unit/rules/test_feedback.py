@@ -203,3 +203,43 @@ def test_a_proposal_with_an_unknown_origin_defaults_to_correction(origin: object
             origin=RuleOrigin.CORRECTION,
         )
     ]
+
+
+def _dictated_proposal(**fields: object) -> str:
+    return json.dumps(
+        {
+            "uses": [],
+            "proposals": [
+                {
+                    "condition": "when x",
+                    "action": "do y",
+                    "rationale": "r",
+                    "origin": "dictated",
+                    **fields,
+                }
+            ],
+        }
+    )
+
+
+def test_a_proposal_keeps_a_replaces_naming_a_rule_in_context() -> None:
+    feedback = _parse_feedback(_dictated_proposal(replaces=str(RULE_A)), {RULE_A})
+
+    assert feedback.proposals[0].replaces == RULE_A
+
+
+def test_a_replaces_naming_an_unknown_rule_is_dropped() -> None:
+    """Witness: a proposal may only replace a rule the model could see, so an id
+    that was not listed is dropped exactly as an invented use's rule_id is."""
+    feedback = _parse_feedback(_dictated_proposal(replaces=str(RULE_B)), {RULE_A})
+
+    assert feedback.proposals[0].replaces is None
+
+
+@pytest.mark.parametrize("fields", [{"replaces": "not-a-uuid"}, {}])
+def test_a_replaces_that_cannot_be_parsed_is_dropped(fields: dict) -> None:
+    """Witness: a missing key and a malformed id stringify to a non-UUID, so both
+    land in the same `except`; neither may reach the proposal."""
+    feedback = _parse_feedback(_dictated_proposal(**fields), {RULE_A})
+
+    assert feedback.proposals[0].replaces is None
