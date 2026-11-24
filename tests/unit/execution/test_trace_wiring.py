@@ -15,15 +15,15 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from cortex.agentic.events import (
+from cortex.agentic.models import MaxIterationsError
+from cortex.execution.module import ExecutionModule
+from cortex.shared.loop_events import (
     ErrorEvent,
     LoopEvent,
     ResponseDoneEvent,
     TextDeltaEvent,
     ThinkingEvent,
 )
-from cortex.agentic.models import MaxIterationsError
-from cortex.execution.module import ExecutionModule
 from cortex.trace.pseudonymizer import Pseudonymizer
 from cortex.trace.recorder import TraceRecorder
 from tests.unit.trace.fakes import (

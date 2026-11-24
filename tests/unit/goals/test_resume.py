@@ -17,8 +17,9 @@ from uuid import uuid4
 
 import pytest
 
-from cortex.agentic.models import Goal, GoalResult, GoalStatus
+from cortex.agentic.models import GoalResult
 from cortex.execution.module import ExecutionModule
+from cortex.goals.models import Goal, GoalStatus
 from cortex.goals.repository import InMemoryGoalRepository
 
 

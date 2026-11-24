@@ -11,9 +11,9 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from cortex.agentic.models import Goal, GoalStatus
 from cortex.db.session import DbSession
 from cortex.goals.interfaces import GoalRepository
+from cortex.goals.models import Goal, GoalStatus
 
 _ACTIVE_STATUSES = (GoalStatus.PENDING, GoalStatus.RUNNING, GoalStatus.PAUSED)
 

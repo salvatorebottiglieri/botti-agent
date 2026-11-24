@@ -6,7 +6,10 @@ from uuid import uuid4
 
 import pytest
 
-from cortex.agentic.events import (
+from cortex.config.models import ModelPricing
+from cortex.eval.metrics import collect_metrics
+from cortex.llm.models import UsageStats
+from cortex.shared.loop_events import (
     ErrorEvent,
     ResponseDoneEvent,
     TextDeltaEvent,
@@ -14,9 +17,6 @@ from cortex.agentic.events import (
     ToolResultEvent,
     ToolStartEvent,
 )
-from cortex.config.models import ModelPricing
-from cortex.eval.metrics import collect_metrics
-from cortex.llm.models import UsageStats
 
 
 class TestCostAndLatencyMetrics:

@@ -10,15 +10,6 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
-from cortex.agentic.events import (
-    AskUserEvent,
-    ErrorEvent,
-    ResponseDoneEvent,
-    TextDeltaEvent,
-    ThinkingEvent,
-    ToolResultEvent,
-    ToolStartEvent,
-)
 from cortex.api.auth import get_api_key
 from cortex.api.dependencies import (
     get_execution_module,
@@ -28,6 +19,15 @@ from cortex.api.dependencies import (
 )
 from cortex.api.schemas import ChatRequest, ChatResponse, ErrorResponse
 from cortex.rules.queue import enqueue_turn
+from cortex.shared.loop_events import (
+    AskUserEvent,
+    ErrorEvent,
+    ResponseDoneEvent,
+    TextDeltaEvent,
+    ThinkingEvent,
+    ToolResultEvent,
+    ToolStartEvent,
+)
 
 if TYPE_CHECKING:
     from cortex.execution.module import ExecutionModule

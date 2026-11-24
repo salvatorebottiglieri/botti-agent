@@ -11,9 +11,10 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from cortex.agentic.models import Goal, GoalResult, GoalStatus
+from cortex.agentic.models import GoalResult
 from cortex.api.auth import get_api_key
 from cortex.api.dependencies import get_execution_module
+from cortex.goals.models import Goal, GoalStatus
 from cortex.main import create_app
 
 AUTH_HEADERS = {"Authorization": "Bearer dummy-key"}

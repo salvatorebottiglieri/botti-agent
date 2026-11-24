@@ -15,6 +15,9 @@ table:
 * ``error``       — the loop failed
 
 Instances are JSON-ready via :meth:`LoopEvent.to_dict`.
+
+Definitions only, at the bottom of the import scale: no runtime ``cortex`` import
+(ADR-0022).
 """
 
 from __future__ import annotations

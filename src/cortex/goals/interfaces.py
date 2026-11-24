@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from cortex.agentic.models import Goal
+from cortex.goals.models import Goal
 
 
 class GoalRepository(ABC):

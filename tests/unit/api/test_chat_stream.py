@@ -14,15 +14,6 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from cortex.agentic.events import (
-    AskUserEvent,
-    ErrorEvent,
-    ResponseDoneEvent,
-    TextDeltaEvent,
-    ThinkingEvent,
-    ToolResultEvent,
-    ToolStartEvent,
-)
 from cortex.agentic.loop import AgentLoop
 from cortex.agentic.models import Context, Decision
 from cortex.agentic.notices import PromotionNotices
@@ -31,6 +22,15 @@ from cortex.events.types import EventTypes
 from cortex.execution.module import ExecutionModule
 from cortex.rules.models import Rule
 from cortex.sessions.models import Session, SessionState
+from cortex.shared.loop_events import (
+    AskUserEvent,
+    ErrorEvent,
+    ResponseDoneEvent,
+    TextDeltaEvent,
+    ThinkingEvent,
+    ToolResultEvent,
+    ToolStartEvent,
+)
 from tests.unit.api.fakes import FakeInteractionService, FakeRuleService, build_client
 from tests.unit.rules.fakes import InMemoryFeedbackQueue, RaisingQueue
 

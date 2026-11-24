@@ -9,13 +9,11 @@ from cortex.agentic.models import (
     Context,
     Decision,
     DecisionType,
-    Goal,
     GoalContext,
-    GoalStatus,
-    GoalStep,
     MaxIterationsError,
     Mode,
 )
+from cortex.goals.models import Goal, GoalStatus, GoalStep
 
 
 class TestMode:
@@ -101,7 +99,7 @@ class TestContext:
 
     def test_context_creation(self):
         """Context can be created with all fields."""
-        from cortex.agentic.models import MemoryContext
+        from cortex.shared.bundle import MemoryContext
 
         context = Context(
             session_id=uuid4(),
@@ -143,7 +141,7 @@ class TestContext:
             )
         ]
 
-        from cortex.agentic.models import MemoryContext
+        from cortex.shared.bundle import MemoryContext
 
         context = Context(
             session_id=uuid4(),

@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
 from cortex.agentic.context_builder import ContextBuilder
-from cortex.agentic.events import AskUserEvent, LoopEvent, TextDeltaEvent
 from cortex.agentic.executor import LoopExecutor
 from cortex.agentic.loop import AgentLoop
 from cortex.agentic.reasoner import Reasoner
@@ -35,6 +34,8 @@ from cortex.llm.models import UsageStats
 from cortex.rules.models import Rule
 from cortex.sessions.interfaces import SessionRepository
 from cortex.sessions.models import Message, MessageRole, Session, SessionState
+from cortex.shared.bundle import MemoryContext
+from cortex.shared.loop_events import AskUserEvent, LoopEvent, TextDeltaEvent
 from cortex.tools.executor import DefaultToolExecutor
 from cortex.tools.registry import InMemoryToolRegistry
 
@@ -169,8 +170,6 @@ class _FixtureContextProvider:
         max_facts: int = 10,
         fact_types: list[Any] | None = None,
     ) -> Any:
-        from cortex.agentic.models import MemoryContext
-
         return MemoryContext(rules=list(self._rules))
 
 

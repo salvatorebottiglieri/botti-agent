@@ -19,16 +19,6 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from cortex.agentic.events import (
-    AskUserEvent,
-    ErrorEvent,
-    LoopEvent,
-    ResponseDoneEvent,
-    TextDeltaEvent,
-    ThinkingEvent,
-    ToolResultEvent,
-    ToolStartEvent,
-)
 from cortex.config.models import Settings
 from cortex.config.trace import TraceSettings
 from cortex.eval.judge import (
@@ -39,6 +29,16 @@ from cortex.eval.judge import (
 from cortex.llm.config import LLMSettings
 from cortex.llm.models import ChatMessage, ChatResult, Role, UsageStats
 from cortex.sessions.models import MessageRole
+from cortex.shared.loop_events import (
+    AskUserEvent,
+    ErrorEvent,
+    LoopEvent,
+    ResponseDoneEvent,
+    TextDeltaEvent,
+    ThinkingEvent,
+    ToolResultEvent,
+    ToolStartEvent,
+)
 from cortex.trace import audit as trace_audit
 from cortex.trace.audit import TraceAuditError, audit_session, reconstruct_event
 from cortex.trace.recorder import TraceRecorder

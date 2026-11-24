@@ -6,16 +6,10 @@ from uuid import uuid4
 
 import pytest
 
-from cortex.agentic.models import (
-    AmbientContext,
-    Context,
-    Decision,
-    DecisionType,
-    MemoryContext,
-    PersonalityContext,
-)
+from cortex.agentic.models import Context, Decision, DecisionType
 from cortex.agentic.reasoner import Reasoner
 from cortex.llm.models import ChatMessage, ChatResult, Role
+from cortex.shared.bundle import AmbientContext, MemoryContext, PersonalityContext
 
 
 def _chat_result(content: str | None = None, tool_calls=None) -> ChatResult:

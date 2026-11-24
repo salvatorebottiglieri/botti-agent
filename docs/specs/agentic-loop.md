@@ -55,7 +55,7 @@ a decision type — the model asks by calling the `ask_user` tool, handled as an
 
 ## The event stream (ADR-0002)
 
-`LoopEvent` (`agentic/events.py`) is the loop's public seam to its caller. It is
+`LoopEvent` (`cortex/shared/loop_events.py`, since #181) is the loop's public seam to its caller. It is
 caller-scoped and never published on the event bus (contrast: *system events*,
 [architecture.md](architecture.md)). `event_type` **is** the wire name — no
 mapping table.

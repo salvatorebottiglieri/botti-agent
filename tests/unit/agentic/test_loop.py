@@ -5,16 +5,6 @@ from uuid import uuid4
 
 import pytest
 
-from cortex.agentic.events import (
-    AskUserEvent,
-    ErrorEvent,
-    LoopEvent,
-    ResponseDoneEvent,
-    TextDeltaEvent,
-    ThinkingEvent,
-    ToolResultEvent,
-    ToolStartEvent,
-)
 from cortex.agentic.loop import AgentLoop
 from cortex.agentic.models import (
     ChatResponse,
@@ -26,6 +16,16 @@ from cortex.agentic.notices import PromotionNotices
 from cortex.events.base import BaseEvent
 from cortex.events.types import EventTypes
 from cortex.sessions.models import Message, MessageRole
+from cortex.shared.loop_events import (
+    AskUserEvent,
+    ErrorEvent,
+    LoopEvent,
+    ResponseDoneEvent,
+    TextDeltaEvent,
+    ThinkingEvent,
+    ToolResultEvent,
+    ToolStartEvent,
+)
 from cortex.tools.interfaces import ToolCall, ToolResult
 
 

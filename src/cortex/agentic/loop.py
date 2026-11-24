@@ -8,16 +8,6 @@ from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from cortex.agentic.events import (
-    AskUserEvent,
-    ErrorEvent,
-    LoopEvent,
-    ResponseDoneEvent,
-    TextDeltaEvent,
-    ThinkingEvent,
-    ToolResultEvent,
-    ToolStartEvent,
-)
 from cortex.agentic.models import (
     ChatResponse,
     Decision,
@@ -28,6 +18,16 @@ from cortex.agentic.models import (
 )
 from cortex.events import EventEmitter
 from cortex.sessions.models import Message, MessageRole, SessionState
+from cortex.shared.loop_events import (
+    AskUserEvent,
+    ErrorEvent,
+    LoopEvent,
+    ResponseDoneEvent,
+    TextDeltaEvent,
+    ThinkingEvent,
+    ToolResultEvent,
+    ToolStartEvent,
+)
 from cortex.tools.meta.ask_user import ASK_USER_CONTROL, ASK_USER_TOOL_NAME
 
 if TYPE_CHECKING:
