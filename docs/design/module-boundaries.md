@@ -32,13 +32,14 @@ what the system *speaks*.
 | `memory` | `shared` | runtime (the bundle) |
 | `trace`, `eval`, `api` | `shared` | runtime (the events) |
 | `agentic` | `shared` | runtime (both) |
-| `agentic` | `goals` | runtime (`Goal` for `run_goal`) |
 | `agentic` | `memory` | runtime (the bundle seam) — the only edge between the two |
 | `goals`, `execution` | `goals` (own module) | — |
 | `execution` | `goals` | runtime (`Goal`, `GoalStatus`) |
 
 `memory → agentic` disappears; `trace → agentic` and `api → agentic` (for the
-events) disappear; `goals → agentic` disappears.
+events) disappear; `goals → agentic` disappears. `agentic` imports neither
+`goals` nor the event types it used to own: `run_goal` takes a description and
+returns a `GoalResult`.
 
 ## Decision 1 — the shared contracts live below every module
 

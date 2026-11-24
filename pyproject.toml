@@ -85,17 +85,8 @@ root_package = "cortex"
 # cannot invent a cycle. This is a session option, so it applies to every contract.
 exclude_type_checking_imports = true
 
-# The fitness function for module boundaries (issue #167, found in #166 phase 3).
-# The repo is a modular monolith by document (docs/specs/architecture.md § Module
-# map); these contracts hold that map. Since #181/#182 the runtime graph has zero
-# upward edges and zero cycles, so the two whole-map contracts below carry no
-# exception list: a module may only import a lower group, and no runtime cycle may
-# exist between two modules. A contract that needs an ignore_imports means the
-# design debt is back.
-#
-# Law held here: a module's persistence seam and its score are private to it. The
-# composition root and the CLI may reach the repository because they are the ones
-# that build it; nothing else may.
+# The fitness function for module boundaries (#167): the order is enforced, and a
+# contract that needs `ignore_imports` means the design debt is back. Why: ADR-0022.
 
 [[tool.importlinter.contracts]]
 name = "layers: the enforced order"

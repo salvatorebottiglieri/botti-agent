@@ -1,4 +1,7 @@
-"""The memory bundle: what the Memory Module contributes to a reasoning step."""
+"""The memory bundle: what the Memory Module contributes to a reasoning step.
+
+It is the bottom layer of the import scale: no runtime ``cortex`` import (ADR-0022).
+"""
 
 from __future__ import annotations
 

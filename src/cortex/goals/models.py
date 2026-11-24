@@ -1,4 +1,4 @@
-"""Goal models."""
+"""Goal models. ``goals`` owns this model; ``agentic`` and ``execution`` import it from here (ADR-0022)."""
 
 from __future__ import annotations
 

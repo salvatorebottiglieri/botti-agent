@@ -66,6 +66,7 @@ flowchart TB
     subgraph G6["G6 modules"]
         Sessions[sessions]
         Memory[memory<br/>FactStore / EvidenceStore / ContextProvider / FactExtractor]
+        Validation[validation<br/>LogicEngine / ConceptValidation / Derivation]
         Goals[goals]
         MinionsMod[minions gateway]
         Learning[learning<br/>ESN reservoir]
@@ -82,6 +83,7 @@ flowchart TB
     subgraph G8["G8 foundation"]
         Config[config]
         Logging[logging]
+        Safety[safety<br/>backup / journal / shell guard]
     end
 
     subgraph G9["G9 shared"]
@@ -133,10 +135,12 @@ flowchart TB
     Memory --> Shared
     Memory --> Rules
     Memory --> DB
+    Validation --> Memory
     Rules --> DB
     Sessions --> DB
     Goals --> DB
     MinionsMod --> River
+    DB --> Safety
     DB --> PG
 ```
 

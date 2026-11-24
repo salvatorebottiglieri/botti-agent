@@ -130,7 +130,7 @@ Module: `cortex.rules` (Layer 2, published interface `RuleService` + `render_rul
 | Module | Bounded context (`CONTEXT.md`) | Published interface | Owns (stored data) | Depends on | Publishes events |
 |---|---|---|---|---|---|
 | rules | Rules | `RuleService` (`create_dictated`, `create_from_correction`, `record_use`, `list_active`, `archive`, `split`, `merge`), `render_rules` | `rules`, `rule_uses`, `queued_feedback` | llm (the classifier's `LLMClient`), db | `rule.promoted` (after commit) — new in slice B |
-| agentic | Agentic loop | `AgentLoop`, `MemoryContext` | — | rules (reads `rules` into the bundle, renders them) | — |
+| agentic | Agentic loop | `AgentLoop` | — | rules (reads `rules` into the bundle, renders them), shared (the bundle types) | — |
 | api / cli | — | the chat endpoint and the CLI | — | rules (attribution run), agentic | — |
 
 ```mermaid
@@ -244,7 +244,7 @@ Published on the tracker in dependency order. Work the frontier: a ticket can st
 | ID | Kind | Code | Source |
 |---|---|---|---|
 | `Loop` | module | `cortex.agentic.loop` (`AgentLoop`) | `src/cortex/agentic/loop.py:44` |
-| `Bundle` | entity | `cortex.agentic.models.MemoryContext` | `src/cortex/agentic/models.py:102` |
+| `Bundle` | entity | `cortex.shared.bundle.MemoryContext` | `src/cortex/shared/bundle.py:35` |
 | `Rules` | module | `cortex.rules` | `src/cortex/rules/` |
 | `Render` | symbol | `cortex.rules.render.render_rules` | `src/cortex/rules/render.py:21` |
 | `Service` | symbol | `cortex.rules.service.RuleService` | `src/cortex/rules/service.py:37` |

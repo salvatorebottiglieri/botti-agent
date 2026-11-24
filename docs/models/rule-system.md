@@ -27,7 +27,7 @@ the Rules it applied. Spec: `docs/specs/rule-system.md`; design:
 | ID | Kind | Code | Source |
 |---|---|---|---|
 | Loop | module | src.cortex.agentic.loop | `src/cortex/agentic/loop.py` |
-| Bundle | entity | MemoryContext | `src/cortex/agentic/models.py:102` |
+| Bundle | entity | MemoryContext | `src/cortex/shared/bundle.py` |
 | Classifier | symbol | src.cortex.rules.feedback.FeedbackClassifier.classify | `src/cortex/rules/feedback.py` |
 | Attribution | symbol | src.cortex.rules.attribution.AttributionRun.attribute | `src/cortex/rules/attribution.py` |
 | Service | symbol | src.cortex.rules.service.RuleService.record_use | `src/cortex/rules/service.py:92` |

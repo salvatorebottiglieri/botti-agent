@@ -128,7 +128,7 @@ move of type definitions and the wiring of two CI contracts.
   draws it.
 - **Contracts**: `layers` (ordered groups) and `acyclic_siblings`, both with
   `exclude_type_checking_imports`, both with no `ignore_imports`. Groups:
-  `shared`; `config | logging | safety | db`; `events | llm | tools`;
+  `shared`; `config | logging | safety`; `events | llm | tools | db`;
   `sessions | memory | validation | goals | minions | rules | learning`;
   `services`; `agentic`; `eval | trace`; `api | execution | interaction`;
   `main | cli`.
