@@ -181,6 +181,14 @@ architecture document's numeric layering must be rewritten, not merely cited.
 - #184 — the architecture document and ADR follow the enforced order (blocked by: #183)
 
 
+## Delivery
+
+- #181 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/185 · Model: n/a — no entity, state or flow (spec § Model) · Mutation: module-boundaries-mutation-r2
+- #182 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/185 · Model: n/a — no entity, state or flow (spec § Model) · Mutation: module-boundaries-mutation-r2
+- #183 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/185 · Model: n/a — no entity, state or flow (spec § Model) · Mutation: module-boundaries-mutation-lint
+- #184 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/185 · Model: n/a — no entity, state or flow (spec § Model) · Mutation: n/a — docs only, covered by #183's matrices
+
+
 ## System Architecture
 
 Classification: modular-monolith boundary work. No endpoint, no stored data and
