@@ -25,7 +25,7 @@ from cortex.tools.meta import (
     get_meta_tools,
     register_meta_tools,
 )
-from cortex.tools.meta.ask_user import ASK_USER_TOOL_NAME
+from cortex.tools.meta.ask_user import ASK_USER_CONTROL, ASK_USER_TOOL_NAME
 from cortex.tools.registry import (
     InMemoryToolRegistry,
     ToolAlreadyRegisteredError,
@@ -58,6 +58,7 @@ __all__ = [
     "ToolValidationError",
 
     # Meta tools
+    "ASK_USER_CONTROL",
     "ASK_USER_TOOL_NAME",
     "FileReadTool",
     "FileWriteTool",

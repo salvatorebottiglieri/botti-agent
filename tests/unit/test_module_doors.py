@@ -1,10 +1,6 @@
 """Every module publishes its surface through one door: its package `__init__` (#189).
 
-The door is the package body, so each name below must resolve from
-``cortex.<module>`` *and* be the object the implementation module holds — a door
-that exported a look-alike would pass an existence check and fail a caller.
-``interfaces`` and ``models`` stay open: they are vocabulary, not implementation,
-so ``from cortex.rules.models import Rule`` keeps working.
+``interfaces`` and ``models`` stay open: they are vocabulary, not implementation.
 """
 
 from __future__ import annotations
@@ -21,71 +17,42 @@ SURFACES = [
         "cortex.goals.models",
         {"GoalRepository", "InMemoryGoalRepository", "PostgresGoalRepository"},
     ),
-    ("cortex.tools", "cortex.tools.interfaces", {"ASK_USER_TOOL_NAME"}),
+    ("cortex.tools", "cortex.tools.interfaces", {"ASK_USER_CONTROL", "ASK_USER_TOOL_NAME"}),
+]
+
+# door, published name, the module that implements it, its attribute there
+# (``None``: the name is that module itself).
+PUBLISHED = [
+    ("cortex.rules", "RuleService", "cortex.rules.service", "RuleService"),
+    ("cortex.rules", "render", "cortex.rules.render", None),
+    ("cortex.rules", "enqueue_turn", "cortex.rules.queue", "enqueue_turn"),
+    ("cortex.goals", "GoalRepository", "cortex.goals.interfaces", "GoalRepository"),
+    (
+        "cortex.goals",
+        "InMemoryGoalRepository",
+        "cortex.goals.repository",
+        "InMemoryGoalRepository",
+    ),
+    (
+        "cortex.goals",
+        "PostgresGoalRepository",
+        "cortex.goals.repository",
+        "PostgresGoalRepository",
+    ),
+    ("cortex.tools", "ASK_USER_TOOL_NAME", "cortex.tools.meta.ask_user", "ASK_USER_TOOL_NAME"),
+    ("cortex.tools", "ASK_USER_CONTROL", "cortex.tools.meta.ask_user", "ASK_USER_CONTROL"),
 ]
 
 
-def test_rules_door_publishes_the_rule_service():
-    """`RuleService` comes from the door, and is the service's own class."""
-    from cortex.rules import RuleService
+@pytest.mark.parametrize(("door", "name", "implementation", "attribute"), PUBLISHED)
+def test_a_door_publishes_the_object_its_implementation_holds(
+    door, name, implementation, attribute
+):
+    """The door exposes that object, not a look-alike a caller would trip on."""
+    module = importlib.import_module(implementation)
+    expected = module if attribute is None else getattr(module, attribute)
 
-    implementation = importlib.import_module("cortex.rules.service")
-
-    assert RuleService is implementation.RuleService
-
-
-def test_rules_door_publishes_the_render_module():
-    """`render` is the rendering namespace itself, not a copy or a single call."""
-    from cortex.rules import render
-
-    implementation = importlib.import_module("cortex.rules.render")
-
-    assert render is implementation
-
-
-def test_rules_door_publishes_enqueue_turn():
-    """`enqueue_turn` comes from the door, and is the queue's own function."""
-    from cortex.rules import enqueue_turn
-
-    implementation = importlib.import_module("cortex.rules.queue")
-
-    assert enqueue_turn is implementation.enqueue_turn
-
-
-def test_goals_door_publishes_the_repository_interface():
-    """`GoalRepository` is the interface `execution` depends on."""
-    from cortex.goals import GoalRepository
-
-    implementation = importlib.import_module("cortex.goals.interfaces")
-
-    assert GoalRepository is implementation.GoalRepository
-
-
-def test_goals_door_publishes_the_in_memory_repository():
-    """`InMemoryGoalRepository` is the implementation the tests inject."""
-    from cortex.goals import InMemoryGoalRepository
-
-    implementation = importlib.import_module("cortex.goals.repository")
-
-    assert InMemoryGoalRepository is implementation.InMemoryGoalRepository
-
-
-def test_goals_door_publishes_the_postgres_repository():
-    """`PostgresGoalRepository` is the implementation the root builds."""
-    from cortex.goals import PostgresGoalRepository
-
-    implementation = importlib.import_module("cortex.goals.repository")
-
-    assert PostgresGoalRepository is implementation.PostgresGoalRepository
-
-
-def test_tools_door_publishes_the_ask_user_tool_name():
-    """`ASK_USER_TOOL_NAME` is the constant the tool and the loop share."""
-    from cortex.tools import ASK_USER_TOOL_NAME
-
-    implementation = importlib.import_module("cortex.tools.meta.ask_user")
-
-    assert ASK_USER_TOOL_NAME is implementation.ASK_USER_TOOL_NAME
+    assert getattr(importlib.import_module(door), name) is expected
 
 
 @pytest.mark.parametrize(("door", "open_submodule", "names"), SURFACES)
