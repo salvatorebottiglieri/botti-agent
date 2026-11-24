@@ -29,7 +29,9 @@ tracker: #166
 > turn opens with it (fixed copy, never the model's, never in the session
 > history). Since #174 a dictated Rule that supersedes a known one replaces it:
 > the classifier names the rule in `replaces`, the service archives the
-> predecessor and links the edge. Remaining: the eval Rule set (#175).
+> predecessor and links the edge. Since #175 an eval task can carry a Rule set:
+> the fixture rules reach the context bundle and nothing is learned during the
+> run.
 
 ## Phase plan
 
@@ -223,6 +225,7 @@ Published on the tracker in dependency order. Work the frontier: a ticket can st
 - #172 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-172-mutation-r3
 - #173 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/177 · Model: docs/models/rule-system.md · Mutation: rule-system-173-mutation-r2
 - #174 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/178 · Model: docs/models/rule-system.md · Mutation: rule-system-174-mutation-r3
+- #175 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/179 · Model: docs/models/rule-system.md · Mutation: rule-system-175-mutation-r3
 
 ## Model
 
@@ -598,11 +601,15 @@ active rules are loaded as **fixtures**, so an eval measures behaviour *with*
 rules and never modifies them. The Golden Set stays out of the learning loop
 (`CONTEXT.md`).
 
-The eval fixture schema (`EvalTask` in `src/cortex/eval/fixtures.py`) has no
-field for rules today — it carries `turns`, `goal` and `sandbox` only. Loading
-rules as fixtures therefore needs a new optional field on the task, with the
-rule set supplied per task, and the runner must not enable learning for those
-tasks.
+The eval fixture schema (`EvalTask` in `src/cortex/eval/fixtures.py`) carries an
+optional `rules` list — `rules: [{condition, action}]` — supplied per task. The
+loader maps each entry to a `definitive`, confidence-1.0 Rule held in memory; the
+runner hands that set to the context bundle in fixture order (no store, no cap),
+so those Rules are what the model sees. The eval path constructs no rule
+repository, no `RuleService` and no queue: `tests/eval/test_rule_fixtures.py`
+pins that a rules-carrying run stays green with the learning seam spied to fail,
+and that the fixture rules are unchanged after the run. A task without `rules`
+behaves as before.
 
 ## Manual management
 

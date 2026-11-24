@@ -12,7 +12,7 @@ client, so harness tests run against a fake while real runs use the factory.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +32,7 @@ from cortex.eval.judge import TrajectoryJudge, build_judge_client
 from cortex.eval.metrics import SuiteMetrics, TaskMetrics, collect_metrics
 from cortex.eval.sandbox import TaskSandbox, build_sandboxed_tools
 from cortex.llm.models import UsageStats
+from cortex.rules.models import Rule
 from cortex.sessions.interfaces import SessionRepository
 from cortex.sessions.models import Message, MessageRole, Session, SessionState
 from cortex.tools.executor import DefaultToolExecutor
@@ -150,8 +151,15 @@ class _InMemorySessionRepository(SessionRepository):
         return active[-limit:]
 
 
-class _EmptyContextProvider:
-    """Memory-free stand-in so eval runs need no database."""
+class _FixtureContextProvider:
+    """Memory-free stand-in that serves the task's fixture rules (#175).
+
+    No database and no store are involved: the rules are run state, so an eval
+    can measure behaviour with rules without ever writing one.
+    """
+
+    def __init__(self, rules: Sequence[Rule]) -> None:
+        self._rules = rules
 
     async def get_memory_context(
         self,
@@ -163,7 +171,7 @@ class _EmptyContextProvider:
     ) -> Any:
         from cortex.agentic.models import MemoryContext
 
-        return MemoryContext()
+        return MemoryContext(rules=list(self._rules))
 
 
 async def run_suite(
@@ -282,7 +290,7 @@ async def _run_task(
     final_message = ""
     try:
         sandbox.setup(task.sandbox)
-        loop = _build_loop(llm_client, sandbox, max_iterations=max_iterations)
+        loop = _build_loop(llm_client, sandbox, max_iterations=max_iterations, rules=task.rules)
         session_id = uuid4()
         for turn in task.turns:
             final_message = await _drive_turn(loop, session_id, turn, events)
@@ -340,6 +348,7 @@ def _build_loop(
     sandbox: TaskSandbox,
     *,
     max_iterations: int,
+    rules: Sequence[Rule],
 ) -> AgentLoop:
     """Wire the real loop components against the sandbox (no new seams)."""
     registry = InMemoryToolRegistry()
@@ -352,7 +361,7 @@ def _build_loop(
     session_repository: SessionRepository = _InMemorySessionRepository()
     from cortex.memory.context_provider import ContextProvider
 
-    context_provider: ContextProvider = cast(ContextProvider, _EmptyContextProvider())
+    context_provider: ContextProvider = cast(ContextProvider, _FixtureContextProvider(rules))
     context_builder = ContextBuilder(
         session_repository=session_repository,
         context_provider=context_provider,

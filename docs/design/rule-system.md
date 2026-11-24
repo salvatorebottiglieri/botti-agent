@@ -413,6 +413,58 @@ reaches the service with it; a correction proposal ignores it.
 `tests/unit/rules/test_cli_rules.py` — `rules:show`: the predecessor lists
 `superseded by:` and the successor lists the predecessor under `replaced:`.
 
+## Ticket #175 — eval carries a Rule set, and eval never learns
+
+_Design, 2026-11-24, before the code. Signatures and contracts are in the
+`json design` block._
+
+The spec's Evaluation row has been a promise since ADR-0020: an eval measures
+behaviour *with* rules and never modifies them. Today `EvalTask` has no rules and
+`_EmptyContextProvider` returns a bare `MemoryContext()` (`runner.py:164`), so an
+eval cannot see a rule at all. #175 is the field, the bundle and the attestation.
+
+- **The task carries a Rule set.** `EvalTask.rules: list[Rule]` (default empty),
+  loaded from YAML `rules: [{condition, action}]`. The file carries a rule's text
+  only: the loader maps each entry to a `Rule` that is `definitive` (a staged rule
+  announces itself — an eval task must not tell the model its fixture is
+  provisional), `confidence = 1.0`, `origin = dictated`, no `rationale`. The
+  fixture order is the prompt order; the 40-rule cap and the confidence ordering
+  belong to the runtime loader (ADR-0008) and do not apply to an explicit set.
+- **The runner hands them to the bundle, not to a store.** `_build_loop` takes the
+  task's rules and builds a `_FixtureContextProvider` whose `get_memory_context`
+  returns `MemoryContext(rules=…)`; the reasoner already renders
+  `context.memory.rules` (`reasoner.py:182`, `render_rules`), so nothing else
+  changes. A task without rules gets the bundle it gets today.
+- **The rules are run state, not stored state.** The `Rule` objects are built per
+  task from the fixture and never persisted; the eval path has no rule
+  repository, no `RuleService` and no queue. "Eval never learns" is therefore a
+  property of the wiring, and #175 adds the test that fails the day someone wires
+  learning in: the learning seam (`RuleService.record_use`, `create_dictated`,
+  `create_from_correction`) is spied for the whole run and any call fails the
+  test, while the fixture rules compare equal — same ids, same fields — before
+  and after. That is the attestation the spec's invariant asks for.
+- **Degradation**: a malformed rule entry (`condition`/`action` missing, blank or
+  not a string) is a `ValueError` from the loader, like every other malformed
+  field; a `rules` key that is not a list is refused the same way. A task with no
+  `rules` key is unchanged.
+
+### Exits for #175
+
+`tests/eval/test_rule_fixtures.py` — the field: a task with `rules` loads them in
+order; a task without the key has `[]`; a blank `condition` or `action`, a
+non-list `rules` and a non-string field are `ValueError`s; a fixture rule is
+definitive with confidence 1.0.
+
+`tests/eval/test_rule_fixtures.py` — the bundle: a suite whose task carries a
+rule reaches the reasoner with `- <condition> → <action>` in the system prompt
+(asserted on the scripted client's captured messages) and without the
+`[provisional]` marker; a suite whose tasks carry no rules sends the prompt it
+sends today.
+
+`tests/eval/test_rule_fixtures.py` — the attestation: with the learning seam
+spied to fail, a suite carrying rules runs green and writes nothing; the fixture
+rules are the same objects, with the same ids and fields, after the run.
+
 ## Decision 6 — the classifier names the rule a dictation replaces
 
 - **Choice**: a dictated proposal carries `replaces: <rule_id>`, validated against
@@ -428,6 +480,21 @@ reaches the service with it; a correction proposal ignores it.
   they were about.
 - **Owner sign-off**: 2026-11-23, owner in chat — "A" (to the two options: A = the
   classifier names the rule it replaces; B = the service matches the condition text).
+
+## Decision 7 — the eval fixture carries a rule's text, not its bookkeeping
+
+- **Choice**: a fixture rule is `{condition, action}`; the loader maps it to a
+  `definitive`, confidence-1.0, `dictated` Rule held in memory, and the fixture
+  order is the prompt order (no cap, no ordering from a store).
+- **Alternatives rejected**: (B) a full fixture mirroring `Rule` (`state`,
+  `confidence`, `origin`, id) — it would also measure staging, ordering and the
+  40-rule cap, but it is a second schema kept in sync with the model and it moves
+  the measurement from behaviour to the rule store's bookkeeping.
+- **Consequences**: an eval cannot measure a provisional rule or the retrieval
+  cap; an explicit set is taken as given. The fixture file is stable against a
+  model change (a new `Rule` field needs no fixture migration).
+- **Owner sign-off**: 2026-11-24, owner in chat — "A" (to the two options: A = the
+  minimal `condition`/`action` fixture; B = a full `Rule`-shaped fixture).
 
 ## Premises (design)
 
@@ -449,6 +516,9 @@ Inherited: P1-P10 of the spec. New:
 | P23 | The classifier's prompt already lists every rule as `<rule_id> | <condition> → <action>`, so a `replaces` field needs no extra call or listing | `sed -n '19,45p' src/cortex/rules/feedback.py` | the system prompt's first lines and the JSON shape, which names `origin` and would name `replaces` | confirmed |
 | P24 | `rules:show` already prints both directions of the history edge | `sed -n '225,240p' src/cortex/cli.py` and `src/cortex/rules/service.py:170-177` | `list_children` is `superseded_by = $1 OR parent_id = $1`; the CLI prints `superseded by:` and the `replaced:` section | confirmed |
 | P25 | `create_dictated` has exactly one caller, so the new argument has one site to reach | `rg -n "create_dictated" src/` | `service.py:49` (definition) and `attribution.py:124` (the proposal path); the CLI never calls it | confirmed |
+| P26 | The eval runner builds the loop per task, and its only memory seam is the context provider | `sed -n '280,290p;340,360p' src/cortex/eval/runner.py` | `_run_task` calls `_build_loop` per task (`:284`); `_build_loop` wires `_EmptyContextProvider`, which returns a bare `MemoryContext()` (`:164`) | confirmed |
+| P27 | The reasoner already renders the bundle's rules into the system prompt, so a fixture Rule needs no new render path | `rg -n "render_rules" src/cortex/agentic/reasoner.py` | `reasoner.py:182: rules_text = render_rules(context.memory.rules)`; `render_rules` drops archived rules only | confirmed |
+| P28 | Learning is reached only from the HTTP chat routes, never from the loop the eval drives | `rg -n "enqueue_turn" src/cortex` | `api/routes/chat.py:100` and `:219` only; the eval runner calls `AgentLoop.stream_chat` directly | confirmed |
 | P18 | The per-module LLM client the classifier wants exists | `rg -n "create_for_module" src/cortex/llm/factory.py` | `:56` — the definition (no caller under `src/` yet, P2 of the spec) |
 
 ## External fixtures
@@ -901,6 +971,21 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "kind": "mod",
    "path": "tests/unit/rules/test_splits.py",
    "note": "#172 advisory from #171: uses the shared stub"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/eval/fixtures.py",
+   "note": "#175 EvalTask.rules and _parse_rules: a rule's text, mapped to a definitive 1.0 Rule"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/eval/runner.py",
+   "note": "#175 _build_loop carries the task's rules; _FixtureContextProvider serves them in the bundle"
+  },
+  {
+   "kind": "add",
+   "path": "tests/eval/test_rule_fixtures.py",
+   "note": "#175 the field, the bundle and the attestation that eval never learns"
   }
  ],
  "signatures": [
@@ -1023,6 +1108,21 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "module": "src/cortex/api/routes/chat.py",
    "language": "python",
    "code": "async def chat_stream(request: ChatRequest, key: str = Depends(get_api_key), interaction_service: InteractionService = Depends(get_interaction_service), execution_module: ExecutionModule = Depends(get_execution_module), rule_service: RuleService = Depends(get_rule_service), feedback_queue: FeedbackQueue = Depends(get_feedback_queue)) -> StreamingResponse: ..."
+  },
+  {
+   "module": "src/cortex/eval/fixtures.py",
+   "language": "python",
+   "code": "@dataclass\nclass EvalTask:\n    name: str\n    turns: list[str]\n    goal: GoalState\n    description: str = \"\"\n    sandbox: list[SandboxFile] = field(default_factory=list)\n    rules: list[Rule] = field(default_factory=list)\n\ndef _parse_rules(raw: Any, where: str) -> list[Rule]: ..."
+  },
+  {
+   "module": "src/cortex/eval/fixtures.py",
+   "language": "python",
+   "code": "def _parse_task(raw: Any, source: str, index: int) -> EvalTask: ..."
+  },
+  {
+   "module": "src/cortex/eval/runner.py",
+   "language": "python",
+   "code": "class _FixtureContextProvider:\n    def __init__(self, rules: Sequence[Rule]) -> None: ...\n    async def get_memory_context(self, session_id: UUID | None, query: str, *, max_facts: int = 10, fact_types: list[Any] | None = None) -> Any: ...\n\ndef _build_loop(llm_client: LLMClient, sandbox: TaskSandbox, *, max_iterations: int, rules: Sequence[Rule] = ()) -> AgentLoop: ...\n\nasync def _run_task(task: EvalTask, llm_client: LLMClient, *, max_iterations: int, pricing: ModelPricing | None, judge: Callable[[], TrajectoryJudge] | None = None, judge_pricing: ModelPricing | None = None) -> TaskResult: ..."
   }
  ],
  "data_flow": {
@@ -1171,6 +1271,31 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     "id": "cortex.agentic.loop.AgentLoop.stream_chat",
     "module": "src/cortex/agentic/loop.py",
     "kind": "mod"
+   },
+   {
+    "id": "cortex.eval.fixtures._parse_task",
+    "module": "src/cortex/eval/fixtures.py",
+    "kind": "mod"
+   },
+   {
+    "id": "cortex.eval.fixtures._parse_rules",
+    "module": "src/cortex/eval/fixtures.py",
+    "kind": "add"
+   },
+   {
+    "id": "cortex.eval.runner._run_task",
+    "module": "src/cortex/eval/runner.py",
+    "kind": "mod"
+   },
+   {
+    "id": "cortex.eval.runner._build_loop",
+    "module": "src/cortex/eval/runner.py",
+    "kind": "mod"
+   },
+   {
+    "id": "cortex.eval.runner._FixtureContextProvider.__init__",
+    "module": "src/cortex/eval/runner.py",
+    "kind": "add"
    }
   ],
   "edges": [
@@ -1285,6 +1410,18 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    {
     "from": "cortex.rules.attribution.AttributionRun._apply_proposal",
     "to": "cortex.rules.service.RuleService.create_dictated"
+   },
+   {
+    "from": "cortex.eval.fixtures._parse_task",
+    "to": "cortex.eval.fixtures._parse_rules"
+   },
+   {
+    "from": "cortex.eval.runner._run_task",
+    "to": "cortex.eval.runner._build_loop"
+   },
+   {
+    "from": "cortex.eval.runner._build_loop",
+    "to": "cortex.eval.runner._FixtureContextProvider.__init__"
    }
   ]
  },
@@ -1987,6 +2124,84 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     {
      "kind": "effect",
      "type": "one rules row, one rule_uses row, and on a replacement one archive write with superseded_by",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.eval.fixtures._parse_task",
+   "callee": "cortex.eval.fixtures._parse_rules",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the task's rules in file order, each a definitive Rule with confidence 1.0",
+     "handled_at": "stored on EvalTask.rules"
+    },
+    {
+     "kind": "absent",
+     "type": "no `rules` key: an empty list",
+     "handled_at": "the field's default; the bundle stays empty, today's behaviour"
+    },
+    {
+     "kind": "raises",
+     "type": "ValueError on a non-list `rules`, or a missing, blank or non-string condition/action",
+     "handled_at": "not caught here: the loader's caller gets the same ValueError as every other malformed field"
+    },
+    {
+     "kind": "effect",
+     "type": "none: the Rule objects live in memory only",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.eval.runner._run_task",
+   "callee": "cortex.eval.runner._build_loop",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "a loop whose context provider serves the task's rules",
+     "handled_at": "driven for the task's scripted turns"
+    },
+    {
+     "kind": "absent",
+     "type": "none: _build_loop always returns a loop, an empty rule set included",
+     "handled_at": "no such exit: a task without rules gets the empty bundle"
+    },
+    {
+     "kind": "raises",
+     "type": "construction errors, as today",
+     "handled_at": "the task's existing try/except: the task fails and the suite continues"
+    },
+    {
+     "kind": "effect",
+     "type": "none: no repository, no RuleService and no queue is constructed",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.eval.runner._build_loop",
+   "callee": "cortex.eval.runner._FixtureContextProvider.__init__",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the provider holding the task's rules",
+     "handled_at": "passed to ContextBuilder"
+    },
+    {
+     "kind": "absent",
+     "type": "an empty rule sequence, the provider still built",
+     "handled_at": "get_memory_context returns MemoryContext() unchanged"
+    },
+    {
+     "kind": "raises",
+     "type": "nothing: it holds a sequence and copies it",
+     "handled_at": "no such exit: the call cannot fail"
+    },
+    {
+     "kind": "effect",
+     "type": "none: the provider is a read path",
      "handled_at": null
     }
    ]

@@ -109,6 +109,7 @@ flowchart TB
     MinionSvc --> River
     Learning --> River
     Eval --> Loop
+    Eval --> Rules
     Trace --> DB
     Trace --> Sidecar
     Laptop --> Protocol

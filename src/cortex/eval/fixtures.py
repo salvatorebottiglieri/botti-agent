@@ -28,6 +28,9 @@ A fixture file is a YAML document with a ``suite`` header and a non-empty
           answer: "42"      # optional final-response match: one exact string,
                             # or a list of accepted strings matched
                             # case/whitespace-insensitively (normalized)
+        rules:              # optional Rule set the task measures with (#175);
+          - condition: the user asks for a sum   # the task's own Rule: loaded per task, never learned
+            action: write the result to answer.txt
 
 The goal state is graded deterministically against the sandbox directory
 after the run (and, for ``answer``, against the final response text).
@@ -53,6 +56,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from cortex.rules.models import Rule, RuleOrigin, RuleState
 
 
 @dataclass
@@ -135,6 +140,8 @@ class EvalTask:
     goal: GoalState
     description: str = ""
     sandbox: list[SandboxFile] = field(default_factory=list)
+    # The Rule set the task measures behaviour with; empty means today's run.
+    rules: list[Rule] = field(default_factory=list)
 
 
 @dataclass
@@ -317,6 +324,7 @@ def _parse_task(raw: Any, source: str, index: int) -> EvalTask:
     if not isinstance(files_raw, list):
         raise ValueError(f"{where}: sandbox.files must be a list")
     sandbox = [_parse_sandbox_file(f, where) for f in files_raw]
+    rules = _parse_rules(raw.get("rules", []), where)
 
     return EvalTask(
         name=name,
@@ -324,7 +332,38 @@ def _parse_task(raw: Any, source: str, index: int) -> EvalTask:
         goal=goal,
         description=description,
         sandbox=sandbox,
+        rules=rules,
     )
+
+
+def _parse_rules(raw: Any, where: str) -> list[Rule]:
+    """The task's Rule set, in fixture order (which is prompt order).
+
+    The file carries a rule's text only: each entry becomes a definitive,
+    confidence-1.0 rule — a staged fixture would announce itself to the model.
+    """
+    if not isinstance(raw, list):
+        raise ValueError(f"{where}: rules must be a list")
+    rules: list[Rule] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise ValueError(f"{where}: rules[{index}] must be a mapping")
+        for text in ("condition", "action"):
+            value = entry.get(text)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"{where}: rules[{index}].{text} must be a non-empty string"
+                )
+        rules.append(
+            Rule(
+                condition=entry["condition"],
+                action=entry["action"],
+                state=RuleState.DEFINITIVE,
+                confidence=1.0,
+                origin=RuleOrigin.DICTATED,
+            )
+        )
+    return rules
 
 
 def _parse_sandbox_file(raw: Any, where: str) -> SandboxFile:
