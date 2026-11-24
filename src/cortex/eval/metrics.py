@@ -14,13 +14,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from cortex.agentic.events import (
+from cortex.config.models import ModelPricing, derive_cost
+from cortex.shared.loop_events import (
     LoopEvent,
     ResponseDoneEvent,
     ToolResultEvent,
     ToolStartEvent,
 )
-from cortex.config.models import ModelPricing, derive_cost
 
 if TYPE_CHECKING:
     from cortex.llm.models import UsageStats

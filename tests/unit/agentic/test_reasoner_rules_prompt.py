@@ -8,9 +8,10 @@ place.
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-from cortex.agentic.models import Context, MemoryContext
+from cortex.agentic.models import Context
 from cortex.agentic.reasoner import Reasoner
 from cortex.rules.models import Rule, RuleState
+from cortex.shared.bundle import MemoryContext
 
 
 def _reasoner() -> Reasoner:

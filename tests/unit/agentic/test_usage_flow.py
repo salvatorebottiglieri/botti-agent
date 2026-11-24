@@ -5,11 +5,11 @@ from uuid import uuid4
 
 import pytest
 
-from cortex.agentic.events import ResponseDoneEvent
 from cortex.agentic.loop import AgentLoop
 from cortex.agentic.models import Context, Decision, DecisionType
 from cortex.agentic.reasoner import Reasoner
 from cortex.llm.models import ChatMessage, ChatResult, Role, UsageStats
+from cortex.shared.loop_events import ResponseDoneEvent
 from cortex.tools.interfaces import ToolCall, ToolResult
 
 

@@ -21,9 +21,9 @@ from cortex.events import EventEmitter
 from cortex.goals.interfaces import GoalRepository
 
 if TYPE_CHECKING:
-    from cortex.agentic.events import LoopEvent
     from cortex.events import EventBus
     from cortex.memory.conversation_extractor import ConversationFactExtractor
+    from cortex.shared.loop_events import LoopEvent
     from cortex.trace.recorder import TraceRecorder
 
 logger = logging.getLogger(__name__)

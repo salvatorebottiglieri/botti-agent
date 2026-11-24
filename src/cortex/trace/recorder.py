@@ -45,7 +45,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from cortex.agentic.events import (
+from cortex.shared.loop_events import (
     AskUserEvent,
     LoopEvent,
     ResponseDoneEvent,

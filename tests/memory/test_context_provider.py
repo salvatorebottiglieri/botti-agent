@@ -5,12 +5,12 @@ from uuid import uuid4
 
 import pytest
 
-from cortex.agentic.models import AmbientContext, MemoryContext, PersonalityContext
 from cortex.memory.context_provider import ContextProvider
 from cortex.memory.interfaces import ConceptRepository, FactRepository
 from cortex.memory.models import Concept, Fact, FactType
 from cortex.rules.models import Rule, RuleState
 from cortex.rules.service import RuleService
+from cortex.shared.bundle import AmbientContext, MemoryContext, PersonalityContext
 
 
 class TestPersonalityContext:

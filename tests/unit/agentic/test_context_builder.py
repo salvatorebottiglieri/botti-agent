@@ -6,13 +6,9 @@ from uuid import uuid4
 import pytest
 
 from cortex.agentic.context_builder import ContextBuilder
-from cortex.agentic.models import (
-    AmbientContext,
-    MemoryContext,
-    Mode,
-    PersonalityContext,
-)
+from cortex.agentic.models import Mode
 from cortex.sessions.models import Message, MessageRole
+from cortex.shared.bundle import AmbientContext, MemoryContext, PersonalityContext
 
 
 class TestContextBuilder:

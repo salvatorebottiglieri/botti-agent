@@ -16,13 +16,6 @@ from uuid import uuid4
 
 import pytest
 
-from cortex.agentic.events import (
-    ErrorEvent,
-    LoopEvent,
-    ThinkingEvent,
-    ToolResultEvent,
-    ToolStartEvent,
-)
 from cortex.eval.judge import (
     DEFAULT_DIMENSION_ORDER,
     DEFAULT_RUBRIC,
@@ -47,6 +40,13 @@ from cortex.eval.judge import (
 from cortex.llm.config import LLMSettings
 from cortex.llm.models import ChatMessage, ChatResult, Role
 from cortex.llm.providers.openai import OpenAIClient
+from cortex.shared.loop_events import (
+    ErrorEvent,
+    LoopEvent,
+    ThinkingEvent,
+    ToolResultEvent,
+    ToolStartEvent,
+)
 from tests.eval.fakes import ScriptedLLMClient
 
 AUDIT_PATH = Path(__file__).parent / "fixtures" / "judge_audit.yaml"

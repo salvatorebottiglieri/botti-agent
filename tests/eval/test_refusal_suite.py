@@ -397,7 +397,7 @@ class TestRefusalSuiteEndToEnd:
 
     def test_collect_metrics_accumulates_usage_and_latency_across_turns(self):
         """Usage sums across turns; latency sums; cost derives from usage."""
-        from cortex.agentic.events import ResponseDoneEvent
+        from cortex.shared.loop_events import ResponseDoneEvent
 
         sid = "s1"
         events = [

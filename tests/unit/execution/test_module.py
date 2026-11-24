@@ -6,15 +6,15 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from cortex.agentic.events import (
+from cortex.agentic.models import ChatResponse, GoalResult, GoalStatus, MaxIterationsError
+from cortex.execution.module import ExecutionModule
+from cortex.shared.loop_events import (
     ErrorEvent,
     ResponseDoneEvent,
     TextDeltaEvent,
     ThinkingEvent,
     ToolStartEvent,
 )
-from cortex.agentic.models import ChatResponse, GoalResult, GoalStatus, MaxIterationsError
-from cortex.execution.module import ExecutionModule
 
 
 class TestExecutionModule:

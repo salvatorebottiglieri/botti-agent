@@ -50,11 +50,11 @@ from typing import Any
 
 import yaml
 
-from cortex.agentic.events import LoopEvent
 from cortex.llm.base import LLMClient
 from cortex.llm.config import LLMSettings
 from cortex.llm.models import ChatMessage, Role, UsageStats
 from cortex.llm.providers.openai import OpenAIClient
+from cortex.shared.loop_events import LoopEvent
 
 #: Version of the judge rubric semantics; bump on any rubric/criteria change.
 #: The eval manifest pins this alongside prompt/model/grading versions; the

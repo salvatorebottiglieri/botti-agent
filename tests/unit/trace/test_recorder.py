@@ -23,7 +23,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from cortex.agentic.events import (
+from cortex.shared.loop_events import (
     AskUserEvent,
     ErrorEvent,
     LoopEvent,

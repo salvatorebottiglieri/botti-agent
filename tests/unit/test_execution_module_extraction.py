@@ -9,9 +9,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from cortex.agentic.events import TextDeltaEvent
 from cortex.agentic.models import ChatResponse
 from cortex.execution.module import ExecutionModule
+from cortex.shared.loop_events import TextDeltaEvent
 
 
 class RecordingExtractor:

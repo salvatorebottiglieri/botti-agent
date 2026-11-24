@@ -36,7 +36,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from cortex.agentic.events import (
+from cortex.llm.models import UsageStats
+from cortex.sessions.models import MessageRole
+from cortex.shared.loop_events import (
     AskUserEvent,
     ErrorEvent,
     LoopEvent,
@@ -46,8 +48,6 @@ from cortex.agentic.events import (
     ToolResultEvent,
     ToolStartEvent,
 )
-from cortex.llm.models import UsageStats
-from cortex.sessions.models import MessageRole
 
 if TYPE_CHECKING:
     from cortex.config.trace import TraceSettings

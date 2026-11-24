@@ -6,7 +6,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from cortex.agentic.events import (
+from cortex.llm.models import UsageStats
+from cortex.shared.loop_events import (
     AskUserEvent,
     ErrorEvent,
     LoopEvent,
@@ -16,7 +17,6 @@ from cortex.agentic.events import (
     ToolResultEvent,
     ToolStartEvent,
 )
-from cortex.llm.models import UsageStats
 
 WIRE_NAMES = {
     ThinkingEvent: "thinking",

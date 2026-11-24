@@ -9,10 +9,10 @@ import json
 from collections.abc import AsyncGenerator
 from uuid import UUID, uuid4
 
-from cortex.agentic.events import LoopEvent, TextDeltaEvent
 from cortex.eval.baseline import load_baseline
 from cortex.eval.fixtures import EvalSuite, EvalTask, GoalFile, GoalState, SandboxFile
 from cortex.eval.runner import _drive_turn, run_suite
+from cortex.shared.loop_events import LoopEvent, TextDeltaEvent
 from tests.eval.fakes import ScriptedLLMClient, scripted_judge_client
 
 

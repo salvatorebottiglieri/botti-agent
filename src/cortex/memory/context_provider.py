@@ -6,10 +6,10 @@ import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from cortex.agentic.models import AmbientContext, MemoryContext, PersonalityContext
 from cortex.memory.fact_store import FactStore
 from cortex.memory.interfaces import ConceptRepository, FactRepository
 from cortex.memory.models import Concept, ConceptDerivation, Fact, FactType
+from cortex.shared.bundle import AmbientContext, MemoryContext, PersonalityContext
 
 if TYPE_CHECKING:
     from cortex.llm.base import LLMClient
