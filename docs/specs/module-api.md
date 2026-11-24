@@ -171,3 +171,7 @@ A linear chain: the door first, then the callers, then the contract that makes t
 - #190 — Consumers enter through the doors, and the module stops wiring itself (blocked by #189)
 - #191 — The door becomes a contract: one protected contract per module, one forbidden for the shared kernel (blocked by #190)
 - #192 — The architecture document and an ADR record the published interface (blocked by #191)
+
+## Delivery
+
+- #189 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/193 · Model: n/a — the feature adds no flow and no state (## Model: skipped) · Mutation: report-store `module-api-mutation-r2` (control red, 2 pinned)
