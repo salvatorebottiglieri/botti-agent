@@ -225,6 +225,7 @@ Published on the tracker in dependency order. Work the frontier: a ticket can st
 - #172 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/176 · Model: docs/models/rule-system.md · Mutation: rule-system-172-mutation-r3
 - #173 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/177 · Model: docs/models/rule-system.md · Mutation: rule-system-173-mutation-r2
 - #174 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/178 · Model: docs/models/rule-system.md · Mutation: rule-system-174-mutation-r3
+- #175 — PR: https://github.com/salvatorebottiglieri/botti-agent/pull/179 · Model: docs/models/rule-system.md · Mutation: rule-system-175-mutation-r3
 
 ## Model
 
