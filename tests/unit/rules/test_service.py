@@ -9,6 +9,7 @@ Each test names its WITNESS: the plausible wrong implementation it separates
 from the correct one.
 """
 
+import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -66,6 +67,14 @@ def _service() -> tuple[RuleService, InMemoryRuleRepository, FakeClock]:
     repository = InMemoryRuleRepository()
     clock = FakeClock()
     return RuleService(repository, clock=clock), repository, clock
+
+
+class _VanishingRuleRepository(InMemoryRuleRepository):
+    """A store whose ``refresh`` always reports the row gone: the predecessor is
+    read fine, then vanishes before it can be archived."""
+
+    async def refresh(self, rule: Rule) -> Rule | None:
+        return None
 
 
 async def _stored_uses(repository: InMemoryRuleRepository, rule_id: UUID) -> list[RuleUse]:
@@ -177,15 +186,42 @@ class TestDictatedReplacement:
         assert await repository.list_uses(predecessor.id) == predecessor_uses
 
     async def test_the_successor_keeps_none_of_the_predecessors_uses(self):
+        """Witness: copying the predecessor's uses gives the successor three
+        situations; moving them leaves the predecessor short of its own."""
         service, repository, _, predecessor = await self._predecessor_with_uses()
+        predecessor_uses = await repository.list_uses(predecessor.id)
+        replacement = RuleSpec("the user asks to book", "confirm first")
 
         successor = await service.create_dictated(
-            SESSION_B, RuleSpec("the user asks to book", "confirm first"), replaces=predecessor.id
+            SESSION_B, replacement, replaces=predecessor.id
         )
 
-        predecessor_use_ids = {use.id for use in await repository.list_uses(predecessor.id)}
-        successor_use_ids = {use.id for use in await repository.list_uses(successor.id)}
-        assert predecessor_use_ids.isdisjoint(successor_use_ids)
+        successor_uses = await _stored_uses(repository, successor.id)
+        assert [(use.situation, use.outcome) for use in successor_uses] == [
+            (replacement.condition, UseOutcome.APPROVAL)
+        ]
+        retained = await repository.list_uses(predecessor.id)
+        assert len(retained) == len(predecessor_uses)
+        assert [use.situation for use in retained] == [
+            use.situation for use in predecessor_uses
+        ]
+
+    async def test_a_predecessor_that_vanishes_is_reported(self, caplog):
+        """Witness: discarding the None from ``refresh`` archives nothing and
+        says nothing, leaving a successor whose predecessor edge points at a
+        rule the store never updated."""
+        service = RuleService(_VanishingRuleRepository(), clock=FakeClock())
+        predecessor = await service.create_dictated(SESSION_A, SPEC)
+
+        with caplog.at_level(logging.WARNING):
+            successor = await service.create_dictated(
+                SESSION_B,
+                RuleSpec("the user asks to book", "confirm first"),
+                replaces=predecessor.id,
+            )
+
+        assert successor.state is RuleState.DEFINITIVE
+        assert f"Rule {predecessor.id} vanished during the replacement" in caplog.text
 
     async def test_a_dictation_with_no_replaces_leaves_the_other_rule_active(self):
         """Witness: replacing by default would archive a rule the user did not

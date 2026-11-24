@@ -379,8 +379,19 @@ rule that supersedes one already known creates a second rule beside the first, a
   `list_children`, which covers `superseded_by` as well as `parent_id`. The edge is
   therefore visible in both directions with the code that exists.
 - **Degradation**: a `replaces` naming an unknown id is dropped in the parse, and one
-  naming an archived rule is refused by the service — the dictation still creates its
-  rule, because losing the replacement costs a duplicate, never the user's rule.
+  naming an archived rule is refused by the service with `RuleReplacementRefusedError`
+  — a `ValueError` subclass, so a caller that already treats a refusal as a `ValueError`
+  keeps working — and the run retries once without `replaces`: losing the replacement
+  costs a duplicate, never the user's rule. A predecessor that vanishes between the
+  check and the archive is logged and costs the edge, not the successor.
+- **The returned list is the post-replacement state.** `_apply_proposal` returns every
+  rule the proposal moved (the successor and, for a replacement, the archived
+  predecessor) and `_reflect` swaps them into the list `attribute` returns, the same
+  way the split path already patched its archived parent.
+- **Accepted race (shortcut)**: two replacements racing on one predecessor both pass an
+  archived check that reads before it writes, so the second overwrites `superseded_by`
+  and two definitive successors keep one edge. It needs a state-predicated `UPDATE`
+  that the repository does not have; the code carries the `shortcut:` comment.
 
 ### Exits for #174
 
@@ -984,6 +995,11 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    "code": "async def create_dictated(self, session_id: UUID, spec: RuleSpec, *, replaces: UUID | None = None) -> Rule: ..."
   },
   {
+   "module": "src/cortex/rules/attribution.py",
+   "language": "python",
+   "code": "async def _apply_proposal(self, proposals: list[RuleProposal], session_id: UUID) -> list[Rule]: ..."
+  },
+  {
    "module": "src/cortex/agentic/loop.py",
    "language": "python",
    "code": "class AgentLoop:\n    def __init__(self, context_builder: ContextBuilder, reasoner: Reasoner, executor: LoopExecutor, event_bus: EventBus | None = None, session_repository: SessionRepository | None = None, max_chat_iterations: int = 20, max_goal_iterations: int = 100, now: Callable[[], float] = time.monotonic, notices: PromotionNotices | None = None): ...\n    async def stream_chat(self, session_id: UUID, user_message: str, *, max_iterations: int | None = None, stream: bool = False) -> AsyncGenerator[LoopEvent, None]: ..."
@@ -1142,6 +1158,16 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     "kind": "add"
    },
    {
+    "id": "cortex.rules.attribution.AttributionRun._apply_proposal",
+    "module": "src/cortex/rules/attribution.py",
+    "kind": "mod"
+   },
+   {
+    "id": "cortex.rules.service.RuleService.create_dictated",
+    "module": "src/cortex/rules/service.py",
+    "kind": "mod"
+   },
+   {
     "id": "cortex.agentic.loop.AgentLoop.stream_chat",
     "module": "src/cortex/agentic/loop.py",
     "kind": "mod"
@@ -1255,6 +1281,10 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
    {
     "from": "cortex.agentic.loop.AgentLoop.stream_chat",
     "to": "cortex.agentic.notices.PromotionNotices.take"
+   },
+   {
+    "from": "cortex.rules.attribution.AttributionRun._apply_proposal",
+    "to": "cortex.rules.service.RuleService.create_dictated"
    }
   ]
  },
@@ -1931,6 +1961,32 @@ In `tests/unit/rules/test_feedback.py`, `tests/unit/rules/test_attribution.py` a
     {
      "kind": "effect",
      "type": "the line is consumed: a turn that later fails loses it, which the AC accepts",
+     "handled_at": null
+    }
+   ]
+  },
+  {
+   "site": "cortex.rules.attribution.AttributionRun._apply_proposal",
+   "callee": "cortex.rules.service.RuleService.create_dictated",
+   "exits": [
+    {
+     "kind": "returns",
+     "type": "the successor, definitive, with its own dictation as one approval use",
+     "handled_at": "collected into the rules attribute returns; _reflect swaps it into the list"
+    },
+    {
+     "kind": "absent",
+     "type": "RuleReplacementRefusedError (the predecessor is archived) or RuleNotFoundError (it is gone)",
+     "handled_at": "one handler here: a warning naming the rule, then the same call without `replaces`, so the dictation still creates its rule"
+    },
+    {
+     "kind": "raises",
+     "type": "ValueError on a blank condition or action (before any write), the repository's error",
+     "handled_at": "not caught as a refusal: it falls to this method's single outer handler, which logs and drops the proposal"
+    },
+    {
+     "kind": "effect",
+     "type": "one rules row, one rule_uses row, and on a replacement one archive write with superseded_by",
      "handled_at": null
     }
    ]

@@ -21,6 +21,7 @@ from cortex.rules.models import (
     Rule,
     RuleNotFoundError,
     RuleOrigin,
+    RuleReplacementRefusedError,
     RuleSpec,
     RuleState,
     RuleUse,
@@ -72,8 +73,11 @@ class RuleService:
             predecessor = await self._repository.get(replaces)
             if predecessor is None:
                 raise RuleNotFoundError(str(replaces))
+            # shortcut: two concurrent replacements can both archive the same
+            # predecessor, last write wins; upgrade to a state-predicated UPDATE
+            # if that ever matters
             if predecessor.state is RuleState.ARCHIVED:
-                raise ValueError(f"rule {replaces} is already archived")
+                raise RuleReplacementRefusedError(f"rule {replaces} is already archived")
         now = self._clock()
         rule = Rule(
             condition=spec.condition,
@@ -98,7 +102,8 @@ class RuleService:
             predecessor.state = RuleState.ARCHIVED
             predecessor.archived_at = now
             predecessor.superseded_by = stored.id
-            await self._repository.refresh(predecessor)
+            if await self._repository.refresh(predecessor) is None:
+                logger.warning(f"Rule {predecessor.id} vanished during the replacement")
         return stored
 
     async def create_from_correction(self, spec: RuleSpec) -> Rule:

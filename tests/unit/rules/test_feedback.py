@@ -236,13 +236,10 @@ def test_a_replaces_naming_an_unknown_rule_is_dropped() -> None:
     assert feedback.proposals[0].replaces is None
 
 
-def test_a_malformed_replaces_is_dropped() -> None:
-    feedback = _parse_feedback(_dictated_proposal(replaces="not-a-uuid"), {RULE_A})
-
-    assert feedback.proposals[0].replaces is None
-
-
-def test_a_proposal_without_replaces_is_none() -> None:
-    feedback = _parse_feedback(_dictated_proposal(), {RULE_A})
+@pytest.mark.parametrize("fields", [{"replaces": "not-a-uuid"}, {}])
+def test_a_replaces_that_cannot_be_parsed_is_dropped(fields: dict) -> None:
+    """Witness: a missing key and a malformed id stringify to a non-UUID, so both
+    land in the same `except`; neither may reach the proposal."""
+    feedback = _parse_feedback(_dictated_proposal(**fields), {RULE_A})
 
     assert feedback.proposals[0].replaces is None
