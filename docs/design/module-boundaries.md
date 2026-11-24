@@ -168,6 +168,16 @@ None. The feature touches no external system and adds no fixture.
   },
   {
    "kind": "mod",
+   "path": "src/cortex/eval/metrics.py",
+   "note": "#181 imports the events from cortex.shared.loop_events (found during implementation; the first file-tree missed it)"
+  },
+  {
+   "kind": "mod",
+   "path": "src/cortex/eval/judge.py",
+   "note": "#181 same (found during implementation)"
+  },
+  {
+   "kind": "mod",
    "path": "src/cortex/api/routes/chat.py",
    "note": "#181 LoopEvent from shared (runtime importer, spec premise P7)"
   },
