@@ -16,6 +16,15 @@ from cortex.config.models import Settings
 
 SETTINGS = Settings(llm={"api_key": "test-key"})
 
+# Stands in for the real MinionService: the wiring under test is "whatever the
+# init puts on the container reaches the state dict the API reads".
+class FakeMinionService:
+    async def disconnect(self) -> None:
+        pass
+
+
+MINION_SERVICE = FakeMinionService()
+
 
 @pytest.fixture
 async def wired_app(monkeypatch):
@@ -35,7 +44,11 @@ async def wired_app(monkeypatch):
         await asyncio.Event().wait()
 
     monkeypatch.setattr("cortex.main._feedback_drain_loop", hold_open)
-    monkeypatch.setattr("cortex.main._initialize_minion_service", AsyncMock())
+
+    async def fake_minion_init(cortex) -> None:
+        cortex.minion_service = MINION_SERVICE
+
+    monkeypatch.setattr("cortex.main._initialize_minion_service", fake_minion_init)
 
     with (
         patch("cortex.main.get_settings", return_value=SETTINGS),
@@ -86,6 +99,16 @@ async def test_the_state_dict_exposes_the_two_new_dependencies(wired_app):
     state = get_app_state()
     assert state["rule_service"] is cortex.rule_service
     assert state["feedback_queue"] is cortex.feedback_drain._queue
+
+
+async def test_the_state_carries_the_minion_service_the_root_initialized(wired_app):
+    """The init runs after the state dict exists: the service must still reach it."""
+    from cortex.api.dependencies import get_app_state
+
+    cortex, _, _ = wired_app
+
+    assert cortex.minion_service is MINION_SERVICE
+    assert get_app_state()["minion_service"] is MINION_SERVICE
 
 
 async def test_the_drain_loop_is_started_with_the_drain(wired_app):
@@ -145,3 +168,63 @@ async def test_the_notices_handler_is_subscribed_to_rule_promoted(wired_app):
     }
     handler = subscriptions[EventTypes.RULE_PROMOTED]
     assert handler.__self__ is cortex.promotion_notices
+
+
+class FakeServer:
+    """Stands in for uvicorn's server: ``serve`` returns without binding a socket."""
+
+    def __init__(self, config) -> None:
+        self.config = config
+
+    async def serve(self) -> None:
+        pass
+
+
+@pytest.fixture
+def entry_point(monkeypatch):
+    """``cortex.__main__`` with the app and uvicorn's server replaced by fakes."""
+    from cortex import __main__ as entrypoint
+    from cortex.main import CortexApp
+
+    cortex = CortexApp(app=MagicMock(), settings=SETTINGS)
+    shutdown = AsyncMock()
+    monkeypatch.setattr(cortex, "shutdown", shutdown)
+
+    async def fake_initialize_app() -> CortexApp:
+        return cortex
+
+    # ``__main__`` binds the name at import time, so patch it there, not on
+    # ``cortex.main``.
+    monkeypatch.setattr(entrypoint, "initialize_app", fake_initialize_app)
+
+    return entrypoint, shutdown
+
+
+async def test_the_entry_point_shuts_the_app_down_when_serve_returns(entry_point, monkeypatch):
+    """#188: ``python -m cortex`` must release what ``initialize_app`` acquired."""
+    module, shutdown = entry_point
+    monkeypatch.setattr("uvicorn.Server", FakeServer)
+
+    await module.run()
+
+    shutdown.assert_awaited_once()
+
+
+async def test_the_entry_point_shuts_the_app_down_when_serve_fails(entry_point, monkeypatch):
+    """A serve failure must still release the pool, the bus and the minion link."""
+    module, shutdown = entry_point
+
+    class FailingServer(FakeServer):
+        async def serve(self) -> None:
+            raise RuntimeError("address already in use")
+
+    exit_code = MagicMock()
+
+    monkeypatch.setattr("uvicorn.Server", FailingServer)
+    # ``run`` exits the process on failure; the test only observes the code.
+    monkeypatch.setattr("sys.exit", exit_code)
+
+    await module.run()
+
+    shutdown.assert_awaited_once()
+    exit_code.assert_called_once_with(1)
