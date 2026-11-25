@@ -26,7 +26,17 @@ async def run() -> None:
             log_level="info",
         )
         server = uvicorn.Server(config)
-        await server.serve()
+        try:
+            await server.serve()
+        finally:
+            # uvicorn has stopped accepting requests and waited out the in-flight
+            # ones by the time serve() returns, so this is the release hook.
+            try:
+                await cortex.shutdown()
+            except Exception as shutdown_error:
+                # Best-effort: the process is exiting, and a stop failure must not
+                # be reported as, or mask, a start failure.
+                print(f"Shutdown failed: {shutdown_error}")
 
     except KeyboardInterrupt:
         print("\nShutting down...")

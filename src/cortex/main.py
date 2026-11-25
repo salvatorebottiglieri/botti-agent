@@ -397,6 +397,7 @@ async def initialize_app() -> CortexApp:
     # Note: MinionService is optional and may not be available in all deployments
     try:
         await _initialize_minion_service(cortex)
+        state["minion_service"] = cortex.minion_service
     except Exception as e:
         logger.warning(f"MinionService not initialized: {e}")
         # Update state with None for minion_service
