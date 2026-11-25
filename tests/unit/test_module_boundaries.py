@@ -31,6 +31,11 @@ SHARED_KERNEL_CONTRACT = "shared kernel imports no module"
 # purpose and are never implementation to be protected.
 DOOR_FILES = frozenset({"__init__.py", "interfaces.py", "models.py"})
 
+# ADR-0023: these modules publish a surface, so each one must carry its
+# contract. A module that loses its contract drops out of the coverage loop
+# silently, which is the vacuity this set prevents.
+DOOR_MODULES = frozenset({"memory", "rules", "tools", "goals", "trace"})
+
 
 def _contracts() -> list[dict]:
     """The configured import-linter contracts, in `pyproject.toml` order."""
@@ -52,6 +57,8 @@ def _module_contracts() -> dict[str, dict]:
     The modules come from the contracts, not from a list here; a `protected`
     contract that does not follow the naming law has no module contract to find,
     so `_contract` fails loudly instead of the module silently going unchecked.
+    `DOOR_MODULES` checks the resulting set is complete, so no module can drop
+    out of the coverage loop unnoticed.
     """
     covered = {
         protected.split(".")[1]
@@ -104,8 +111,15 @@ def test_every_module_contract_matches_its_package():
     list: a file added to a protected package is unclassified until its author
     either protects it or publishes it through the module's door.
     """
+    contracts = _module_contracts()
+    assert set(contracts) == DOOR_MODULES, (
+        f"{sorted(DOOR_MODULES - set(contracts))} lost its module contract, "
+        f"{sorted(set(contracts) - DOOR_MODULES)} gained one, but ADR-0023 makes "
+        f"exactly {sorted(DOOR_MODULES)} modules publish a surface"
+    )
+
     uncovered, stale = {}, {}
-    for leaf, contract in _module_contracts().items():
+    for leaf, contract in contracts.items():
         name, module = contract["name"], f"cortex.{leaf}"
 
         assert contract["type"] == "protected", f"{name} is not a protected contract"
@@ -131,9 +145,9 @@ def test_every_module_contract_matches_its_package():
 
     assert not uncovered, (
         f"implementation files that are neither protected nor published through the door: "
-        f"{uncovered}. Add each one to its module's `protected_modules` in pyproject.toml; or "
-        f"publish it through the module's door (`__init__.py`, `interfaces.py`, `models.py`) "
-        f"so it is public on purpose."
+        f"{uncovered}. Add each one to its module's `protected_modules` in pyproject.toml "
+        f"(private), or publish it through the module's door — `__init__.py` — as "
+        f"`interfaces.py` and `models.py` already are."
     )
     assert not stale, (
         f"protected_modules names files that no longer exist: {stale}. Remove them from "
