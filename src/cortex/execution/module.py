@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 from cortex.agentic.loop import AgentLoop
 from cortex.agentic.models import ChatResponse, GoalResult, MaxIterationsError
 from cortex.events import EventEmitter
-from cortex.goals.interfaces import GoalRepository
+from cortex.goals import GoalRepository
 from cortex.goals.models import Goal, GoalStatus
 
 if TYPE_CHECKING:
@@ -28,8 +28,8 @@ class ExecutionModule:
     """
     Execution Module wraps the AgentLoop.
 
-    Goals are persisted through a `GoalRepository` (Postgres-backed in
-    production, in-memory by default) so goal state survives restarts;
+    Goals are persisted through the `GoalRepository` the composition root
+    injects (Postgres-backed in production) so goal state survives restarts;
     goals left `running` at shutdown are resumed on startup by
     `resume_in_flight()`.
 
@@ -51,20 +51,17 @@ class ExecutionModule:
     def __init__(
         self,
         agent_loop: AgentLoop,
+        goal_repository: GoalRepository,
         event_bus: EventBus | None = None,
-        goal_repository: GoalRepository | None = None,
         trace_recorder: TraceRecorder | None = None,
         conversation_extractor: ConversationFactExtractor | None = None,
-    ):
-        # Imported lazily so importers of execution.module do not pull in
-        # the in-memory implementation (and its asyncpg dependency chain)
-        # when a Postgres-backed repository is injected instead.
-        from cortex.goals.repository import InMemoryGoalRepository
-
+    ) -> None:
         self._agent_loop = agent_loop
         self._event_bus = event_bus
         self._emitter = EventEmitter(event_bus, source_module="execution_module")
-        self._goal_repository = goal_repository or InMemoryGoalRepository()
+        # Required, never constructed here: the repository belongs to the
+        # composition root, as the trace recorder and the extractor below do.
+        self._goal_repository = goal_repository
         self._goal_results: dict[UUID, GoalResult] = {}
         # Trace capture (issue #112 T2): the recorder is injected by the
         # composition root (src/cortex/main.py) — the module never constructs

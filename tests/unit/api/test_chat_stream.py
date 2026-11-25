@@ -20,6 +20,7 @@ from cortex.agentic.notices import PromotionNotices
 from cortex.events.base import BaseEvent
 from cortex.events.types import EventTypes
 from cortex.execution.module import ExecutionModule
+from cortex.goals import InMemoryGoalRepository
 from cortex.rules.models import Rule
 from cortex.sessions.models import Session, SessionState
 from cortex.shared.loop_events import (
@@ -714,7 +715,10 @@ class TestChatStreamAttribution:
 
         queue = InMemoryFeedbackQueue()
         client = build_client(
-            ExecutionModule(agent_loop=loop),
+            ExecutionModule(
+                agent_loop=loop,
+                goal_repository=InMemoryGoalRepository(),
+            ),
             FakeInteractionService(existing_session=Session(id=session_id)),
             rule_service=FakeRuleService([rule]),
             feedback_queue=queue,

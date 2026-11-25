@@ -28,7 +28,7 @@ from cortex.shared.loop_events import (
     ToolResultEvent,
     ToolStartEvent,
 )
-from cortex.tools.meta.ask_user import ASK_USER_CONTROL, ASK_USER_TOOL_NAME
+from cortex.tools import ASK_USER_CONTROL, ASK_USER_TOOL_NAME
 
 if TYPE_CHECKING:
     from cortex.agentic.context_builder import ContextBuilder

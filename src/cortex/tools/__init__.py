@@ -18,6 +18,7 @@ from cortex.tools.interfaces import (
     ToolResult,
 )
 from cortex.tools.meta import (
+    AskUserTool,
     FileReadTool,
     FileWriteTool,
     GrepTool,
@@ -60,6 +61,7 @@ __all__ = [
     # Meta tools
     "ASK_USER_CONTROL",
     "ASK_USER_TOOL_NAME",
+    "AskUserTool",
     "FileReadTool",
     "FileWriteTool",
     "GrepTool",

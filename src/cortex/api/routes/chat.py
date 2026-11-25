@@ -18,7 +18,7 @@ from cortex.api.dependencies import (
     get_rule_service,
 )
 from cortex.api.schemas import ChatRequest, ChatResponse, ErrorResponse
-from cortex.rules.queue import enqueue_turn
+from cortex.rules import enqueue_turn
 from cortex.shared.loop_events import (
     AskUserEvent,
     ErrorEvent,

@@ -8,6 +8,7 @@ import pytest
 
 from cortex.agentic.models import ChatResponse, GoalResult, MaxIterationsError
 from cortex.execution.module import ExecutionModule
+from cortex.goals import InMemoryGoalRepository
 from cortex.goals.models import GoalStatus
 from cortex.shared.loop_events import (
     ErrorEvent,
@@ -16,6 +17,16 @@ from cortex.shared.loop_events import (
     ThinkingEvent,
     ToolStartEvent,
 )
+
+
+class TestGoalRepositoryInjection:
+    """The module never fabricates a goal repository (issue #190)."""
+
+    def test_constructing_without_a_goal_repository_raises_type_error(self):
+        """`goal_repository` is required: the composition root injects it, so a
+        caller cannot silently fall back to another module's in-memory class."""
+        with pytest.raises(TypeError):
+            ExecutionModule(agent_loop=MagicMock())  # type: ignore[call-arg]
 
 
 class TestExecutionModule:
@@ -47,6 +58,7 @@ class TestExecutionModule:
         return ExecutionModule(
             agent_loop=mock_agent_loop,
             event_bus=mock_event_bus,
+            goal_repository=InMemoryGoalRepository(),
         )
 
     @pytest.mark.asyncio
@@ -97,6 +109,7 @@ class TestExecutionModule:
         module = ExecutionModule(
             agent_loop=mock_agent_loop,
             event_bus=mock_event_bus,
+            goal_repository=InMemoryGoalRepository(),
         )
 
         pending = await module.create_goal(description="Pending goal")
@@ -123,6 +136,7 @@ class TestExecutionModule:
         module = ExecutionModule(
             agent_loop=mock_loop,
             event_bus=mock_event_bus,
+            goal_repository=InMemoryGoalRepository(),
         )
 
         goal = await module.create_goal(description="Task")
@@ -150,6 +164,7 @@ class TestExecutionModule:
         module = ExecutionModule(
             agent_loop=mock_loop,
             event_bus=mock_event_bus,
+            goal_repository=InMemoryGoalRepository(),
         )
 
         goal = await module.create_goal(description="Find TODOs")
@@ -172,6 +187,7 @@ class TestExecutionModule:
         module = ExecutionModule(
             agent_loop=mock_loop,
             event_bus=mock_event_bus,
+            goal_repository=InMemoryGoalRepository(),
         )
 
         goal = await module.create_goal(description="Doomed")
@@ -189,6 +205,7 @@ class TestExecutionModule:
         module = ExecutionModule(
             agent_loop=MagicMock(),
             event_bus=mock_event_bus,
+            goal_repository=InMemoryGoalRepository(),
         )
 
         assert await module.get_goal_result(uuid4()) is None
@@ -201,6 +218,7 @@ class TestExecutionModule:
         module = ExecutionModule(
             agent_loop=mock_loop,
             event_bus=mock_event_bus,
+            goal_repository=InMemoryGoalRepository(),
         )
 
         goal = await module.create_goal(description="Doomed")
@@ -219,6 +237,7 @@ class TestExecutionModule:
         module = ExecutionModule(
             agent_loop=mock_loop,
             event_bus=mock_event_bus,
+            goal_repository=InMemoryGoalRepository(),
         )
 
         goal = await module.create_goal(description="Long task")
@@ -242,6 +261,7 @@ class TestExecutionModule:
         module = ExecutionModule(
             agent_loop=mock_loop,
             event_bus=mock_event_bus,
+            goal_repository=InMemoryGoalRepository(),
         )
 
         external_id = uuid4()
@@ -280,6 +300,7 @@ class TestExecutionModuleEdgeCases:
         module = ExecutionModule(
             agent_loop=mock_loop,
             event_bus=MagicMock(),
+            goal_repository=InMemoryGoalRepository(),
         )
 
         with pytest.raises(Exception):
@@ -297,6 +318,7 @@ class TestExecutionModuleEdgeCases:
         module = ExecutionModule(
             agent_loop=mock_loop,
             event_bus=mock_event_bus,
+            goal_repository=InMemoryGoalRepository(),
         )
 
         mock_event = MagicMock()
@@ -322,6 +344,7 @@ class TestExecutionModuleEdgeCases:
         module = ExecutionModule(
             agent_loop=mock_loop,
             event_bus=mock_event_bus,
+            goal_repository=InMemoryGoalRepository(),
         )
 
         await module.create_goal(description="Test goal")
@@ -346,6 +369,7 @@ class TestExecutionModuleEdgeCases:
         module = ExecutionModule(
             agent_loop=mock_loop,
             event_bus=mock_event_bus,
+            goal_repository=InMemoryGoalRepository(),
         )
 
         goal = await module.create_goal(description="Task")
@@ -393,7 +417,10 @@ class TestExecutionModuleStreamChat:
                 for event in scripted:
                     yield event
 
-        module = ExecutionModule(agent_loop=FakeLoop())
+        module = ExecutionModule(
+            agent_loop=FakeLoop(),
+            goal_repository=InMemoryGoalRepository(),
+        )
 
         seen = [event async for event in module.stream_chat(session_id, "hello")]
 
@@ -420,7 +447,10 @@ class TestExecutionModuleStreamChat:
                 if False:
                     yield  # make this an async generator
 
-        module = ExecutionModule(agent_loop=FakeLoop())
+        module = ExecutionModule(
+            agent_loop=FakeLoop(),
+            goal_repository=InMemoryGoalRepository(),
+        )
 
         _ = [e async for e in module.stream_chat(session_id, "hi", stream=True)]
         _ = [e async for e in module.stream_chat(session_id, "hi", stream=False)]
@@ -450,7 +480,10 @@ class TestExecutionModuleStreamChat:
                 )
                 raise MaxIterationsError(max_iterations or 20)
 
-        module = ExecutionModule(agent_loop=FakeLoop())
+        module = ExecutionModule(
+            agent_loop=FakeLoop(),
+            goal_repository=InMemoryGoalRepository(),
+        )
 
         seen: list[ErrorEvent] = []
         with pytest.raises(MaxIterationsError):

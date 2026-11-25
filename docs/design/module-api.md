@@ -18,9 +18,9 @@ a *call*, and this change adds none. What it changes is the **import surface**.
 
 | Module | `__init__.py` today | After |
 |---|---|---|
-| `memory` | `ContextProvider`, `FactStore`, `Concept`, `ConfidenceLevel`, `Fact`, `FactMutability`, `FactType` | unchanged |
+| `memory` | `ContextProvider`, `FactStore`, `Concept`, `ConfidenceLevel`, `Fact`, `FactMutability`, `FactType` | plus `SUPPORTED_EVENT_TYPES` (the minion gateway's vocabulary; `FactExtractor` stays on the open `interfaces`) |
 | `trace` | `TraceRepository`, `TraceEvent`, `PostgresTraceRepository` | unchanged |
-| `tools` | 30 names (interfaces, registry, executor, meta tools) | plus `ASK_USER_CONTROL`, `ASK_USER_TOOL_NAME` |
+| `tools` | 30 names (interfaces, registry, executor, meta tools) | plus `AskUserTool`, `ASK_USER_CONTROL`, `ASK_USER_TOOL_NAME` |
 | `rules` | docstring only: "Import the submodules (`cortex.rules.service`, …)" | `RuleService`, `render`, `enqueue_turn` + `interfaces`, `models` stay importable directly |
 | `goals` | docstring only | `GoalRepository`, `InMemoryGoalRepository`, `PostgresGoalRepository` + `models` |
 
@@ -46,9 +46,9 @@ Ten runtime imports move, all downward, all to a name their door will publish:
 | `agentic/reasoner.py` | `from cortex.rules.render import …` | `from cortex.rules import …` |
 | `api/routes/chat.py` | `from cortex.rules.queue import enqueue_turn` | `from cortex.rules import enqueue_turn` |
 | `eval/runner.py` | `cortex.tools.executor`, `cortex.tools.registry`, `memory.context_provider` | `cortex.tools`, `cortex.memory` |
-| `eval/sandbox.py` | `cortex.tools.meta` | `cortex.tools` |
+| `eval/sandbox.py` | `cortex.tools.meta` (five tool classes) | `cortex.tools`, which gained `AskUserTool` for it |
 | `execution/module.py` | `cortex.goals.repository`, constructed by default | `cortex.goals`, injected |
-| `services/minion_service.py` | `memory.fact_extractor`, `memory.fact_store` | `cortex.memory` |
+| `services/minion_service.py` | `memory.fact_extractor`, `memory.fact_store` | `cortex.memory` (`FactStore`, `SUPPORTED_EVENT_TYPES`); `FactExtractor` stays on the open `interfaces` |
 
 `main.py` and `cli.py` keep importing concretes: the composition root builds
 them, which is its job.

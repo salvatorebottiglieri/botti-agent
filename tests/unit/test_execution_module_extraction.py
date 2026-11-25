@@ -11,6 +11,7 @@ import pytest
 
 from cortex.agentic.models import ChatResponse
 from cortex.execution.module import ExecutionModule
+from cortex.goals import InMemoryGoalRepository
 from cortex.shared.loop_events import TextDeltaEvent
 
 
@@ -80,7 +81,11 @@ class TestRunChatExtraction:
         order: list[str] = []
         extractor = RecordingExtractor(order)
         loop = RecordingLoop(order)
-        module = ExecutionModule(agent_loop=loop, conversation_extractor=extractor)
+        module = ExecutionModule(
+            agent_loop=loop,
+            goal_repository=InMemoryGoalRepository(),
+            conversation_extractor=extractor,
+        )
         session_id = uuid4()
 
         response = await module.run_chat(session_id, "I was born in Rome")
@@ -96,7 +101,11 @@ class TestRunChatExtraction:
         order: list[str] = []
         extractor = RecordingExtractor(order, exc=RuntimeError("memory down"))
         loop = RecordingLoop(order)
-        module = ExecutionModule(agent_loop=loop, conversation_extractor=extractor)
+        module = ExecutionModule(
+            agent_loop=loop,
+            goal_repository=InMemoryGoalRepository(),
+            conversation_extractor=extractor,
+        )
 
         response = await module.run_chat(uuid4(), "hello")
 
@@ -114,7 +123,11 @@ class TestStreamChatExtraction:
         session_id = uuid4()
         extractor = RecordingExtractor(order)
         loop = StreamingLoop(order, [TextDeltaEvent(session_id, delta="hi")])
-        module = ExecutionModule(agent_loop=loop, conversation_extractor=extractor)
+        module = ExecutionModule(
+            agent_loop=loop,
+            goal_repository=InMemoryGoalRepository(),
+            conversation_extractor=extractor,
+        )
 
         seen = [event async for event in module.stream_chat(session_id, "hello")]
 
@@ -130,7 +143,11 @@ class TestStreamChatExtraction:
         session_id = uuid4()
         extractor = RecordingExtractor(order, exc=RuntimeError("memory down"))
         loop = StreamingLoop(order, [TextDeltaEvent(session_id, delta="hi")])
-        module = ExecutionModule(agent_loop=loop, conversation_extractor=extractor)
+        module = ExecutionModule(
+            agent_loop=loop,
+            goal_repository=InMemoryGoalRepository(),
+            conversation_extractor=extractor,
+        )
 
         seen = [event async for event in module.stream_chat(session_id, "hello")]
 

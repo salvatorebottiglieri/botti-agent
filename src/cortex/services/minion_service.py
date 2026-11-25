@@ -6,8 +6,7 @@ import logging
 from typing import Any
 
 from cortex.events import EventEmitter
-from cortex.memory.fact_extractor import SUPPORTED_EVENT_TYPES
-from cortex.memory.fact_store import FactStore
+from cortex.memory import SUPPORTED_EVENT_TYPES, FactStore
 from cortex.memory.interfaces import FactExtractor
 from cortex.minions.interfaces import MinionEventHandler, MinionGateway, MinionRegistry
 from cortex.minions.models import (

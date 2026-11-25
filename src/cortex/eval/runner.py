@@ -36,13 +36,12 @@ from cortex.sessions.interfaces import SessionRepository
 from cortex.sessions.models import Message, MessageRole, Session, SessionState
 from cortex.shared.bundle import MemoryContext
 from cortex.shared.loop_events import AskUserEvent, LoopEvent, TextDeltaEvent
-from cortex.tools.executor import DefaultToolExecutor
-from cortex.tools.registry import InMemoryToolRegistry
+from cortex.tools import DefaultToolExecutor, InMemoryToolRegistry
 
 if TYPE_CHECKING:
     from cortex.eval.judge import JudgeVerdict
     from cortex.llm.base import LLMClient
-    from cortex.memory.context_provider import ContextProvider
+    from cortex.memory import ContextProvider
 
 logger = logging.getLogger(__name__)
 
@@ -358,7 +357,7 @@ def _build_loop(
     loop_executor = LoopExecutor(tool_executor=tool_executor)
 
     session_repository: SessionRepository = _InMemorySessionRepository()
-    from cortex.memory.context_provider import ContextProvider
+    from cortex.memory import ContextProvider
 
     context_provider: ContextProvider = cast(ContextProvider, _FixtureContextProvider(rules))
     context_builder = ContextBuilder(
