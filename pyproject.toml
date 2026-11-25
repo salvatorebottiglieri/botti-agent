@@ -111,6 +111,11 @@ type = "acyclic_siblings"
 ancestors = ["cortex"]
 depth = 1
 
+# Kept deliberately: these two predate the per-module contracts and are stricter
+# than "rules internals are private to rules" (scoring allows only cortex.rules,
+# no composition root). Consolidating them would relax an invariant, not remove
+# duplication.
+
 [[tool.importlinter.contracts]]
 name = "rules: the repository is private to the rules module"
 type = "protected"

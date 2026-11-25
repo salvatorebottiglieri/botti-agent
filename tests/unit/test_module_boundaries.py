@@ -21,51 +21,23 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 SHARED = ROOT / "src" / "cortex" / "shared"
 
-# The six contracts #191 adds: contract name -> (the module it protects, the
-# implementation submodules it protects). `interfaces` and `models` are absent
-# on purpose: they are vocabulary, not implementation, so they stay open.
+# The five per-module contracts #191 adds (the sixth, the `shared` kernel, is
+# forbidden rather than protected): module -> the implementation submodules
+# private to it, relative to `cortex.<module>`. Each contract is
+# `f"{module} internals are private to {module}"`. `interfaces` and `models` are
+# absent on purpose: they are vocabulary, not implementation, so they stay open.
 MODULE_CONTRACTS = {
-    "memory internals are private to memory": (
-        "cortex.memory",
-        (
-            "cortex.memory.context_provider",
-            "cortex.memory.fact_store",
-            "cortex.memory.fact_extractor",
-            "cortex.memory.conversation_extractor",
-            "cortex.memory.evidence_store",
-            "cortex.memory.repository",
-            "cortex.memory.backfill",
-        ),
+    "memory": (
+        "context_provider", "fact_store", "fact_extractor", "conversation_extractor",
+        "evidence_store", "repository", "backfill",
     ),
-    "rules internals are private to rules": (
-        "cortex.rules",
-        (
-            "cortex.rules.service",
-            "cortex.rules.queue",
-            "cortex.rules.render",
-            "cortex.rules.scoring",
-            "cortex.rules.repository",
-            "cortex.rules.attribution",
-            "cortex.rules.conflicts",
-            "cortex.rules.feedback",
-            "cortex.rules.splits",
-            "cortex.rules.constants",
-        ),
+    "rules": (
+        "service", "queue", "render", "scoring", "repository",
+        "attribution", "conflicts", "feedback", "splits", "constants",
     ),
-    "tools internals are private to tools": (
-        "cortex.tools",
-        ("cortex.tools.executor", "cortex.tools.registry", "cortex.tools.meta"),
-    ),
-    "goals internals are private to goals": ("cortex.goals", ("cortex.goals.repository",)),
-    "trace internals are private to trace": (
-        "cortex.trace",
-        (
-            "cortex.trace.recorder",
-            "cortex.trace.audit",
-            "cortex.trace.repository",
-            "cortex.trace.pseudonymizer",
-        ),
-    ),
+    "tools": ("executor", "registry", "meta"),
+    "goals": ("repository",),
+    "trace": ("recorder", "audit", "repository", "pseudonymizer"),
 }
 
 SHARED_KERNEL_CONTRACT = "shared kernel imports no module"
@@ -106,26 +78,23 @@ def test_every_module_contract_protects_its_implementation():
 
     One contract per module, the module itself plus the composition root as the
     only allowed importers — `cortex.main` and `cortex.cli` build the concretes.
+    A protected submodule is either entered or not: no contract excuses an edge,
+    and none protects a wildcard, which would match every importer.
     """
-    for name, (module, implementation) in MODULE_CONTRACTS.items():
+    for leaf, implementation in MODULE_CONTRACTS.items():
+        name, module = f"{leaf} internals are private to {leaf}", f"cortex.{leaf}"
         contract = _contract(name)
 
+        assert all("." not in submodule for submodule in implementation), (
+            f"{name} names a submodule of another module"
+        )
         assert contract["type"] == "protected", f"{name} is not a protected contract"
         assert contract["allowed_importers"] == [module, "cortex.main", "cortex.cli"], (
             f"{name} lets someone else in: {contract['allowed_importers']}"
         )
-        assert set(contract["protected_modules"]) == set(implementation), (
-            f"{name} protects {sorted(contract['protected_modules'])}"
-        )
-        assert all(entry.startswith(f"{module}.") for entry in implementation), (
-            f"{name} protects a submodule of another module"
-        )
-
-
-def test_module_contracts_carry_no_exception_list():
-    """A protected submodule is either entered or not: no contract excuses an edge."""
-    for name in MODULE_CONTRACTS:
-        contract = _contract(name)
+        assert set(contract["protected_modules"]) == {
+            f"{module}.{submodule}" for submodule in implementation
+        }, f"{name} protects {sorted(contract['protected_modules'])}"
         assert "ignore_imports" not in contract, (
             f"{name} carries an exception list: {contract['ignore_imports']}"
         )
