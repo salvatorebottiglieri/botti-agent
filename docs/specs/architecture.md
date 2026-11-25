@@ -338,7 +338,7 @@ because building the concretes is its job.
 |---|---|---|
 | `memory` | `ContextProvider`, `FactStore`, `SUPPORTED_EVENT_TYPES` | `context_provider`, `fact_store`, `fact_extractor`, `conversation_extractor`, `evidence_store`, `repository`, `backfill` |
 | `rules` | `RuleService`, `render_rules`, `enqueue_turn` | `service`, `queue`, `render`, `scoring`, `repository`, `attribution`, `conflicts`, `feedback`, `splits`, `constants` |
-| `tools` | 26 names: the `Tool*` interfaces, `InMemoryToolRegistry` + its errors, `DefaultToolExecutor` + its errors, the five meta tools, `ASK_USER_CONTROL`, `ASK_USER_TOOL_NAME`, `AskUserTool`, `get_meta_tools`, `register_meta_tools` | `executor`, `registry`, `meta` |
+| `tools` | 26 names — the `Tool` interfaces, the registry, the executor, the five meta tools and the two `ask_user` constants; `src/cortex/tools/__init__.py::__all__` is the list | `executor`, `registry`, `meta` |
 | `goals` | `GoalRepository`, `InMemoryGoalRepository`, `PostgresGoalRepository` | `repository` |
 | `trace` | `TraceRepository`, `TraceEvent`, `PostgresTraceRepository` | `recorder`, `audit`, `repository`, `pseudonymizer` |
 
