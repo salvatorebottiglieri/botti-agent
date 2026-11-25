@@ -122,3 +122,101 @@ name = "rules: the score is private to the rules module"
 type = "protected"
 protected_modules = ["cortex.rules.scoring"]
 allowed_importers = ["cortex.rules"]
+
+# The door is the package `__init__.py`: a module is entered through it, or through
+# the open `interfaces`/`models`, never through an implementation submodule (#191,
+# Law 2). One contract per module, never one wildcard contract: `cortex.*` would
+# match every importer and defeat the check. Only the module itself, `cortex.main`
+# and `cortex.cli` (the composition root) may name an implementation.
+
+[[tool.importlinter.contracts]]
+name = "memory internals are private to memory"
+type = "protected"
+protected_modules = [
+    "cortex.memory.context_provider",
+    "cortex.memory.fact_store",
+    "cortex.memory.fact_extractor",
+    "cortex.memory.conversation_extractor",
+    "cortex.memory.evidence_store",
+    "cortex.memory.repository",
+    "cortex.memory.backfill",
+]
+allowed_importers = ["cortex.memory", "cortex.main", "cortex.cli"]
+
+[[tool.importlinter.contracts]]
+name = "rules internals are private to rules"
+type = "protected"
+protected_modules = [
+    "cortex.rules.service",
+    "cortex.rules.queue",
+    "cortex.rules.render",
+    "cortex.rules.scoring",
+    "cortex.rules.repository",
+    "cortex.rules.attribution",
+    "cortex.rules.conflicts",
+    "cortex.rules.feedback",
+    "cortex.rules.splits",
+    "cortex.rules.constants",
+]
+allowed_importers = ["cortex.rules", "cortex.main", "cortex.cli"]
+
+[[tool.importlinter.contracts]]
+name = "tools internals are private to tools"
+type = "protected"
+protected_modules = [
+    "cortex.tools.executor",
+    "cortex.tools.registry",
+    "cortex.tools.meta",
+]
+allowed_importers = ["cortex.tools", "cortex.main", "cortex.cli"]
+
+[[tool.importlinter.contracts]]
+name = "goals internals are private to goals"
+type = "protected"
+protected_modules = ["cortex.goals.repository"]
+allowed_importers = ["cortex.goals", "cortex.main", "cortex.cli"]
+
+[[tool.importlinter.contracts]]
+name = "trace internals are private to trace"
+type = "protected"
+protected_modules = [
+    "cortex.trace.recorder",
+    "cortex.trace.audit",
+    "cortex.trace.repository",
+    "cortex.trace.pseudonymizer",
+]
+allowed_importers = ["cortex.trace", "cortex.main", "cortex.cli"]
+
+# Law 6: `shared` holds technical vocabulary and nothing else, so it imports no
+# module at runtime. Its `Fact`/`Rule`/`UsageStats` annotations are type-only and
+# already dropped by `exclude_type_checking_imports` above.
+
+[[tool.importlinter.contracts]]
+name = "shared kernel imports no module"
+type = "forbidden"
+source_modules = ["cortex.shared"]
+forbidden_modules = [
+    "cortex.agentic",
+    "cortex.api",
+    "cortex.cli",
+    "cortex.config",
+    "cortex.db",
+    "cortex.eval",
+    "cortex.events",
+    "cortex.execution",
+    "cortex.goals",
+    "cortex.interaction",
+    "cortex.learning",
+    "cortex.llm",
+    "cortex.logging",
+    "cortex.main",
+    "cortex.memory",
+    "cortex.minions",
+    "cortex.rules",
+    "cortex.safety",
+    "cortex.services",
+    "cortex.sessions",
+    "cortex.tools",
+    "cortex.trace",
+    "cortex.validation",
+]
