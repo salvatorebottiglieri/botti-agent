@@ -21,26 +21,15 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 SHARED = ROOT / "src" / "cortex" / "shared"
 
-# The five per-module contracts #191 adds (the sixth, the `shared` kernel, is
-# forbidden rather than protected): module -> the implementation submodules
-# private to it, relative to `cortex.<module>`. Each contract is
-# `f"{module} internals are private to {module}"`. `interfaces` and `models` are
-# absent on purpose: they are vocabulary, not implementation, so they stay open.
-MODULE_CONTRACTS = {
-    "memory": (
-        "context_provider", "fact_store", "fact_extractor", "conversation_extractor",
-        "evidence_store", "repository", "backfill",
-    ),
-    "rules": (
-        "service", "queue", "render", "scoring", "repository",
-        "attribution", "conflicts", "feedback", "splits", "constants",
-    ),
-    "tools": ("executor", "registry", "meta"),
-    "goals": ("repository",),
-    "trace": ("recorder", "audit", "repository", "pseudonymizer"),
-}
-
 SHARED_KERNEL_CONTRACT = "shared kernel imports no module"
+
+# Law 2's naming law: one `protected` contract per module, named `<module>
+# internals are private to <module>` — the `shared` kernel is forbidden instead,
+# and the two `rules:` contracts narrow a single submodule further.
+
+# A module is entered through its package door, so these files are public on
+# purpose and are never implementation to be protected.
+DOOR_FILES = frozenset({"__init__.py", "interfaces.py", "models.py"})
 
 
 def _contracts() -> list[dict]:
@@ -55,6 +44,22 @@ def _contract(name: str) -> dict:
         if contract["name"] == name:
             return contract
     raise AssertionError(f"no contract named {name!r}, found {[c['name'] for c in _contracts()]}")
+
+
+def _module_contracts() -> dict[str, dict]:
+    """The one module contract per module, keyed by module leaf.
+
+    The modules come from the contracts, not from a list here; a `protected`
+    contract that does not follow the naming law has no module contract to find,
+    so `_contract` fails loudly instead of the module silently going unchecked.
+    """
+    covered = {
+        protected.split(".")[1]
+        for contract in _contracts()
+        if contract["type"] == "protected"
+        for protected in contract["protected_modules"]
+    }
+    return {leaf: _contract(f"{leaf} internals are private to {leaf}") for leaf in covered}
 
 
 def test_whole_map_contracts_carry_no_exception_list():
@@ -73,34 +78,67 @@ def test_whole_map_contracts_carry_no_exception_list():
         )
 
 
-def test_every_module_contract_protects_its_implementation():
+def _implementation_names(leaf: str) -> set[str]:
+    """The implementation names in `cortex.<leaf>`: modules by stem, sub-packages by name.
+
+    A sub-package such as `tools/meta/` counts as one name: its own files sit
+    behind its door and are not enumerated here.
+    """
+    package = ROOT / "src" / "cortex" / leaf
+    names = {path.stem for path in package.glob("*.py") if path.name not in DOOR_FILES}
+    names |= {
+        path.name for path in package.iterdir() if path.is_dir() and (path / "__init__.py").exists()
+    }
+    return names
+
+
+def test_every_module_contract_matches_its_package():
     """Each module is entered through its door, not its implementation (Law 2).
 
     One contract per module, the module itself plus the composition root as the
     only allowed importers — `cortex.main` and `cortex.cli` build the concretes.
     A protected submodule is either entered or not: no contract excuses an edge,
     and none protects a wildcard, which would match every importer.
-    """
-    for leaf, implementation in MODULE_CONTRACTS.items():
-        name, module = f"{leaf} internals are private to {leaf}", f"cortex.{leaf}"
-        contract = _contract(name)
 
-        assert all("." not in submodule for submodule in implementation), (
-            f"{name} names a submodule of another module"
-        )
+    The expected set comes from the filesystem, not from a second hand-written
+    list: a file added to a protected package is unclassified until its author
+    either protects it or publishes it through the module's door.
+    """
+    uncovered, stale = {}, {}
+    for leaf, contract in _module_contracts().items():
+        name, module = contract["name"], f"cortex.{leaf}"
+
         assert contract["type"] == "protected", f"{name} is not a protected contract"
         assert contract["allowed_importers"] == [module, "cortex.main", "cortex.cli"], (
             f"{name} lets someone else in: {contract['allowed_importers']}"
         )
-        assert set(contract["protected_modules"]) == {
-            f"{module}.{submodule}" for submodule in implementation
-        }, f"{name} protects {sorted(contract['protected_modules'])}"
         assert "ignore_imports" not in contract, (
             f"{name} carries an exception list: {contract['ignore_imports']}"
         )
         assert "*" not in "".join(contract["protected_modules"]), (
             f"{name} protects a wildcard, which matches every module"
         )
+        assert {submodule.split(".")[1] for submodule in contract["protected_modules"]} == {leaf}, (
+            f"{name} protects something outside cortex.{leaf}: {contract['protected_modules']}"
+        )
+
+        protected = {submodule.rsplit(".", 1)[-1] for submodule in contract["protected_modules"]}
+        on_disk = _implementation_names(leaf)
+        if missing := on_disk - protected:
+            uncovered[leaf] = sorted(f"cortex.{leaf}.{name}" for name in missing)
+        if gone := protected - on_disk:
+            stale[leaf] = sorted(f"cortex.{leaf}.{name}" for name in gone)
+
+    assert not uncovered, (
+        f"implementation files that are neither protected nor published through the door: "
+        f"{uncovered}. Add each one to its module's `protected_modules` in pyproject.toml; or "
+        f"publish it through the module's door (`__init__.py`, `interfaces.py`, `models.py`) "
+        f"so it is public on purpose."
+    )
+    assert not stale, (
+        f"protected_modules names files that no longer exist: {stale}. Remove them from "
+        f"pyproject.toml."
+    )
 
 
 def _cortex_modules() -> set[str]:
