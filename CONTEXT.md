@@ -25,6 +25,10 @@ Enum: CLOSED, OPEN, HALF_OPEN. Represents the current state of a circuit breaker
 Creates LLMClient instances. Each consumer module (Execution, Memory, Learning) gets its own CircuitBreakerLLMClient with an independent CircuitBreaker, so failures in one module don't affect others.
 _Avoid_: Factory, provider factory
 
+**Published interface**:
+The one surface a module offers the rest of the system — its package `__init__.py`, informally the door, plus `interfaces` and `models`, which stay open because they are shared vocabulary and not an implementation. Everything else in the module is private to it, and one `protected` contract per module makes that a CI check (ADR-0023). It publishes names, not namespaces: `from cortex.rules import render` is an edge on the private submodule, `from cortex.rules import render_rules` is the door.
+_Avoid_: module API, facade
+
 ## Agentic Loop
 
 **LoopEvent**:

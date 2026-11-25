@@ -324,6 +324,52 @@ Full contract in [agentic-loop.md](agentic-loop.md).
 | Composition root | `src/cortex/main.py` | `initialize_app()` wires everything |
 | CLI | `src/cortex/cli.py` | `cortex <command>`; the operator's entry points into `rules`, `memory`, `safety` |
 
+### The published interface (the door)
+
+The five modules below offer one surface each. The door is the package
+`__init__.py`: `from cortex.memory import ContextProvider` is how another module
+enters, and every other submodule is private to the module that owns it
+(ADR-0023, long form in [module-api.md](module-api.md)). `interfaces` and
+`models` stay open — they are the vocabulary modules share, not an
+implementation — and the composition root (`main`, `cli`) may import anything,
+because building the concretes is its job.
+
+| Module | Published interface (`cortex.<module>`) | Private (protected) submodules |
+|---|---|---|
+| `memory` | `ContextProvider`, `FactStore`, `SUPPORTED_EVENT_TYPES` | `context_provider`, `fact_store`, `fact_extractor`, `conversation_extractor`, `evidence_store`, `repository`, `backfill` |
+| `rules` | `RuleService`, `render_rules`, `enqueue_turn` | `service`, `queue`, `render`, `scoring`, `repository`, `attribution`, `conflicts`, `feedback`, `splits`, `constants` |
+| `tools` | 26 names — the `Tool` interfaces, the registry, the executor, the five meta tools and the two `ask_user` constants; `src/cortex/tools/__init__.py::__all__` is the list | `executor`, `registry`, `meta` |
+| `goals` | `GoalRepository`, `InMemoryGoalRepository`, `PostgresGoalRepository` | `repository` |
+| `trace` | `TraceRepository`, `TraceEvent`, `PostgresTraceRepository` | `recorder`, `audit`, `repository`, `pseudonymizer` |
+
+The `protected` contracts in `pyproject.toml` — `<module> internals are private
+to <module>`, one per module — name the private submodules fully qualified
+(`cortex.memory.context_provider`, …) and are the single source; this table is a
+view of them, not a second list to maintain. The door publishes
+**names, not namespaces**: `from cortex.rules import render` is an edge on the
+protected submodule, so `rules` publishes the function `render_rules` instead.
+The other four group-6 modules (`sessions`, `validation`, `minions`,
+`learning`) are outside the five: their internals are untouched and unprotected
+today.
+
+### The laws of the module map
+
+Nine invariants, each with the one thing that breaks it. The long form — the
+per-law check and the test that fails — is the invariants table in
+[module-api.md](module-api.md) § System invariants.
+
+| Law | What breaks it |
+|---|---|
+| 1. A module is one bounded context, named by a `CONTEXT.md` term | a module name that needs "and" — review, the module map above |
+| 2. Another module reaches a module only through its published interface | a `protected` contract red in `uv run lint-imports` |
+| 3. Each stored table belongs to one module, which alone reads and writes it | a second module reading that table — review, § Persistence |
+| 4. The module dependency graph is acyclic | `acyclic_siblings` red on a two-module cycle |
+| 5. A call when the answer is needed, an event when others only react | a `LoopEvent` on the bus, or a system event turned into a return value — review, `CONTEXT.md` |
+| 6. `shared` holds technical vocabulary only and imports no module | the `forbidden` contract for `cortex.shared` red |
+| 7. A module's tests exercise it through its published interface | a test importing a protected submodule — review, deferred: `tests/` sits outside `root_package` |
+| 8. A door must not import upward (a re-export runs on every submodule import) | a re-export reaching an upper group — `layers` red |
+| 9. No module constructs another module's implementation | `ExecutionModule(agent_loop=loop)` without a goal repository |
+
 ## Dependency direction
 
 ```mermaid
@@ -559,11 +605,14 @@ CI: `.github/workflows/ci.yml` (lint + unit + boundaries),
 ### Module boundaries
 
 `[tool.importlinter]` in `pyproject.toml` is the fitness function for the
-module map above (ADR-0022, issue #167):
+module map above (ADR-0022, ADR-0023, issues #167 and #187):
 
 - a `layers` contract over the nine groups, in the order of the table;
 - an `acyclic_siblings` contract over the same groups, so a same-group import
   is legal only while it closes no cycle;
+- one `protected` contract per module whose surface is declared (`memory`,
+  `rules`, `tools`, `goals`, `trace`), plus one `forbidden` contract that keeps
+  `shared` a kernel;
 - `exclude_type_checking_imports = true`, set once under `[tool.importlinter]`
   as a session option, so a `TYPE_CHECKING` alias is not a runtime edge;
 - **zero `ignore_imports`.** An exception list would turn design debt into a
@@ -571,7 +620,12 @@ module map above (ADR-0022, issue #167):
   whole-map contract grows one.
 
 The `Boundaries` job in `.github/workflows/ci.yml` runs `uv run lint-imports`:
-four contracts kept (the two whole-map ones plus the two `protected` ones that
-keep `cortex.rules.repository` and `cortex.rules.scoring` private to `rules`),
-none broken. An upward runtime import or a two-module cycle fails the job; the
-pair of documents moves together — `pyproject.toml` and this file.
+ten contracts kept — the two whole-map ones, the five per-module `protected`
+ones, one `forbidden` for `cortex.shared`, and the two legacy `rules`
+`protected` ones that keep `cortex.rules.repository` and `cortex.rules.scoring`
+private to `rules` — none broken. The legacy pair stays because it is stricter,
+not because it is older: the `scoring` contract admits `cortex.rules` only, no
+composition root, so consolidating it into the per-module contract would relax
+an invariant. An upward runtime import, a two-module cycle, or an entry into a
+module's implementation fails the job; the pair of documents moves together —
+`pyproject.toml` and this file.
