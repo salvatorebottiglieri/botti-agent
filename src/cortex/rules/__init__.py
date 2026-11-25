@@ -8,8 +8,8 @@ same logit-space odds update ADR-0013 uses for Facts. Mechanism:
 ``interfaces`` and ``models`` stay open; every other submodule is private.
 """
 
-from cortex.rules import render
 from cortex.rules.queue import enqueue_turn
+from cortex.rules.render import render_rules
 from cortex.rules.service import RuleService
 
-__all__ = ["RuleService", "render", "enqueue_turn"]
+__all__ = ["RuleService", "render_rules", "enqueue_turn"]

@@ -1,23 +1,19 @@
 """Every module publishes its surface through one door: its package `__init__` (#189).
 
 ``interfaces`` and ``models`` stay open: they are vocabulary, not implementation.
+Which submodules are private is not restated here: the `protected` contracts in
+`pyproject.toml` own that property, and `test_module_boundaries.py` reads them.
 """
 
 from __future__ import annotations
 
-import ast
 import importlib
-from pathlib import Path
 
 import pytest
 
-from tests.unit.test_module_boundaries import _cortex_imports, _type_only
-
-SRC = Path(__file__).resolve().parents[2] / "src"
-
 # door -> the submodule that stays open, and the names the door publishes.
 SURFACES = [
-    ("cortex.rules", "cortex.rules.models", {"RuleService", "render", "enqueue_turn"}),
+    ("cortex.rules", "cortex.rules.models", {"RuleService", "render_rules", "enqueue_turn"}),
     (
         "cortex.goals",
         "cortex.goals.models",
@@ -35,11 +31,12 @@ SURFACES = [
     ),
 ]
 
-# door, published name, the module that implements it, its attribute there
-# (``None``: the name is that module itself).
+# door, published name, the module that implements it, the attribute there.
+# A door publishes a name, never a namespace: publishing the module itself would
+# make `from cortex.<module> import <name>` an edge on the protected submodule.
 PUBLISHED = [
     ("cortex.rules", "RuleService", "cortex.rules.service", "RuleService"),
-    ("cortex.rules", "render", "cortex.rules.render", None),
+    ("cortex.rules", "render_rules", "cortex.rules.render", "render_rules"),
     ("cortex.rules", "enqueue_turn", "cortex.rules.queue", "enqueue_turn"),
     ("cortex.goals", "GoalRepository", "cortex.goals.interfaces", "GoalRepository"),
     (
@@ -72,7 +69,7 @@ def test_a_door_publishes_the_object_its_implementation_holds(
 ):
     """The door exposes that object, not a look-alike a caller would trip on."""
     module = importlib.import_module(implementation)
-    expected = module if attribute is None else getattr(module, attribute)
+    expected = getattr(module, attribute)
 
     assert getattr(importlib.import_module(door), name) is expected
 
@@ -97,52 +94,3 @@ def test_the_open_vocabulary_is_still_importable_directly():
     from cortex.rules.models import Rule
 
     assert (Rule.__name__, Goal.__name__) == ("Rule", "Goal")
-
-
-# The five modules whose implementation submodules are private (#190).
-CONSUMER_PACKAGES = ("agentic", "api", "eval", "execution", "services")
-# shortcut: this list duplicates what #191's protected contracts will carry; derive it from pyproject.toml then.
-PRIVATE_SUBMODULES = (
-    "cortex.goals.repository",
-    "cortex.memory.context_provider",
-    "cortex.memory.conversation_extractor",
-    "cortex.memory.evidence_store",
-    "cortex.memory.fact_extractor",
-    "cortex.memory.fact_store",
-    "cortex.memory.repository",
-    "cortex.rules.queue",
-    "cortex.rules.render",
-    "cortex.rules.service",
-    "cortex.tools.executor",
-    "cortex.tools.meta",
-    "cortex.tools.registry",
-    "cortex.trace.recorder",
-)
-
-
-def test_consumers_enter_the_private_modules_through_their_door_only():
-    """No consumer package imports `cortex.<module>.<private>` (#190).
-
-    The door is the package `__init__`; `interfaces` and `models` stay open.
-    """
-    violations: list[str] = []
-    scanned = 0
-    for package in CONSUMER_PACKAGES:
-        for path in sorted((SRC / "cortex" / package).rglob("*.py")):
-            scanned += 1
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            parents = {
-                child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
-            }
-            for node, name in _cortex_imports(tree):
-                # Annotations only: the sweep measures runtime imports (spec P2).
-                if _type_only(node, parents):
-                    continue
-                if any(
-                    name == private or name.startswith(f"{private}.")
-                    for private in PRIVATE_SUBMODULES
-                ):
-                    violations.append(f"{path.relative_to(SRC)}:{node.lineno} imports {name}")
-
-    assert scanned > 0, f"no sources found under {SRC}"
-    assert violations == []

@@ -21,7 +21,7 @@ a *call*, and this change adds none. What it changes is the **import surface**.
 | `memory` | `ContextProvider`, `FactStore`, `Concept`, `ConfidenceLevel`, `Fact`, `FactMutability`, `FactType` | plus `SUPPORTED_EVENT_TYPES` (the minion gateway's vocabulary; `FactExtractor` stays on the open `interfaces`) |
 | `trace` | `TraceRepository`, `TraceEvent`, `PostgresTraceRepository` | unchanged |
 | `tools` | 30 names (interfaces, registry, executor, meta tools) | plus `AskUserTool`, `ASK_USER_CONTROL`, `ASK_USER_TOOL_NAME` |
-| `rules` | docstring only: "Import the submodules (`cortex.rules.service`, …)" | `RuleService`, `render`, `enqueue_turn` + `interfaces`, `models` stay importable directly |
+| `rules` | docstring only: "Import the submodules (`cortex.rules.service`, …)" | `RuleService`, `render_rules`, `enqueue_turn` + `interfaces`, `models` stay importable directly |
 | `goals` | docstring only | `GoalRepository`, `InMemoryGoalRepository`, `PostgresGoalRepository` + `models` |
 
 Two rules for every door, both structural:
@@ -43,7 +43,7 @@ Ten runtime imports move, all downward, all to a name their door will publish:
 | File | Today | After |
 |---|---|---|
 | `agentic/loop.py` | `from cortex.tools.meta.ask_user import ASK_USER_CONTROL, ASK_USER_TOOL_NAME` | `from cortex.tools import ASK_USER_CONTROL, ASK_USER_TOOL_NAME` |
-| `agentic/reasoner.py` | `from cortex.rules.render import …` | `from cortex.rules import …` |
+| `agentic/reasoner.py` | `from cortex.rules.render import render_rules` | `from cortex.rules import render_rules` |
 | `api/routes/chat.py` | `from cortex.rules.queue import enqueue_turn` | `from cortex.rules import enqueue_turn` |
 | `eval/runner.py` | `cortex.tools.executor`, `cortex.tools.registry`, `memory.context_provider` | `cortex.tools`, `cortex.memory` |
 | `eval/sandbox.py` | `cortex.tools.meta` (five tool classes) | `cortex.tools`, which gained `AskUserTool` for it |
@@ -52,6 +52,12 @@ Ten runtime imports move, all downward, all to a name their door will publish:
 
 `main.py` and `cli.py` keep importing concretes: the composition root builds
 them, which is its job.
+
+**Correction at #191 (measured there, not at design time).** The door publishes the
+*function* `render_rules`, not the module `render`: `grimp` resolves
+`from cortex.rules import render` as an edge on the **submodule**
+`cortex.rules.render`, so the door spelling itself tripped the contract that
+protects it. A door publishes names, not namespaces.
 
 ## The one signature that changes
 
@@ -157,11 +163,11 @@ None: no test stands in for a system the repo does not own.
   },
   "file_tree": [
     { "kind": "mod", "path": "src/cortex/goals/__init__.py", "note": "#189 the door: GoalRepository, InMemoryGoalRepository, PostgresGoalRepository" },
-    { "kind": "mod", "path": "src/cortex/rules/__init__.py", "note": "#189 the door: RuleService, render, enqueue_turn; the 'import the submodules' docstring goes" },
+    { "kind": "mod", "path": "src/cortex/rules/__init__.py", "note": "#189 the door: RuleService, render_rules, enqueue_turn; the 'import the submodules' docstring goes" },
     { "kind": "mod", "path": "src/cortex/tools/__init__.py", "note": "#189 adds ASK_USER_TOOL_NAME to __all__" },
     { "kind": "add", "path": "tests/unit/test_module_doors.py", "note": "#189 each door's __all__ names resolve; importing a submodule still loads the package" },
     { "kind": "mod", "path": "src/cortex/agentic/loop.py", "note": "#190 ASK_USER_TOOL_NAME from the tools door" },
-    { "kind": "mod", "path": "src/cortex/agentic/reasoner.py", "note": "#190 render from the rules door" },
+    { "kind": "mod", "path": "src/cortex/agentic/reasoner.py", "note": "#190 render_rules from the rules door" },
     { "kind": "mod", "path": "src/cortex/api/routes/chat.py", "note": "#190 enqueue_turn from the rules door" },
     { "kind": "mod", "path": "src/cortex/eval/runner.py", "note": "#190 tools and memory doors (three sites, one function-local)" },
     { "kind": "mod", "path": "src/cortex/eval/sandbox.py", "note": "#190 tools door" },
