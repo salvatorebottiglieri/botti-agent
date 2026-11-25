@@ -17,6 +17,7 @@ import pytest
 
 from cortex.agentic.models import MaxIterationsError
 from cortex.execution.module import ExecutionModule
+from cortex.goals import InMemoryGoalRepository
 from cortex.shared.loop_events import (
     ErrorEvent,
     LoopEvent,
@@ -72,6 +73,7 @@ def traced_module(
     module = ExecutionModule(
         agent_loop=loop,
         trace_recorder=TraceRecorder(repository=repo, pseudonymizer=pz),
+        goal_repository=InMemoryGoalRepository(),
     )
     return module, loop, repo, pz
 
