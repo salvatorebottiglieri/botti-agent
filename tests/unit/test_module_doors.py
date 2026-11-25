@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.test_module_boundaries import _cortex_imports, _type_only
+
 SRC = Path(__file__).resolve().parents[2] / "src"
 
 # door -> the submodule that stays open, and the names the door publishes.
@@ -99,6 +101,7 @@ def test_the_open_vocabulary_is_still_importable_directly():
 
 # The five modules whose implementation submodules are private (#190).
 CONSUMER_PACKAGES = ("agentic", "api", "eval", "execution", "services")
+# shortcut: this list duplicates what #191's protected contracts will carry; derive it from pyproject.toml then.
 PRIVATE_SUBMODULES = (
     "cortex.goals.repository",
     "cortex.memory.context_provider",
@@ -117,38 +120,6 @@ PRIVATE_SUBMODULES = (
 )
 
 
-def _is_type_checking_guard(test: ast.expr) -> bool:
-    """`if TYPE_CHECKING:` / `if typing.TYPE_CHECKING:`."""
-    match test:
-        case ast.Name(id="TYPE_CHECKING"):
-            return True
-        case ast.Attribute(attr="TYPE_CHECKING"):
-            return True
-    return False
-
-
-def _imported_modules(tree: ast.AST) -> list[tuple[int, str]]:
-    """Every module imported by ``tree`` as (line, dotted name), runtime only.
-
-    ``if TYPE_CHECKING:`` blocks are skipped: they are annotation-only and the
-    sweep measures runtime imports (spec P2 measures the same way).
-    """
-    imported: list[tuple[int, str]] = []
-
-    def visit(node: ast.AST) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.If) and _is_type_checking_guard(child.test):
-                continue
-            if isinstance(child, ast.ImportFrom) and child.module:
-                imported.append((child.lineno, child.module))
-            elif isinstance(child, ast.Import):
-                imported.extend((child.lineno, alias.name) for alias in child.names)
-            visit(child)
-
-    visit(tree)
-    return imported
-
-
 def test_consumers_enter_the_private_modules_through_their_door_only():
     """No consumer package imports `cortex.<module>.<private>` (#190).
 
@@ -160,12 +131,18 @@ def test_consumers_enter_the_private_modules_through_their_door_only():
         for path in sorted((SRC / "cortex" / package).rglob("*.py")):
             scanned += 1
             tree = ast.parse(path.read_text(encoding="utf-8"))
-            for line, name in _imported_modules(tree):
+            parents = {
+                child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+            }
+            for node, name in _cortex_imports(tree):
+                # Annotations only: the sweep measures runtime imports (spec P2).
+                if _type_only(node, parents):
+                    continue
                 if any(
                     name == private or name.startswith(f"{private}.")
                     for private in PRIVATE_SUBMODULES
                 ):
-                    violations.append(f"{path.relative_to(SRC)}:{line} imports {name}")
+                    violations.append(f"{path.relative_to(SRC)}:{node.lineno} imports {name}")
 
     assert scanned > 0, f"no sources found under {SRC}"
     assert violations == []
