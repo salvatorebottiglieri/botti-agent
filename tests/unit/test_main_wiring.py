@@ -174,7 +174,7 @@ class FakeServer:
     """Stands in for uvicorn's server: ``serve`` returns without binding a socket."""
 
     def __init__(self, config) -> None:
-        self.config = config
+        pass
 
     async def serve(self) -> None:
         pass
